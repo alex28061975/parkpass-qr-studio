@@ -1844,6 +1844,10 @@ export default function App() {
     await permitCardRef.current?.send();
   };
 
+  const handleBulkEmail = async () => {
+    await permitCardRef.current?.bulkEmail();
+  };
+
   const handleHeaderPrint = () => {
     if (!formData.vrm) {
       showToast("Select a permit record first.", "warning");
@@ -1853,9 +1857,13 @@ export default function App() {
   };
 
   const handleDispatchRecord = async (record: CsvPermitRecord) => {
-    handleSelectRecord(record);
-    await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-    await permitCardRef.current?.send();
+    if (permitCardRef.current?.sendOne) {
+      await permitCardRef.current.sendOne(record);
+    } else {
+      handleSelectRecord(record);
+      await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      await permitCardRef.current?.send();
+    }
   };
 
   const handleUnsendRecord = async (record: CsvPermitRecord) => {
@@ -1934,7 +1942,7 @@ export default function App() {
             onSelectRecord={handleSelectRecord}
             onSendRecord={handleDispatchRecord}
             onUnsendRecord={handleUnsendRecord}
-            onBulkEmail={handleHeaderSend}
+            onBulkEmail={handleBulkEmail}
             onClear={handleClear}
             onChangeFormData={handleUpdate}
           />

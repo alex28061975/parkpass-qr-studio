@@ -42,6 +42,8 @@ import {
 
 export interface PermitCardHandle {
   send: () => Promise<boolean | void>;
+  sendOne: (record?: CsvPermitRecord) => Promise<boolean | void>;
+  bulkEmail: (records?: CsvPermitRecord[]) => Promise<boolean | void>;
   unsend: () => Promise<boolean | void>;
   print: () => void;
 }
@@ -738,24 +740,61 @@ function PermitCardInner({
       url = `mailto:${encodeURIComponent(recipientEmail)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(formattedMailBody)}`;
     }
 
-    if (qrUrlSmall) {
-      try {
-        window.focus();
-        const blob = dataURLtoBlob(qrUrlSmall);
-        if (navigator.clipboard && typeof navigator.clipboard.write === 'function') {
-          navigator.clipboard.write([
-            new ClipboardItem({ "image/png": blob })
-          ]).catch(err => {
-            console.warn("Auto-copy QR code skipped:", err);
+    // Generate QR code data URL on demand if not cancelled
+    let activeQrDataUrl = qrUrlSmall || qrUrl;
+    if (!isCancelled) {
+      const payload = data.qrOverride.trim() || activeVoucherCode || currentSelectedCode || "";
+      if (payload && payload !== "-" && payload !== "CANCELLED") {
+        try {
+          activeQrDataUrl = await QRCode.toDataURL(payload, {
+            width: 400,
+            margin: 1,
+            errorCorrectionLevel: "H",
+            color: { dark: "#111111", light: "#FFFFFF" }
           });
+          setQrUrl(activeQrDataUrl);
+          setQrUrlSmall(activeQrDataUrl);
+        } catch (err) {
+          console.error("QR Code Generation Error in Resend:", err);
         }
-      } catch (err) {
-        console.warn("Failed to convert or write QR code blob:", err);
       }
     }
 
-    window.open(url, "_blank");
-    showToast(`📧 Resent replacement permit to ${data.name || "Driver"}.`);
+    // Copy the QR code image directly to clipboard
+    if (!isCancelled && activeQrDataUrl) {
+      try {
+        window.focus();
+        const blob = dataURLtoBlob(activeQrDataUrl);
+        if (navigator.clipboard && typeof navigator.clipboard.write === 'function') {
+          await navigator.clipboard.write([
+            new ClipboardItem({ "image/png": blob })
+          ]);
+          setCopyStatus("success");
+          setTimeout(() => setCopyStatus("idle"), 2000);
+        }
+      } catch (err) {
+        console.warn("Clipboard copy QR code error:", err);
+      }
+    }
+
+    // Automatically open Outlook / email composer
+    try {
+      if (url.startsWith("mailto:")) {
+        const link = document.createElement("a");
+        link.href = url;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      } else {
+        window.open(url, "_blank", "noopener,noreferrer");
+      }
+    } catch (err) {
+      console.warn("Could not auto-open Outlook link:", err);
+    }
+
+    showToast(`📋 QR Code copied! Outlook opened — paste (Ctrl+V) into the email body.`);
 
     let nextUnsentRecord: CsvPermitRecord | null = null;
     if (matchingPermits.length > 0 && activeIndex !== -1) {
@@ -1769,27 +1808,63 @@ function PermitCardInner({
       url = `mailto:${encodeURIComponent(recipientEmail)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(formattedMailBody)}`;
     }
 
-    // 6. Automatically copy the QR code to clipboard synchronously if present and not cancelled
-    if (!isCancelled && qrUrlSmall) {
-      try {
-        window.focus();
-        const blob = dataURLtoBlob(qrUrlSmall);
-        if (navigator.clipboard && typeof navigator.clipboard.write === 'function') {
-          navigator.clipboard.write([
-            new ClipboardItem({ "image/png": blob })
-          ]).catch(err => {
-            console.warn("Auto-copy QR code to clipboard skipped (document not focused or permission missing):", err);
+    // 6. Generate QR code data URL on demand if not cancelled
+    let activeQrDataUrl = qrUrlSmall || qrUrl;
+    if (!isCancelled) {
+      const payload = data.qrOverride.trim() || activeVoucherCode || "";
+      if (payload && payload !== "-" && payload !== "CANCELLED") {
+        try {
+          activeQrDataUrl = await QRCode.toDataURL(payload, {
+            width: 400,
+            margin: 1,
+            errorCorrectionLevel: "H",
+            color: { dark: "#111111", light: "#FFFFFF" }
           });
+          setQrUrl(activeQrDataUrl);
+          setQrUrlSmall(activeQrDataUrl);
+        } catch (err) {
+          console.error("QR Code Generation Error in Send:", err);
         }
-      } catch (err) {
-        console.warn("Failed to convert or write QR code blob synchronously:", err);
       }
     }
 
-    // 7. Open the Outlook/email client compose window IMMEDIATELY (synchronously)
-    window.open(url, "_blank");
+    // Copy the QR code image directly to clipboard
+    if (!isCancelled && activeQrDataUrl) {
+      try {
+        window.focus();
+        const blob = dataURLtoBlob(activeQrDataUrl);
+        if (navigator.clipboard && typeof navigator.clipboard.write === 'function') {
+          await navigator.clipboard.write([
+            new ClipboardItem({ "image/png": blob })
+          ]);
+          setCopyStatus("success");
+          setTimeout(() => setCopyStatus("idle"), 2000);
+        }
+      } catch (err) {
+        console.warn("Clipboard copy QR code error:", err);
+      }
+    }
 
-    // 8. Auto-progression: scan the remaining matched records queue within active date scope ONLY
+    // Automatically open Outlook / email composer
+    try {
+      if (url.startsWith("mailto:")) {
+        const link = document.createElement("a");
+        link.href = url;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      } else {
+        window.open(url, "_blank", "noopener,noreferrer");
+      }
+    } catch (err) {
+      console.warn("Could not auto-open Outlook link:", err);
+    }
+
+    showToast(`📋 QR Code copied! Outlook opened — paste (Ctrl+V) into the email body.`);
+
+    // 7. Auto-progression: scan the remaining matched records queue within active date scope ONLY
     let nextUnsentRecord: CsvPermitRecord | null = null;
 
     if (matchingPermits.length > 0 && activeIndex !== -1) {
@@ -1820,6 +1895,33 @@ function PermitCardInner({
       onSelectRecord?.(nextUnsentRecord);
     }
     return true;
+  };
+
+  const sendOne = async (record?: CsvPermitRecord) => {
+    if (record) {
+      onSelectRecord?.(record);
+      await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    }
+    return handleSendClick();
+  };
+
+  const bulkEmail = async (records?: CsvPermitRecord[]) => {
+    const targets = records && records.length > 0
+      ? records
+      : matchingPermits.filter(r => !isRecordDispatched(r));
+
+    if (targets.length === 0) {
+      showToast("No unsent records to dispatch.");
+      return;
+    }
+
+    showToast(`Initiating email dispatch for ${targets.length} record(s)...`);
+    for (const record of targets) {
+      onSelectRecord?.(record);
+      await new Promise(resolve => setTimeout(resolve, 400));
+      await handleSendClick();
+      await new Promise(resolve => setTimeout(resolve, 600));
+    }
   };
 
   // Keyboard shortcuts listener: Enter/Space to dispatch, Left/Right arrows to navigate
@@ -1864,6 +1966,8 @@ function PermitCardInner({
 
   useImperativeHandle(ref, () => ({
     send: handleSendClick,
+    sendOne,
+    bulkEmail,
     unsend: async () => {
       if (!isCurrentDispatched) return true;
       const matchedRecord = (activeIndex !== -1 && matchingPermits[activeIndex])
@@ -1874,7 +1978,7 @@ function PermitCardInner({
       return result !== false;
     },
     print: handlePrint,
-  }), [handleSendClick, isCurrentDispatched, activeIndex, matchingPermits, database, data, unmarkAsDispatched, handlePrint]);
+  }), [handleSendClick, sendOne, bulkEmail, isCurrentDispatched, activeIndex, matchingPermits, database, data, unmarkAsDispatched, handlePrint]);
 
   return (
     <div className="flex flex-col items-center gap-4 w-full">

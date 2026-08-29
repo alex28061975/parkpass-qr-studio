@@ -724,13 +724,6 @@ export function DispatchCentre({
               <div className="absolute left-0 bottom-full mb-1 w-48 bg-[#091e34] border border-[#1d436e] rounded-lg shadow-xl py-1 z-30 text-xs">
                 <button 
                   type="button" 
-                  onClick={() => { setActionsOpen(false); onBulkEmail?.(); }} 
-                  className="w-full text-left px-3 py-2 text-slate-200 hover:bg-[#132e4d] flex items-center gap-2 cursor-pointer"
-                >
-                  <Mail className="w-3.5 h-3.5 text-blue-400" /> Send All Pending
-                </button>
-                <button 
-                  type="button" 
                   onClick={() => { setActionsOpen(false); handleExportZip(); }} 
                   className="w-full text-left px-3 py-2 text-slate-200 hover:bg-[#132e4d] flex items-center gap-2 cursor-pointer"
                 >
