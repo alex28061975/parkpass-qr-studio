@@ -1904,6 +1904,7 @@ export default function App() {
               onDateRangeFilterChange={handleDateRangeFilterChange}
               isLoadingHistory={isLoadingHistory}
               processingDate={formData.todayDate || getTodayISO()}
+              onProcessingDateChange={handleProcessingDateChange}
               customVouchersMap={customVouchers}
             />
 

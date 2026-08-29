@@ -22,7 +22,6 @@ import {
   Phone,
   Mail,
   Key,
-  Tag,
   Ticket,
   Database,
   XSquare,
@@ -406,83 +405,46 @@ export function PermitForm({
           />
         </div>
 
-        {/* Permit Type */}
+        {/* Unused Codes */}
         <div className="flex flex-col">
-          <label htmlFor="permitType" className="text-[11px] font-medium uppercase tracking-[0.5px] text-[#B7D4FF] flex items-center gap-1.5 mb-1.5">
-            <Tag className="w-3.5 h-3.5 text-[#1677FF]" />
-            <span>Permit Type</span>
+          <label htmlFor="unusedCodesSelect" className="text-[11px] font-medium uppercase tracking-[0.5px] text-[#B7D4FF] flex items-center gap-1.5 mb-1.5">
+            <Ticket className="w-3.5 h-3.5 text-[#1677FF]" />
+            <span>Unused Codes</span>
           </label>
           <div className="relative">
             <select
-              id="permitType"
-              value={data.title || "Patient & Visitor Concessions"}
-              onChange={e => onChange({ title: e.target.value })}
-              className={selectClass}
-            >
-              <option value="Patient & Visitor Concessions" className="bg-[#041320] text-white text-[13px] font-normal">Patient &amp; Visitor Concessions</option>
-              <option value="Staff Concession" className="bg-[#041320] text-white text-[13px] font-normal">Staff Concession</option>
-              <option value="Contractor Permit" className="bg-[#041320] text-white text-[13px] font-normal">Contractor Permit</option>
-            </select>
-            <ChevronDown className="w-3.5 h-3.5 text-[#B7D4FF] absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-          </div>
-        </div>
-      </div>
-
-      {/* 5. Pre-Paid Voucher Code Section */}
-      <div className="bg-[#041320]/60 border border-[rgba(113,163,255,0.18)] rounded-xl p-3.5 md:p-4 flex flex-col gap-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.5px] text-[#B7D4FF]">
-            <Ticket className="w-4 h-4 text-[#1677FF]" />
-            <span>Pre-Paid Voucher Code</span>
-          </div>
-          <div className="flex items-center gap-3 text-[11px] font-normal text-[#B7D4FF]">
-            <span>Unused codes: {unusedVouchersForDay.length}</span>
-            <span className="flex items-center gap-1 text-[#B7D4FF]">Day All <ChevronDown className="w-3 h-3 text-[#B7D4FF]" /></span>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div className="relative">
-            <select
-              id="voucherSelect"
-              value=""
+              id="unusedCodesSelect"
+              value={unusedVouchersForDay.some(v => v.code === data.voucherCodesText) ? data.voucherCodesText : ""}
               onChange={e => {
                 if (e.target.value) {
                   onChange({
                     voucherCodesText: e.target.value,
-                    status: "Pending",
-                    emailType: "RESEND_CONCESSION",
-                    isResend: true,
-                    emailTemplate: "replacement"
+                    status: "Pending"
                   });
                 }
               }}
               disabled={!unusedVouchersForDay.length}
-              className={`${selectClass} disabled:opacity-50`}
+              className={selectClass}
             >
-              <option value="" className="bg-[#041320] text-white text-[13px] font-normal">— Choose ({unusedVouchersForDay.length}) —</option>
-              {unusedVouchersForDay.map((v, i) => (
-                <option key={`${v.code}-${i}`} value={v.code} className="bg-[#041320] text-white text-[13px] font-normal">{v.code}</option>
+              <option value="" className="bg-[#041320] text-white text-[13px] font-normal">
+                {unusedVouchersForDay.length === 0 ? "— Choose (0) —" : `— Choose (${unusedVouchersForDay.length}) —`}
+              </option>
+              {unusedVouchersForDay.map((voucher, idx) => (
+                <option
+                  key={`${voucher.code}-${idx}`}
+                  value={voucher.code}
+                  className="bg-[#041320] text-white text-[13px] font-mono"
+                >
+                  {voucher.code}
+                </option>
               ))}
             </select>
             <ChevronDown className="w-3.5 h-3.5 text-[#B7D4FF] absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
           </div>
-
-          <div>
-            <input
-              id="voucherManual2"
-              type="text"
-              value={isBlockedDuplicate ? "CANCELLED" : (data.voucherCodesText || "")}
-              onChange={e => onChange({ voucherCodesText: e.target.value.toUpperCase(), status: "Pending" })}
-              disabled={isBlockedDuplicate}
-              placeholder="E.G. CON9012JXM"
-              className={`${inputClass} uppercase disabled:opacity-50`}
-            />
-          </div>
         </div>
       </div>
 
-      {/* 6. Barcode / QR Settings */}
+      {/* 5. Barcode / QR Settings */}
       <div className="bg-[#041320] border border-[rgba(113,163,255,0.18)] rounded-xl p-3.5 md:p-4 flex flex-col gap-3">
         <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.5px] text-[#B7D4FF]">
           <QrCode className="w-4 h-4 text-[#1677FF]" />

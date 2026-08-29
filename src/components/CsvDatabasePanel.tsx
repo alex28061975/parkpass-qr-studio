@@ -8,6 +8,7 @@ import {
   parsePastedText, 
   parseDateToISO, 
   addDays,
+  getTodayISO,
   generateNextFormId,
   sortRecordsByFormIdDesc,
   exportToExcel,
@@ -51,7 +52,8 @@ import {
   Table,
   X,
   RefreshCw,
-  Clock
+  Clock,
+  Calendar
 } from "lucide-react";
 
 interface CsvDatabasePanelProps {
@@ -72,6 +74,7 @@ interface CsvDatabasePanelProps {
   onDateRangeFilterChange?: (filter: '7days' | '30days' | 'all') => void;
   isLoadingHistory?: boolean;
   processingDate?: string;
+  onProcessingDateChange?: (dateISO: string) => void;
   customVouchersMap?: Record<string, string>;
 }
 
@@ -93,6 +96,7 @@ export function CsvDatabasePanel({
   onDateRangeFilterChange,
   isLoadingHistory = false,
   processingDate,
+  onProcessingDateChange,
   customVouchersMap
 }: CsvDatabasePanelProps) {
   const [concessionsInputMode, setConcessionsInputMode] = useState<"file" | "paste">("file");
@@ -468,6 +472,48 @@ export function CsvDatabasePanel({
     ? effectiveTotalCount
     : filteredTableRecords.length;
 
+  const processingDateInputRef = useRef<HTMLInputElement>(null);
+
+  const effectiveProcessingDate = parseDateToISO(processingDate || "") || getTodayISO();
+  const formattedProcessingDate = (() => {
+    if (!effectiveProcessingDate) return "-";
+    const parts = effectiveProcessingDate.split("-");
+    return parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : effectiveProcessingDate;
+  })();
+
+  const handlePrevDay = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const currentIso = parseDateToISO(processingDate || "") || getTodayISO();
+    const prevIso = addDays(currentIso, -1);
+    if (onProcessingDateChange) {
+      onProcessingDateChange(prevIso);
+    }
+  };
+
+  const handleNextDay = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const currentIso = parseDateToISO(processingDate || "") || getTodayISO();
+    const nextIso = addDays(currentIso, 1);
+    if (onProcessingDateChange) {
+      onProcessingDateChange(nextIso);
+    }
+  };
+
+  const handleDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    if (val && onProcessingDateChange) {
+      onProcessingDateChange(val);
+    }
+  };
+
+  const handleOpenDatePicker = () => {
+    try {
+      processingDateInputRef.current?.showPicker?.();
+    } catch {
+      processingDateInputRef.current?.click();
+    }
+  };
+
   return (
     <aside ref={panelRef} className="data-sidebar">
       <div className="sidebar-card">
@@ -526,7 +572,50 @@ export function CsvDatabasePanel({
 
       <div className="sidebar-card processing-card">
         <div className="sidebar-card-title"><span>Spreadsheet Processing Date:</span></div>
-        <div className="processing-row"><Clock /><span>{processingDate ? (() => { const p = processingDate.split("-"); return p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : processingDate; })() : "-"}</span></div>
+        <div className="processing-date-nav-row">
+          <button 
+            type="button" 
+            onClick={handlePrevDay} 
+            className="date-nav-btn prev-btn"
+            title="Previous day (minus 1 day)"
+            aria-label="Previous day"
+          >
+            ◀
+          </button>
+          <div 
+            className="processing-date-display-btn"
+            onClick={handleOpenDatePicker}
+            title="Click to open calendar date picker"
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                handleOpenDatePicker();
+              }
+            }}
+          >
+            <Calendar className="w-4 h-4 text-[#1677FF]" />
+            <span>{formattedProcessingDate}</span>
+            <input
+              type="date"
+              ref={processingDateInputRef}
+              value={effectiveProcessingDate}
+              onChange={handleDateChange}
+              className="sr-only"
+              aria-label="Spreadsheet Processing Date"
+            />
+          </div>
+          <button 
+            type="button" 
+            onClick={handleNextDay} 
+            className="date-nav-btn next-btn"
+            title="Next day (plus 1 day)"
+            aria-label="Next day"
+          >
+            ▶
+          </button>
+        </div>
       </div>
 
       {feedbackMsg && <div className={`sidebar-feedback ${feedbackMsg.type}`}><span>{feedbackMsg.type === "success" ? "✓" : "!"}</span><span>{feedbackMsg.text}</span><button type="button" onClick={() => setFeedbackMsg(null)}><X /></button></div>}
