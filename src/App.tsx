@@ -1857,19 +1857,23 @@ export default function App() {
   };
 
   const handleDispatchRecord = async (record: CsvPermitRecord) => {
+    handleSelectRecord(record);
     if (permitCardRef.current?.sendOne) {
       await permitCardRef.current.sendOne(record);
+    } else if (permitCardRef.current?.send) {
+      await permitCardRef.current.send(record);
     } else {
-      handleSelectRecord(record);
-      await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-      await permitCardRef.current?.send();
+      await markAsDispatched(record.vrm, record.email, record);
     }
   };
 
   const handleUnsendRecord = async (record: CsvPermitRecord) => {
     handleSelectRecord(record);
-    await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-    await permitCardRef.current?.unsend();
+    if (permitCardRef.current?.unsend) {
+      await permitCardRef.current.unsend(record);
+    } else {
+      await unmarkAsDispatched(record.vrm, record.email, record);
+    }
   };
 
   return (

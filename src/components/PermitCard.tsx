@@ -3,7 +3,7 @@ import QRCode from "qrcode";
 import { PermitData } from "../types";
 import { motion } from "motion/react";
 import { CsvPermitRecord, ParsedVoucherData, parseDateToISO, parseDateRange, addDays, getTodayISO, getMatchingPermits, getUnusedVouchersForDate, getSpreadsheetMatchingAssignedCodes, isDateRequiredOutsideValidWindow, checkIsBlockedDuplicate, isRecordStrictlyEarlier, extractRecordSubmissionTimeMs, extractRecordNumericFormId, resolvePermitDate } from "../utils/csvParser";
-import { getRecordKeys, checkIsRecordDispatched } from "../utils/dispatchUtils";
+import { getRecordKeys, checkIsRecordDispatched, getRecordPrimaryKey } from "../utils/dispatchUtils";
 import { 
   getReplacementEmailContent, 
   getResendConcessionEmailContent,
@@ -41,10 +41,10 @@ import {
 } from "lucide-react";
 
 export interface PermitCardHandle {
-  send: () => Promise<boolean | void>;
+  send: (record?: CsvPermitRecord) => Promise<boolean | void>;
   sendOne: (record?: CsvPermitRecord) => Promise<boolean | void>;
   bulkEmail: (records?: CsvPermitRecord[]) => Promise<boolean | void>;
-  unsend: () => Promise<boolean | void>;
+  unsend: (record?: CsvPermitRecord) => Promise<boolean | void>;
   print: () => void;
 }
 
@@ -668,8 +668,33 @@ function PermitCardInner({
   }, [toastMessage]);
 
   const handleResendConcessionEmail = async () => {
+    // Kick off the clipboard write synchronously, right here at the top, so the call is
+    // still inside the user-activation window from the click. The awaited network calls
+    // below (VRM check, Supabase dispatch write) would otherwise cause the browser to
+    // silently refuse navigator.clipboard.write() by the time we reach it later.
+    // The actual PNG bytes are supplied afterwards via the promise passed to ClipboardItem,
+    // which the Clipboard API is allowed to wait on.
+    let resolveQrBlob: ((blob: Blob) => void) | undefined;
+    let rejectQrBlob: ((err: unknown) => void) | undefined;
+    let clipboardWritePromise: Promise<void> | null = null;
+    if (navigator.clipboard && typeof navigator.clipboard.write === 'function') {
+      const qrBlobPromise = new Promise<Blob>((resolve, reject) => {
+        resolveQrBlob = resolve;
+        rejectQrBlob = reject;
+      });
+      try {
+        clipboardWritePromise = navigator.clipboard.write([
+          new ClipboardItem({ "image/png": qrBlobPromise })
+        ]);
+      } catch (err) {
+        console.warn("Clipboard write initiation error:", err);
+        clipboardWritePromise = null;
+      }
+    }
+
     const silentBlocked = await isVrmSilentBlocked(data.vrm || "");
     if (silentBlocked) {
+      rejectQrBlob?.(new Error("VRM silently blocked"));
       setQrUrl("");
       setQrUrlSmall("");
       showToast("Unable to generate a QR code for this vehicle — please contact the parking admin team.");
@@ -677,6 +702,7 @@ function PermitCardInner({
     }
 
     if (!qrUrl) {
+      rejectQrBlob?.(new Error("No QR code available"));
       showToast("⚠️ Cannot resend email: No QR code is available for this permit. Please assign a valid voucher code.");
       return;
     }
@@ -714,12 +740,14 @@ function PermitCardInner({
       dispatchResult = await markAsDispatched?.(data.vrm, data.email, currentTargetRecord);
     } catch (err) {
       console.error("Dispatch mutation error:", err);
+      rejectQrBlob?.(err);
       showToast("❌ Dispatch failed: Error updating status.");
       return;
     }
 
     if (dispatchResult === false) {
       console.warn("Dispatch mutation failed or was rolled back due to database write error.");
+      rejectQrBlob?.(new Error("Dispatch mutation failed"));
       showToast("❌ Database write error: Failed to update status.");
       return false;
     }
@@ -760,18 +788,27 @@ function PermitCardInner({
       }
     }
 
-    // Copy the QR code image directly to clipboard
-    if (!isCancelled && activeQrDataUrl) {
+    // Hand the freshly-generated QR image to the clipboard write that was already
+    // initiated at the top of this function (still inside the click's user-activation
+    // window), rather than calling navigator.clipboard.write() again down here — by this
+    // point the VRM check and Supabase dispatch write have created enough of an async gap
+    // that the browser can silently refuse a fresh write() call.
+    if (!isCancelled && activeQrDataUrl && resolveQrBlob) {
+      try {
+        resolveQrBlob(dataURLtoBlob(activeQrDataUrl));
+      } catch (err) {
+        rejectQrBlob?.(err);
+      }
+    } else {
+      rejectQrBlob?.(new Error("No QR code available to copy"));
+    }
+
+    if (clipboardWritePromise) {
       try {
         window.focus();
-        const blob = dataURLtoBlob(activeQrDataUrl);
-        if (navigator.clipboard && typeof navigator.clipboard.write === 'function') {
-          await navigator.clipboard.write([
-            new ClipboardItem({ "image/png": blob })
-          ]);
-          setCopyStatus("success");
-          setTimeout(() => setCopyStatus("idle"), 2000);
-        }
+        await clipboardWritePromise;
+        setCopyStatus("success");
+        setTimeout(() => setCopyStatus("idle"), 2000);
       } catch (err) {
         console.warn("Clipboard copy QR code error:", err);
       }
@@ -819,8 +856,12 @@ function PermitCardInner({
     return true;
   };
 
-  const handleSendClick = async () => {
-    if (!isCancelled && qrCodeChanged) {
+  const handleSendClick = async (targetRecord?: CsvPermitRecord) => {
+    const rec = targetRecord || (activeIndex !== -1 && matchingPermits[activeIndex] ? matchingPermits[activeIndex] : null);
+    const isCancelledRec = rec ? (rec.voucherCode === "CANCELLED" || (rec as any).isCancelled === true) : isCancelled;
+    const vrm = rec?.vrm || data.vrm || "";
+
+    if (!isCancelledRec && !targetRecord && qrCodeChanged) {
       const res = await handleResendConcessionEmail();
       if (res === false) {
         showToast("❌ Failed to send. Please try again.");
@@ -828,30 +869,36 @@ function PermitCardInner({
       return;
     }
 
-    const silentBlocked = await isVrmSilentBlocked(data.vrm || "");
+    const silentBlocked = await isVrmSilentBlocked(vrm);
     if (silentBlocked) {
-      setQrUrl("");
-      setQrUrlSmall("");
+      if (!targetRecord) {
+        setQrUrl("");
+        setQrUrlSmall("");
+      }
       showToast("Unable to generate a QR code for this vehicle — please contact the parking admin team.");
       return;
     }
     
-    if (!isCancelled && !qrUrl) {
+    const recCode = rec?.voucherCode || (rec as any)?.prePaidCode || (!targetRecord ? (activeVoucherCode || currentSelectedCode || qrUrl) : "");
+    if (!isCancelledRec && !recCode && !qrUrl && !targetRecord) {
       showToast(`⚠️ Cannot send email: No QR code is available for this permit. Please assign a valid voucher code.`);
       return;
     }
     
-    const result = await handleSendWithOutlook();
+    const result = await handleSendWithOutlook(targetRecord);
     if (result !== false) {
-      if (currentSelectedCode && currentSelectedCode !== "-" && currentSelectedCode !== "CANCELLED") {
-        setLastDispatchedCodeMap(prev => ({ ...prev, [recordKeyStr]: currentSelectedCode }));
+      const targetDriverName = rec?.driverName || data.name || "Driver";
+      const targetPayloadCode = rec?.voucherCode || (rec as any)?.prePaidCode || (!targetRecord ? currentSelectedCode : "");
+      const targetRecordKeyStr = rec ? (getRecordPrimaryKey(rec) || vrm) : recordKeyStr;
+      if (targetPayloadCode && targetPayloadCode !== "-" && targetPayloadCode !== "CANCELLED") {
+        setLastDispatchedCodeMap(prev => ({ ...prev, [targetRecordKeyStr]: targetPayloadCode }));
       }
       showToast(
-        isCancelled
-          ? `📧 Sent cancellation notice to ${data.name || "Driver"}.`
-          : qrCodeChanged
-            ? `📧 Resent replacement permit to ${data.name || "Driver"}.`
-            : `📧 Sent permit to ${data.name || "Driver"}.`
+        isCancelledRec
+          ? `📧 Sent cancellation notice to ${targetDriverName}.`
+          : qrCodeChanged && !targetRecord
+            ? `📧 Resent replacement permit to ${targetDriverName}.`
+            : `📧 Sent permit to ${targetDriverName}.`
       );
     } else {
       showToast("❌ Failed to send. Please try again.");
@@ -1736,82 +1783,146 @@ function PermitCardInner({
   // - Red text for non-refundable
   // - Blue clickable email link
   // ============================================
-  const handleSendWithOutlook = async () => {
-    const silentBlocked = await isVrmSilentBlocked(data.vrm || "");
-    if (silentBlocked) {
-      setQrUrl("");
-      setQrUrlSmall("");
-      showToast("Unable to generate a QR code for this vehicle — please contact the parking admin team.");
-      return;
+  const handleSendWithOutlook = async (targetRecord?: CsvPermitRecord) => {
+    // 1. Kick off the clipboard write synchronously right at the top
+    let resolveQrBlob: ((blob: Blob) => void) | undefined;
+    let rejectQrBlob: ((err: unknown) => void) | undefined;
+    let clipboardWritePromise: Promise<void> | null = null;
+    if (navigator.clipboard && typeof navigator.clipboard.write === 'function') {
+      const qrBlobPromise = new Promise<Blob>((resolve, reject) => {
+        resolveQrBlob = resolve;
+        rejectQrBlob = reject;
+      });
+      try {
+        clipboardWritePromise = navigator.clipboard.write([
+          new ClipboardItem({ "image/png": qrBlobPromise })
+        ]);
+      } catch (err) {
+        console.warn("Clipboard write initiation error:", err);
+        clipboardWritePromise = null;
+      }
     }
 
-    const labelVal = data.vrm ? data.vrm.toUpperCase() : "No VRM";
+    // 2. Identify the target record context strictly
+    const targetRec = targetRecord || (activeIndex !== -1 && matchingPermits[activeIndex] ? matchingPermits[activeIndex] : null) || (database && (data as any).formId ? database.find(r => r.formId === (data as any).formId || r.id === (data as any).formId) : null) || {
+      id: (data as any).id,
+      formId: (data as any).formId,
+      vrm: data.vrm,
+      driverName: data.name,
+      dateRequired: data.validFrom || data.todayDate,
+      email: data.email,
+      ward: data.ward,
+      site: data.site,
+      validFrom: data.validFrom,
+      validTo: data.validTo,
+      todayDate: data.todayDate
+    } as any;
+
+    const targetVrm = (targetRec.vrm || (targetRecord ? "" : data.vrm) || "").toUpperCase().trim();
+    const targetDriverName = (targetRec.driverName || targetRec.name || (targetRecord ? "" : data.name) || "").trim();
+    const targetEmail = (targetRec.email || (targetRec as any).driverEmail || (targetRecord ? "" : data.email) || "").toLowerCase().trim();
+    const targetWard = (targetRec.ward || (targetRecord ? "" : data.ward) || "").trim();
+    const targetSite = (targetRec.site || targetRec.hospital || (targetRecord ? "" : data.site) || "").trim();
+    const targetValidFrom = targetRec.validFrom || targetRec.dateRequired || (targetRecord ? "" : data.validFrom) || "";
+    const targetValidTo = targetRec.validTo || (targetValidFrom ? addDays(targetValidFrom, 6) : "") || (targetRecord ? "" : data.validTo) || "";
+    const targetTodayDate = (targetRec as any).todayDate || (targetRecord ? "" : data.todayDate) || getTodayISO();
+    const targetDateRequired = targetRec.dateRequired || targetRec.validFrom || (targetRecord ? "" : (data as any).dateRequired) || "";
+    const targetIsCancelled = targetRec.voucherCode === "CANCELLED" || (targetRec as any).isCancelled === true || (!targetRecord && isCancelled);
+    const targetPayloadCode = targetRec.voucherCode || (targetRec as any).prePaidCode || (targetRec as any).voucherCodesText || (!targetRecord ? (data.qrOverride?.trim() || activeVoucherCode || currentSelectedCode || "") : "");
+
+    // 3. Silent block check
+    const silentBlocked = await isVrmSilentBlocked(targetVrm || "");
+    if (silentBlocked) {
+      rejectQrBlob?.(new Error("VRM silently blocked"));
+      if (!targetRecord) {
+        setQrUrl("");
+        setQrUrlSmall("");
+      }
+      showToast("Unable to generate a QR code for this vehicle — please contact the parking admin team.");
+      return false;
+    }
+
+    // 4. Generate email content
     let subject = "";
     let mailBody = "";
     let htmlText = "";
 
-    if (isCancelled) {
-      const cancelContent = getCancellationEmailContentCallback();
+    const params = {
+      vrm: targetVrm,
+      driverName: targetDriverName,
+      duration: "7 days",
+      validFrom: targetValidFrom,
+      validTo: targetValidTo,
+      todayDate: targetTodayDate,
+      dateRequired: targetDateRequired,
+    };
+
+    if (targetIsCancelled) {
+      const cancelContent = getCancellationEmailContent({
+        vrm: targetVrm,
+        driverName: targetDriverName,
+        validFrom: targetValidFrom,
+        todayDate: targetTodayDate,
+        dateRequired: targetDateRequired,
+        reason: cancellationDetails.reason,
+        currentExpiryDate: cancellationDetails.currentExpiryDate,
+        earliestRenewalDate: cancellationDetails.earliestRenewalDate,
+        activePermitExpiry: cancellationDetails.currentExpiryDate,
+        reapplyDate: cancellationDetails.earliestRenewalDate,
+      });
       subject = cancelContent.subject;
       mailBody = cancelContent.plainText;
       htmlText = cancelContent.htmlText;
     } else {
-      const effectiveTemplate = isReplacement ? "replacement" : emailTemplate;
-      const content = getEmailContent(effectiveTemplate);
+      const effectiveTemplate = (!targetRecord && isReplacement) ? "replacement" : emailTemplate;
+      const content = (effectiveTemplate === "replacement") ? getReplacementEmailContent(params) : getSendEmailContent(params);
       subject = content.subject;
       mailBody = content.plainText;
       htmlText = content.htmlText;
     }
 
-    // Store HTML version for the styled body button
     (window as any).__styledEmailBody = htmlText;
 
-    // 4. Update dispatched status in database and local UI state
-    const currentTargetRecord = (activeIndex !== -1 && matchingPermits[activeIndex])
-      ? matchingPermits[activeIndex]
-      : (database ? database.find(r => ((data as any).formId && (r.formId === (data as any).formId || r.id === (data as any).formId))) : undefined) || {
-          id: (data as any).id,
-          formId: (data as any).formId,
-          vrm: data.vrm,
-          driverName: data.name,
-          dateRequired: data.validFrom || data.todayDate,
-          email: data.email,
-          ward: data.ward
-        } as any;
-
+    // 5. Update dispatched status in database and local UI state strictly for THIS target record
     let dispatchResult;
     try {
-      dispatchResult = await markAsDispatched?.(data.vrm, data.email, currentTargetRecord);
+      dispatchResult = await markAsDispatched?.(targetVrm, targetEmail, targetRec);
     } catch (err) {
       console.error("Dispatch mutation error:", err);
+      rejectQrBlob?.(err);
       showToast("❌ Dispatch failed: Error updating status.");
       return false;
     }
 
     if (dispatchResult === false) {
       console.warn("Dispatch mutation failed or was rolled back due to database write error.");
+      rejectQrBlob?.(new Error("Dispatch mutation failed"));
       showToast("❌ Database write error: Failed to update status.");
       return false;
     }
 
-    // Show interactive user guidance banner only on verified write confirmation
     setShowOutlookGuide(true);
-
-    // 5. Build compose link based on client type selection with standard CRLF formatting
-    const formattedMailBody = mailBody.replace(/\r?\n/g, "\r\n");
-    let url = "";
-    if (outlookClientType === "web") {
-      url = `https://outlook.office.com/mail/deeplink/compose?to=${encodeURIComponent(recipientEmail)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(formattedMailBody)}`;
-    } else if (outlookClientType === "live") {
-      url = `https://outlook.live.com/owa/?path=/mail/action/compose&to=${encodeURIComponent(recipientEmail)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(formattedMailBody)}`;
-    } else {
-      url = `mailto:${encodeURIComponent(recipientEmail)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(formattedMailBody)}`;
+    const targetRecordKeyStr = getRecordPrimaryKey(targetRec) || targetVrm;
+    if (targetPayloadCode && targetPayloadCode !== "-" && targetPayloadCode !== "CANCELLED") {
+      setLastDispatchedCodeMap(prev => ({ ...prev, [targetRecordKeyStr]: targetPayloadCode }));
     }
 
-    // 6. Generate QR code data URL on demand if not cancelled
-    let activeQrDataUrl = qrUrlSmall || qrUrl;
-    if (!isCancelled) {
-      const payload = data.qrOverride.trim() || activeVoucherCode || "";
+    // 6. Build compose link based on client type selection
+    const formattedMailBody = mailBody.replace(/\r?\n/g, "\r\n");
+    const sendRecipient = targetEmail || (targetRecord ? "" : recipientEmail) || "recipient@nhs.net";
+    let url = "";
+    if (outlookClientType === "web") {
+      url = `https://outlook.office.com/mail/deeplink/compose?to=${encodeURIComponent(sendRecipient)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(formattedMailBody)}`;
+    } else if (outlookClientType === "live") {
+      url = `https://outlook.live.com/owa/?path=/mail/action/compose&to=${encodeURIComponent(sendRecipient)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(formattedMailBody)}`;
+    } else {
+      url = `mailto:${encodeURIComponent(sendRecipient)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(formattedMailBody)}`;
+    }
+
+    // 7. Generate QR code data URL on demand if not cancelled
+    let activeQrDataUrl = (!targetRecord && (qrUrlSmall || qrUrl)) || "";
+    if (!targetIsCancelled) {
+      const payload = targetPayloadCode;
       if (payload && payload !== "-" && payload !== "CANCELLED") {
         try {
           activeQrDataUrl = await QRCode.toDataURL(payload, {
@@ -1820,32 +1931,38 @@ function PermitCardInner({
             errorCorrectionLevel: "H",
             color: { dark: "#111111", light: "#FFFFFF" }
           });
-          setQrUrl(activeQrDataUrl);
-          setQrUrlSmall(activeQrDataUrl);
+          if (!targetRecord) {
+            setQrUrl(activeQrDataUrl);
+            setQrUrlSmall(activeQrDataUrl);
+          }
         } catch (err) {
           console.error("QR Code Generation Error in Send:", err);
         }
       }
     }
 
-    // Copy the QR code image directly to clipboard
-    if (!isCancelled && activeQrDataUrl) {
+    if (!targetIsCancelled && activeQrDataUrl && resolveQrBlob) {
+      try {
+        resolveQrBlob(dataURLtoBlob(activeQrDataUrl));
+      } catch (err) {
+        rejectQrBlob?.(err);
+      }
+    } else {
+      rejectQrBlob?.(new Error("No QR code available to copy"));
+    }
+
+    if (clipboardWritePromise) {
       try {
         window.focus();
-        const blob = dataURLtoBlob(activeQrDataUrl);
-        if (navigator.clipboard && typeof navigator.clipboard.write === 'function') {
-          await navigator.clipboard.write([
-            new ClipboardItem({ "image/png": blob })
-          ]);
-          setCopyStatus("success");
-          setTimeout(() => setCopyStatus("idle"), 2000);
-        }
+        await clipboardWritePromise;
+        setCopyStatus("success");
+        setTimeout(() => setCopyStatus("idle"), 2000);
       } catch (err) {
         console.warn("Clipboard copy QR code error:", err);
       }
     }
 
-    // Automatically open Outlook / email composer
+    // 8. Automatically open Outlook / email composer
     try {
       if (url.startsWith("mailto:")) {
         const link = document.createElement("a");
@@ -1862,47 +1979,40 @@ function PermitCardInner({
       console.warn("Could not auto-open Outlook link:", err);
     }
 
-    showToast(`📋 QR Code copied! Outlook opened — paste (Ctrl+V) into the email body.`);
+    showToast(`📋 QR Code copied! Outlook opened for ${targetDriverName || targetVrm || "permit"} — paste (Ctrl+V) into the email body.`);
 
-    // 7. Auto-progression: scan the remaining matched records queue within active date scope ONLY
-    let nextUnsentRecord: CsvPermitRecord | null = null;
-
-    if (matchingPermits.length > 0 && activeIndex !== -1) {
-      // Look-ahead search: start from the index after the current activeIndex
-      for (let i = activeIndex + 1; i < matchingPermits.length; i++) {
-        const record = matchingPermits[i];
-        if (!isRecordDispatched(record)) {
-          nextUnsentRecord = record;
-          break;
-        }
-      }
-
-      // Wrap-around search: if not found, scan from index 0 up to activeIndex
-      if (!nextUnsentRecord) {
-        for (let i = 0; i < activeIndex; i++) {
-          const record = matchingPermits[i];
-          if (!isRecordDispatched(record)) {
-            nextUnsentRecord = record;
+    // 9. Auto-progression: only when initiated from the card interface
+    if (!targetRecord) {
+      let nextUnsentRecord: CsvPermitRecord | null = null;
+      if (matchingPermits.length > 0 && activeIndex !== -1) {
+        for (let i = activeIndex + 1; i < matchingPermits.length; i++) {
+          if (!isRecordDispatched(matchingPermits[i])) {
+            nextUnsentRecord = matchingPermits[i];
             break;
           }
         }
+        if (!nextUnsentRecord) {
+          for (let i = 0; i < activeIndex; i++) {
+            if (!isRecordDispatched(matchingPermits[i])) {
+              nextUnsentRecord = matchingPermits[i];
+              break;
+            }
+          }
+        }
+      }
+      if (nextUnsentRecord) {
+        onSelectRecord?.(nextUnsentRecord);
       }
     }
 
-    // If an unsent record was found in the current date queue, transition to it.
-    // Once all pending items for the active date hit 0, stop and wait on the current date ('Dead Stop').
-    if (nextUnsentRecord) {
-      onSelectRecord?.(nextUnsentRecord);
-    }
     return true;
   };
 
   const sendOne = async (record?: CsvPermitRecord) => {
     if (record) {
       onSelectRecord?.(record);
-      await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
     }
-    return handleSendClick();
+    return handleSendClick(record);
   };
 
   const bulkEmail = async (records?: CsvPermitRecord[]) => {
@@ -1919,7 +2029,7 @@ function PermitCardInner({
     for (const record of targets) {
       onSelectRecord?.(record);
       await new Promise(resolve => setTimeout(resolve, 400));
-      await handleSendClick();
+      await handleSendClick(record);
       await new Promise(resolve => setTimeout(resolve, 600));
     }
   };
@@ -1965,16 +2075,15 @@ function PermitCardInner({
   }, [matchingPermits, activeIndex, qrUrlSmall, isCurrentDispatched, onSelectRecord, handleSendWithOutlook]);
 
   useImperativeHandle(ref, () => ({
-    send: handleSendClick,
+    send: (record?: CsvPermitRecord) => handleSendClick(record),
     sendOne,
     bulkEmail,
-    unsend: async () => {
-      if (!isCurrentDispatched) return true;
-      const matchedRecord = (activeIndex !== -1 && matchingPermits[activeIndex])
-        ? matchingPermits[activeIndex]
-        : (database ? database.find(r => ((data as any).formId && (r.formId === (data as any).formId || r.id === (data as any).formId))) : undefined);
+    unsend: async (record?: CsvPermitRecord) => {
+      const matchedRecord = record || (activeIndex !== -1 && matchingPermits[activeIndex] ? matchingPermits[activeIndex] : null) || (database ? database.find(r => ((data as any).formId && (r.formId === (data as any).formId || r.id === (data as any).formId))) : undefined) || (record as any);
       if (!matchedRecord) return false;
-      const result = await unmarkAsDispatched?.(data.vrm, data.email, matchedRecord);
+      const targetVrm = record?.vrm || data.vrm;
+      const targetEmail = record?.email || data.email;
+      const result = await unmarkAsDispatched?.(targetVrm, targetEmail, matchedRecord);
       return result !== false;
     },
     print: handlePrint,
