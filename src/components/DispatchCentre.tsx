@@ -63,6 +63,21 @@ const formatDate = (dateStr?: string) => {
   return dateStr;
 };
 
+export type SortKey = 
+  | "id" 
+  | "qr" 
+  | "driverName" 
+  | "vrm" 
+  | "voucherCode" 
+  | "validFrom" 
+  | "validTo" 
+  | "ward" 
+  | "hospital" 
+  | "status" 
+  | "actions";
+
+export type SortDirection = "asc" | "desc" | null;
+
 export function DispatchCentre({ 
   database, 
   vouchersDatabase, 
@@ -83,8 +98,12 @@ export function DispatchCentre({
   const [actionsOpen, setActionsOpen] = useState(false);
   const [wardDropdownOpen, setWardDropdownOpen] = useState(false);
 
-  // Sync records with Spreadsheet Permits Matching Helper logic
-  const sortedRecords = useMemo(() => {
+  // Sorting state (Excel-like sorting: asc -> desc -> reset)
+  const [sortKey, setSortKey] = useState<SortKey | null>(null);
+  const [sortDirection, setSortDirection] = useState<SortDirection>(null);
+
+  // Base records matching Spreadsheet Permits Matching Helper logic
+  const baseRecords = useMemo(() => {
     const rawMatches = activeOnly && processingDate 
       ? getMatchingPermits(database, processingDate)
       : database;
@@ -99,12 +118,168 @@ export function DispatchCentre({
   // Compute dynamic voucher allocations map matching Matching Helper exactly
   const recordCodeMap = useMemo(() => {
     return getSpreadsheetMatchingAllocationsMap(
-      sortedRecords,
+      baseRecords,
       database,
       processingDate,
       vouchersDatabase
     );
-  }, [sortedRecords, database, processingDate, vouchersDatabase]);
+  }, [baseRecords, database, processingDate, vouchersDatabase]);
+
+  // Sorted records based on active column sort
+  const sortedRecords = useMemo(() => {
+    if (!sortKey || !sortDirection) {
+      return baseRecords;
+    }
+
+    const getHospital = (record: CsvPermitRecord) => {
+      return record.hospital || 
+        (record.ward && (
+          record.ward.toLowerCase().includes("acorn") || 
+          record.ward.toLowerCase().includes("acacia") || 
+          record.ward.toLowerCase().includes("mulberry")
+        ) ? "Whipps Cross Hospital" : "Newham Hospital");
+    };
+
+    const getIsCancelled = (record: CsvPermitRecord, idx: number) => {
+      const isDateCancelled = isDateRequiredOutsideValidWindow(record.dateRequired || record.validFrom, processingDate);
+      const isCancelledFlag = (record as any).isCancelled === true;
+      const isDuplicateBlocked = checkIsBlockedDuplicate(record, database, processingDate);
+      const recordKey = String(record.formId ?? record.id ?? idx);
+      const displayCode = recordCodeMap.get(recordKey);
+      return isDateCancelled || isCancelledFlag || isDuplicateBlocked || displayCode === "CANCELLED";
+    };
+
+    const getStatusStr = (record: CsvPermitRecord, idx: number) => {
+      const isDispatched = checkIsRecordDispatched(record, record.vrm, record.driverName, record.dateRequired, dispatchedKeys, unsentKeys);
+      const rowKey = String(record.formId ?? record.id ?? record.vrm ?? idx);
+      const isUnsent = Boolean(unsentKeys && unsentKeys.length > 0 && unsentKeys.includes(rowKey));
+      if (isDispatched) return "SENT";
+      if (isUnsent) return "UNSENT";
+      return "PENDING";
+    };
+
+    const sorted = [...baseRecords].sort((a, b) => {
+      let comparison = 0;
+      const aIdx = baseRecords.indexOf(a);
+      const bIdx = baseRecords.indexOf(b);
+
+      switch (sortKey) {
+        case "id": {
+          const aId = Number(String(a.formId ?? a.id ?? aIdx + 1).replace(/[^0-9]/g, "")) || (aIdx + 1);
+          const bId = Number(String(b.formId ?? b.id ?? bIdx + 1).replace(/[^0-9]/g, "")) || (bIdx + 1);
+          comparison = aId - bId;
+          break;
+        }
+        case "qr": {
+          const aCanc = getIsCancelled(a, aIdx);
+          const bCanc = getIsCancelled(b, bIdx);
+          const aVal = aCanc ? "CANCELLED" : "QR Code";
+          const bVal = bCanc ? "CANCELLED" : "QR Code";
+          comparison = aVal.localeCompare(bVal);
+          break;
+        }
+        case "driverName": {
+          const aName = (a.driverName || "").trim();
+          const bName = (b.driverName || "").trim();
+          comparison = aName.localeCompare(bName, undefined, { sensitivity: "base", numeric: true });
+          break;
+        }
+        case "vrm": {
+          const aVrm = (a.vrm || "").trim().toUpperCase();
+          const bVrm = (b.vrm || "").trim().toUpperCase();
+          comparison = aVrm.localeCompare(bVrm, undefined, { sensitivity: "base", numeric: true });
+          break;
+        }
+        case "voucherCode": {
+          const aCanc = getIsCancelled(a, aIdx);
+          const bCanc = getIsCancelled(b, bIdx);
+          const aCode = aCanc ? "CANCELLED" : (recordCodeMap.get(String(a.formId ?? a.id ?? aIdx)) || a.voucherCode || "");
+          const bCode = bCanc ? "CANCELLED" : (recordCodeMap.get(String(b.formId ?? b.id ?? bIdx)) || b.voucherCode || "");
+          comparison = aCode.localeCompare(bCode, undefined, { sensitivity: "base", numeric: true });
+          break;
+        }
+        case "validFrom": {
+          const aDate = parseDateToISO(a.dateRequired || a.validFrom) || "";
+          const bDate = parseDateToISO(b.dateRequired || b.validFrom) || "";
+          comparison = aDate.localeCompare(bDate);
+          break;
+        }
+        case "validTo": {
+          const aIso = parseDateToISO(a.dateRequired || a.validFrom);
+          const bIso = parseDateToISO(b.dateRequired || b.validFrom);
+          const aExp = aIso ? addDays(aIso, 6) : "";
+          const bExp = bIso ? addDays(bIso, 6) : "";
+          comparison = aExp.localeCompare(bExp);
+          break;
+        }
+        case "ward": {
+          const aWard = (a.ward || "").trim();
+          const bWard = (b.ward || "").trim();
+          comparison = aWard.localeCompare(bWard, undefined, { sensitivity: "base", numeric: true });
+          break;
+        }
+        case "hospital": {
+          const aHosp = getHospital(a);
+          const bHosp = getHospital(b);
+          comparison = aHosp.localeCompare(bHosp, undefined, { sensitivity: "base", numeric: true });
+          break;
+        }
+        case "status": {
+          const aStatus = getStatusStr(a, aIdx);
+          const bStatus = getStatusStr(b, bIdx);
+          comparison = aStatus.localeCompare(bStatus);
+          break;
+        }
+        case "actions": {
+          const aDisp = checkIsRecordDispatched(a, a.vrm, a.driverName, a.dateRequired, dispatchedKeys, unsentKeys);
+          const bDisp = checkIsRecordDispatched(b, b.vrm, b.driverName, b.dateRequired, dispatchedKeys, unsentKeys);
+          const aCanc = getIsCancelled(a, aIdx);
+          const bCanc = getIsCancelled(b, bIdx);
+          const aAct = aDisp ? "Unsend" : (aCanc ? "Restore" : "Send");
+          const bAct = bDisp ? "Unsend" : (bCanc ? "Restore" : "Send");
+          comparison = aAct.localeCompare(bAct);
+          break;
+        }
+        default:
+          comparison = 0;
+      }
+
+      return sortDirection === "asc" ? comparison : -comparison;
+    });
+
+    return sorted;
+  }, [baseRecords, sortKey, sortDirection, database, processingDate, recordCodeMap, dispatchedKeys, unsentKeys]);
+
+  const handleSort = (key: SortKey) => {
+    if (sortKey === key) {
+      if (sortDirection === "asc") {
+        setSortDirection("desc");
+      } else if (sortDirection === "desc") {
+        setSortKey(null);
+        setSortDirection(null);
+      } else {
+        setSortDirection("asc");
+      }
+    } else {
+      setSortKey(key);
+      setSortDirection("asc");
+    }
+  };
+
+  const renderSortIndicator = (key: SortKey) => {
+    if (sortKey === key) {
+      return (
+        <span className="inline-flex items-center ml-1 text-[#38bdf8] font-bold text-[11px] animate-pulse">
+          {sortDirection === "asc" ? "▲" : "▼"}
+        </span>
+      );
+    }
+    return (
+      <span className="inline-flex items-center ml-1 text-slate-500/40 group-hover:text-slate-300 text-[9px] transition-colors">
+        ▲▼
+      </span>
+    );
+  };
 
   const count = sortedRecords.length;
   const totalDbCount = totalRecordsCount && totalRecordsCount > 0 ? totalRecordsCount : (database.length || 889);
@@ -181,26 +356,6 @@ export function DispatchCentre({
               />
             </button>
           </div>
-
-          {/* Bulk Email Button */}
-          <button 
-            type="button" 
-            onClick={onBulkEmail}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 bg-[#1d75f2] hover:bg-[#1565d8] text-white font-semibold text-xs rounded-md shadow-sm transition-colors cursor-pointer"
-          >
-            <Mail className="w-3.5 h-3.5" />
-            <span>Bulk Email</span>
-          </button>
-
-          {/* All ZIP Button */}
-          <button 
-            type="button" 
-            onClick={handleExportZip}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 bg-[#0c2138] hover:bg-[#132d4a] border border-[#1f456e] text-white font-semibold text-xs rounded-md transition-colors cursor-pointer"
-          >
-            <Archive className="w-3.5 h-3.5" />
-            <span>All ZIP</span>
-          </button>
         </div>
       </div>
 
@@ -210,17 +365,170 @@ export function DispatchCentre({
           <table className="min-w-[1180px] w-full text-xs text-left border-collapse table-auto">
             <thead className="bg-[#081b30] border-b border-[#163657] text-slate-300 font-bold uppercase tracking-wider text-[11px] sticky top-0 z-10 select-none">
               <tr>
-                <th scope="col" className="py-3 px-3 text-center w-10 border-r border-[#143252]/50 whitespace-nowrap">#</th>
-                <th scope="col" className="py-3 px-3 border-r border-[#143252]/50 whitespace-nowrap">QR CODE</th>
-                <th scope="col" className="py-3 px-3 border-r border-[#143252]/50 whitespace-nowrap">DRIVER'S NAME</th>
-                <th scope="col" className="py-3 px-3 border-r border-[#143252]/50 whitespace-nowrap">VRN</th>
-                <th scope="col" className="py-3 px-3 border-r border-[#143252]/50 whitespace-nowrap">VOUCHERCODE</th>
-                <th scope="col" className="py-3 px-3 border-r border-[#143252]/50 whitespace-nowrap">VALID FROM</th>
-                <th scope="col" className="py-3 px-3 border-r border-[#143252]/50 whitespace-nowrap">VALID TO</th>
-                <th scope="col" className="py-3 px-3 border-r border-[#143252]/50 whitespace-nowrap">WARD</th>
-                <th scope="col" className="py-3 px-3.5 border-r border-[#143252]/50 whitespace-nowrap min-w-[185px]">HOSPITAL</th>
-                <th scope="col" className="py-3 px-3 text-center border-r border-[#143252]/50 whitespace-nowrap">STATUS</th>
-                <th scope="col" className="py-3 px-3 text-center whitespace-nowrap">ACTIONS</th>
+                {/* # Column */}
+                <th 
+                  scope="col" 
+                  onClick={() => handleSort("id")}
+                  className={`py-3 px-3 text-center w-12 border-r border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none ${
+                    sortKey === "id" ? "bg-[#0c2847] text-[#38bdf8] font-black" : "hover:bg-[#0b2440] hover:text-white"
+                  }`}
+                  title="Click to sort by Number"
+                >
+                  <div className="flex items-center justify-center gap-1">
+                    <span>#</span>
+                    {renderSortIndicator("id")}
+                  </div>
+                </th>
+
+                {/* QR CODE Column */}
+                <th 
+                  scope="col" 
+                  onClick={() => handleSort("qr")}
+                  className={`py-3 px-3 border-r border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none ${
+                    sortKey === "qr" ? "bg-[#0c2847] text-[#38bdf8] font-black" : "hover:bg-[#0b2440] hover:text-white"
+                  }`}
+                  title="Click to sort by QR Code status"
+                >
+                  <div className="flex items-center justify-between gap-1">
+                    <span>QR CODE</span>
+                    {renderSortIndicator("qr")}
+                  </div>
+                </th>
+
+                {/* DRIVER'S NAME Column */}
+                <th 
+                  scope="col" 
+                  onClick={() => handleSort("driverName")}
+                  className={`py-3 px-3 border-r border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none ${
+                    sortKey === "driverName" ? "bg-[#0c2847] text-[#38bdf8] font-black" : "hover:bg-[#0b2440] hover:text-white"
+                  }`}
+                  title="Click to sort by Driver's Name"
+                >
+                  <div className="flex items-center justify-between gap-1">
+                    <span>DRIVER'S NAME</span>
+                    {renderSortIndicator("driverName")}
+                  </div>
+                </th>
+
+                {/* VRN Column */}
+                <th 
+                  scope="col" 
+                  onClick={() => handleSort("vrm")}
+                  className={`py-3 px-3 border-r border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none ${
+                    sortKey === "vrm" ? "bg-[#0c2847] text-[#38bdf8] font-black" : "hover:bg-[#0b2440] hover:text-white"
+                  }`}
+                  title="Click to sort by VRN / Vehicle Reg"
+                >
+                  <div className="flex items-center justify-between gap-1">
+                    <span>VRN</span>
+                    {renderSortIndicator("vrm")}
+                  </div>
+                </th>
+
+                {/* VOUCHERCODE Column */}
+                <th 
+                  scope="col" 
+                  onClick={() => handleSort("voucherCode")}
+                  className={`py-3 px-3 border-r border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none ${
+                    sortKey === "voucherCode" ? "bg-[#0c2847] text-[#38bdf8] font-black" : "hover:bg-[#0b2440] hover:text-white"
+                  }`}
+                  title="Click to sort by Voucher Code"
+                >
+                  <div className="flex items-center justify-between gap-1">
+                    <span>VOUCHERCODE</span>
+                    {renderSortIndicator("voucherCode")}
+                  </div>
+                </th>
+
+                {/* VALID FROM Column */}
+                <th 
+                  scope="col" 
+                  onClick={() => handleSort("validFrom")}
+                  className={`py-3 px-3 border-r border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none ${
+                    sortKey === "validFrom" ? "bg-[#0c2847] text-[#38bdf8] font-black" : "hover:bg-[#0b2440] hover:text-white"
+                  }`}
+                  title="Click to sort by Valid From date"
+                >
+                  <div className="flex items-center justify-between gap-1">
+                    <span>VALID FROM</span>
+                    {renderSortIndicator("validFrom")}
+                  </div>
+                </th>
+
+                {/* VALID TO Column */}
+                <th 
+                  scope="col" 
+                  onClick={() => handleSort("validTo")}
+                  className={`py-3 px-3 border-r border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none ${
+                    sortKey === "validTo" ? "bg-[#0c2847] text-[#38bdf8] font-black" : "hover:bg-[#0b2440] hover:text-white"
+                  }`}
+                  title="Click to sort by Valid To date"
+                >
+                  <div className="flex items-center justify-between gap-1">
+                    <span>VALID TO</span>
+                    {renderSortIndicator("validTo")}
+                  </div>
+                </th>
+
+                {/* WARD Column */}
+                <th 
+                  scope="col" 
+                  onClick={() => handleSort("ward")}
+                  className={`py-3 px-3 border-r border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none ${
+                    sortKey === "ward" ? "bg-[#0c2847] text-[#38bdf8] font-black" : "hover:bg-[#0b2440] hover:text-white"
+                  }`}
+                  title="Click to sort by Ward"
+                >
+                  <div className="flex items-center justify-between gap-1">
+                    <span>WARD</span>
+                    {renderSortIndicator("ward")}
+                  </div>
+                </th>
+
+                {/* HOSPITAL Column */}
+                <th 
+                  scope="col" 
+                  onClick={() => handleSort("hospital")}
+                  className={`py-3 px-3.5 border-r border-[#143252]/50 whitespace-nowrap min-w-[185px] cursor-pointer transition-colors group select-none ${
+                    sortKey === "hospital" ? "bg-[#0c2847] text-[#38bdf8] font-black" : "hover:bg-[#0b2440] hover:text-white"
+                  }`}
+                  title="Click to sort by Hospital Site"
+                >
+                  <div className="flex items-center justify-between gap-1">
+                    <span>HOSPITAL</span>
+                    {renderSortIndicator("hospital")}
+                  </div>
+                </th>
+
+                {/* STATUS Column */}
+                <th 
+                  scope="col" 
+                  onClick={() => handleSort("status")}
+                  className={`py-3 px-3 text-center border-r border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none ${
+                    sortKey === "status" ? "bg-[#0c2847] text-[#38bdf8] font-black" : "hover:bg-[#0b2440] hover:text-white"
+                  }`}
+                  title="Click to sort by Status"
+                >
+                  <div className="flex items-center justify-center gap-1">
+                    <span>STATUS</span>
+                    {renderSortIndicator("status")}
+                  </div>
+                </th>
+
+                {/* ACTIONS Column */}
+                <th 
+                  scope="col" 
+                  onClick={() => handleSort("actions")}
+                  className={`py-3 px-3 text-center whitespace-nowrap cursor-pointer transition-colors group select-none ${
+                    sortKey === "actions" ? "bg-[#0c2847] text-[#38bdf8] font-black" : "hover:bg-[#0b2440] hover:text-white"
+                  }`}
+                  title="Click to sort by Action state"
+                >
+                  <div className="flex items-center justify-center gap-1">
+                    <span>ACTIONS</span>
+                    {renderSortIndicator("actions")}
+                  </div>
+                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#102947]">
