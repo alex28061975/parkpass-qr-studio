@@ -775,9 +775,9 @@ function PermitCardInner({
       if (payload && payload !== "-" && payload !== "CANCELLED") {
         try {
           activeQrDataUrl = await QRCode.toDataURL(payload, {
-            width: 400,
+            width: 180,
             margin: 1,
-            errorCorrectionLevel: "H",
+            errorCorrectionLevel: "M",
             color: { dark: "#111111", light: "#FFFFFF" }
           });
           setQrUrl(activeQrDataUrl);
@@ -1926,9 +1926,9 @@ function PermitCardInner({
       if (payload && payload !== "-" && payload !== "CANCELLED") {
         try {
           activeQrDataUrl = await QRCode.toDataURL(payload, {
-            width: 400,
+            width: 180,
             margin: 1,
-            errorCorrectionLevel: "H",
+            errorCorrectionLevel: "M",
             color: { dark: "#111111", light: "#FFFFFF" }
           });
           if (!targetRecord) {
