@@ -475,8 +475,8 @@ export function CsvDatabasePanel({
         <div className="file-summary">
           <div className="file-logo excel">X</div>
           <div className="file-meta">
-            <div className="file-name" title={uploadedFileName || "Visitor / Patient Parking Concessions"}>{uploadedFileName || "Visitor _ Patient Parking Concessions"}</div>
-            <div className="file-links"><button type="button" onClick={() => setConcessionsInputMode("file")}>File</button><span>|</span><button type="button" onClick={() => setConcessionsInputMode("paste")}>Paste</button><span>|</span><strong>{effectiveTotalCount.toLocaleString()} Records</strong></div>
+            <div className="file-name" title={uploadedFileName || "_Visitor _ Patient Parking Concessions Request Form(1-72).xlsx"}>{uploadedFileName || "_Visitor _ Patient Parking Concessions Request Form(1-72).xlsx"}</div>
+            <div className="file-links"><button type="button" onClick={() => setConcessionsInputMode("file")}>File</button><span>|</span><button type="button" onClick={() => setConcessionsInputMode("paste")}>Paste</button><span>|</span><span>{effectiveTotalCount.toLocaleString()} Records</span></div>
           </div>
         </div>
         {concessionsInputMode === "paste" ? (
@@ -508,7 +508,7 @@ export function CsvDatabasePanel({
         <div className="sidebar-card-title"><span>2. Voucher Codes CSV</span></div>
         <div className="file-summary">
           <div className="file-logo csv">CSV</div>
-          <div className="file-meta"><div className="file-name">{uploadedVouchersFileName || "Vouchers.csv"}</div><div className="file-links"><strong>{vouchersDatabase.length.toLocaleString()} Codes</strong></div></div>
+          <div className="file-meta"><div className="file-name">{uploadedVouchersFileName || "Vouchers.csv"}</div><div className="file-links"><span>{vouchersDatabase.length.toLocaleString()} Codes</span></div></div>
         </div>
         <div onDragEnter={handleVouchersDrag} onDragOver={handleVouchersDrag} onDragLeave={handleVouchersDrag} onDrop={handleVouchersDrop} onClick={() => vouchersFileInputRef.current?.click()} className={`sidebar-dropzone ${vouchersDragActive ? "drag-active" : ""}`}>
           <input type="file" ref={vouchersFileInputRef} onChange={handleVouchersFileUpload} accept=".csv,.txt" className="hidden" />
@@ -527,7 +527,6 @@ export function CsvDatabasePanel({
       <div className="sidebar-card processing-card">
         <div className="sidebar-card-title"><span>Spreadsheet Processing Date:</span></div>
         <div className="processing-row"><Clock /><span>{processingDate ? (() => { const p = processingDate.split("-"); return p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : processingDate; })() : "-"}</span></div>
-        <div className="processing-status"><span className="shield-dot">✓</span><span>{database.length ? "No Unique QR" : "No records loaded"}</span></div>
       </div>
 
       {feedbackMsg && <div className={`sidebar-feedback ${feedbackMsg.type}`}><span>{feedbackMsg.type === "success" ? "✓" : "!"}</span><span>{feedbackMsg.text}</span><button type="button" onClick={() => setFeedbackMsg(null)}><X /></button></div>}

@@ -1886,66 +1886,72 @@ export default function App() {
       />
 
       {activeTab === "dispatcher" && (
-        <main className="dispatcher-layout">
-          <CsvDatabasePanel
-            database={enrichedDatabase}
-            totalRecordsCount={totalRecordsCount > 0 ? totalRecordsCount : enrichedDatabase.length}
-            onDatabaseChange={handleDatabaseChange}
-            vouchersDatabase={vouchersDatabase}
-            onVouchersDatabaseChange={handleVouchersDatabaseChange}
-            onSelectRecord={handleSelectRecordQuickSearch}
-            onRefreshDatabase={refreshDatabase}
-            dispatchedKeys={dispatchedKeys}
-            dispatchDates={dispatchDates}
-            searchQuery={searchQuery}
-            onSearchQueryChange={setSearchQuery}
-            dateRangeFilter={dateRangeFilter}
-            onDateRangeFilterChange={handleDateRangeFilterChange}
-            isLoadingHistory={isLoadingHistory}
-            processingDate={formData.todayDate || getTodayISO()}
-            customVouchersMap={customVouchers}
-          />
-
-          <div className="dispatcher-main">
-            <PermitForm
-              data={formData}
+        <main className="w-full flex flex-col gap-4">
+          <div className="dispatcher-layout">
+            <CsvDatabasePanel
               database={enrichedDatabase}
+              totalRecordsCount={totalRecordsCount > 0 ? totalRecordsCount : enrichedDatabase.length}
+              onDatabaseChange={handleDatabaseChange}
               vouchersDatabase={vouchersDatabase}
+              onVouchersDatabaseChange={handleVouchersDatabaseChange}
+              onSelectRecord={handleSelectRecordQuickSearch}
+              onRefreshDatabase={refreshDatabase}
               dispatchedKeys={dispatchedKeys}
-              unsentKeys={unsentKeys}
-              dispatchBy={dispatchBy}
-              onChange={handleUpdate}
-              onClear={handleClear}
-            />
-
-            <DispatchCentre
-              database={enrichedDatabase}
-              vouchersDatabase={vouchersDatabase}
-              dispatchedKeys={dispatchedKeys}
-              unsentKeys={unsentKeys}
               dispatchDates={dispatchDates}
+              searchQuery={searchQuery}
+              onSearchQueryChange={setSearchQuery}
+              dateRangeFilter={dateRangeFilter}
+              onDateRangeFilterChange={handleDateRangeFilterChange}
+              isLoadingHistory={isLoadingHistory}
               processingDate={formData.todayDate || getTodayISO()}
-              onSelectRecord={handleSelectRecord}
-              onSendRecord={handleDispatchRecord}
-              onUnsendRecord={handleUnsendRecord}
-              onBulkEmail={handleHeaderSend}
+              customVouchersMap={customVouchers}
             />
 
-            <div id="print-card-wrapper" className="permit-card-engine" aria-hidden="true">
-              <PermitCard
-                ref={permitCardRef}
+            <div className="dispatcher-main">
+              <PermitForm
                 data={formData}
                 database={enrichedDatabase}
                 vouchersDatabase={vouchersDatabase}
                 dispatchedKeys={dispatchedKeys}
                 unsentKeys={unsentKeys}
                 dispatchBy={dispatchBy}
-                markAsDispatched={markAsDispatched}
-                unmarkAsDispatched={unmarkAsDispatched}
-                onSelectRecord={handleSelectRecord}
                 onChange={handleUpdate}
+                onClear={handleClear}
               />
             </div>
+          </div>
+
+          <DispatchCentre
+            database={enrichedDatabase}
+            vouchersDatabase={vouchersDatabase}
+            dispatchedKeys={dispatchedKeys}
+            unsentKeys={unsentKeys}
+            dispatchDates={dispatchDates}
+            processingDate={formData.todayDate || getTodayISO()}
+            formData={formData}
+            totalRecordsCount={totalRecordsCount > 0 ? totalRecordsCount : enrichedDatabase.length}
+            onSelectRecord={handleSelectRecord}
+            onSendRecord={handleDispatchRecord}
+            onUnsendRecord={handleUnsendRecord}
+            onBulkEmail={handleHeaderSend}
+            onClear={handleClear}
+            onChangeFormData={handleUpdate}
+          />
+
+          <div id="print-card-wrapper" className="permit-card-engine" aria-hidden="true">
+            <PermitCard
+              ref={permitCardRef}
+              data={formData}
+              database={enrichedDatabase}
+              vouchersDatabase={vouchersDatabase}
+              dispatchedKeys={dispatchedKeys}
+              unsentKeys={unsentKeys}
+              dispatchBy={dispatchBy}
+              markAsDispatched={markAsDispatched}
+              unmarkAsDispatched={unmarkAsDispatched}
+              onSelectRecord={handleSelectRecord}
+              onChange={handleUpdate}
+            />
           </div>
         </main>
       )}

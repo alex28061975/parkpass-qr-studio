@@ -1,11 +1,11 @@
-import React, { useState } from "react";
-import { BarChart3, Download, FileSpreadsheet, Mail, Moon, Printer, Settings, Sun, Table2, Monitor } from "lucide-react";
+import React, { useState, useRef, useEffect } from "react";
+import { QrCode, Settings, FileSpreadsheet, ChevronDown, Check } from "lucide-react";
 
 interface HeaderProps {
   darkMode: boolean;
   onToggleDarkMode: () => void;
-  activeTab: "dispatcher" | "table" | "analytics";
-  onActiveTabChange: (tab: "dispatcher" | "table" | "analytics") => void;
+  activeTab?: "dispatcher" | "table" | "analytics";
+  onActiveTabChange?: (tab: "dispatcher" | "table" | "analytics") => void;
   onExportExcel?: () => void;
   totalRecordsCount?: number;
   onEmail?: () => void;
@@ -16,70 +16,148 @@ interface HeaderProps {
 export function Header({
   darkMode,
   onToggleDarkMode,
+  onExportExcel,
   activeTab,
   onActiveTabChange,
-  onExportExcel,
-  onEmail,
-  onPrint,
-  onOutlook,
 }: HeaderProps) {
-  const [showViews, setShowViews] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const settingsRef = useRef<HTMLDivElement>(null);
 
-  const action = (label: string, icon: React.ReactNode, onClick?: () => void, title?: string) => (
-    <button
-      type="button"
-      onClick={onClick}
-      title={title || label}
-      className="park-action"
-      disabled={!onClick}
-    >
-      {icon}
-      <span>{label}</span>
-    </button>
-  );
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (settingsRef.current && !settingsRef.current.contains(event.target as Node)) {
+        setShowSettings(false);
+      }
+    }
+    if (showSettings) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [showSettings]);
 
   return (
     <header className="park-header no-print">
-      <div className="park-brand">
-        <div className="park-title-row">
-          <h1>ParkPass QR Studio</h1>
-          <span className="park-badge">v3.4</span>
-          <span className="park-badge park-badge-muted">Elite</span>
+      <div className="park-header-main">
+        {/* Window control dots: Close, Minimize, Maximize */}
+        <div className="window-control-dots" aria-hidden="true">
+          <span className="window-dot dot-close" title="Close" />
+          <span className="window-dot dot-minimize" title="Minimize" />
+          <span className="window-dot dot-maximize" title="Maximize" />
         </div>
-        <div className="park-subtitle">Patient &amp; Visitor Permit Management</div>
-        <div className="park-tagline">Status Tracking <b>•</b> Duplicate Protection <b>•</b> Bulk QR Dispatch</div>
+
+        {/* QR Code Icon */}
+        <div className="park-qr-icon-wrapper" title="QR Code Permit Management">
+          <QrCode className="w-7 h-7 text-[#5bdcff] dark:text-[#38bdf8]" />
+        </div>
+
+        {/* Main Title */}
+        <h1 className="park-main-title">Patient &amp; Visitor Permit Management</h1>
       </div>
 
-      <div className="park-header-actions">
+      <div className="park-header-controls">
+        {/* Export Excel button */}
+        {onExportExcel && (
+          <button
+            type="button"
+            className="park-header-btn park-export-btn"
+            onClick={onExportExcel}
+            title="Export database to Excel / CSV"
+          >
+            <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
+            <span>Export</span>
+          </button>
+        )}
+
+        {/* Settings Dropdown */}
+        <div className="park-settings-wrap" ref={settingsRef}>
+          <button
+            type="button"
+            className={`park-header-btn ${showSettings ? "active" : ""}`}
+            onClick={() => setShowSettings((prev) => !prev)}
+            title="Settings and views"
+            aria-expanded={showSettings}
+          >
+            <Settings className="w-4 h-4" />
+            <span>Settings</span>
+            <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showSettings ? "rotate-180" : ""}`} />
+          </button>
+
+          {showSettings && (
+            <div className="park-settings-menu">
+              <div className="park-menu-section-label">Switch View</div>
+              {onActiveTabChange && (
+                <>
+                  <button
+                    type="button"
+                    className={activeTab === "dispatcher" ? "selected" : ""}
+                    onClick={() => {
+                      onActiveTabChange("dispatcher");
+                      setShowSettings(false);
+                    }}
+                  >
+                    <span>Permit Dispatcher</span>
+                    {activeTab === "dispatcher" && <Check className="w-3.5 h-3.5 text-[#5bdcff]" />}
+                  </button>
+                  <button
+                    type="button"
+                    className={activeTab === "table" ? "selected" : ""}
+                    onClick={() => {
+                      onActiveTabChange("table");
+                      setShowSettings(false);
+                    }}
+                  >
+                    <span>Full Records Table</span>
+                    {activeTab === "table" && <Check className="w-3.5 h-3.5 text-[#5bdcff]" />}
+                  </button>
+                  <button
+                    type="button"
+                    className={activeTab === "analytics" ? "selected" : ""}
+                    onClick={() => {
+                      onActiveTabChange("analytics");
+                      setShowSettings(false);
+                    }}
+                  >
+                    <span>Analytics &amp; Reports</span>
+                    {activeTab === "analytics" && <Check className="w-3.5 h-3.5 text-[#5bdcff]" />}
+                  </button>
+                </>
+              )}
+
+              {onExportExcel && (
+                <>
+                  <div className="park-menu-divider" />
+                  <div className="park-menu-section-label">Data Actions</div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onExportExcel();
+                      setShowSettings(false);
+                    }}
+                  >
+                    <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400 mr-1.5 inline" />
+                    <span>Export to Spreadsheet</span>
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Dark Mode toggle */}
         <div className="park-dark-mode">
           <span>Dark Mode</span>
-          <button type="button" className={`park-switch ${darkMode ? "is-on" : ""}`} onClick={onToggleDarkMode} aria-label="Toggle dark mode">
+          <button 
+            type="button" 
+            className={`park-switch ${darkMode ? "is-on" : ""}`} 
+            onClick={onToggleDarkMode} 
+            aria-label="Toggle dark mode"
+          >
             <span />
           </button>
         </div>
-        <div className="park-action-row">
-          <div className="park-actions-label">Actions</div>
-          <div className="park-actions-divider" />
-          {action("Outlook", <Monitor />, onOutlook, "Open Outlook dispatch for the selected permit")}
-          {action("Excel", <FileSpreadsheet />, onExportExcel, "Export concessions to Excel")}
-          {action("Email", <Mail />, onEmail, "Open email dispatch for the selected permit")}
-          {action("Print", <Printer />, onPrint, "Print the selected permit")}
-          <div className="park-settings-wrap">
-            <button type="button" className="park-action" onClick={() => setShowViews(v => !v)} title="Open application views">
-              <Settings />
-              <span>Settings</span>
-            </button>
-            {showViews && (
-              <div className="park-settings-menu">
-                <button onClick={() => { onActiveTabChange("dispatcher"); setShowViews(false); }}>Dispatcher</button>
-                <button onClick={() => { onActiveTabChange("table"); setShowViews(false); }}>Full Database Table</button>
-                <button onClick={() => { onActiveTabChange("analytics"); setShowViews(false); }}>Daily Analytics</button>
-              </div>
-            )}
-          </div>
-        </div>
       </div>
-
     </header>
   );
 }

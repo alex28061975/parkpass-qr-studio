@@ -292,7 +292,14 @@ export function PermitMatchingTable({
                       <td 
                         className="py-2.5 px-3 text-center whitespace-nowrap border-r border-gray-150/60 dark:border-slate-800/60 select-none"
                       >
-                        {isDispatched ? (
+                        {isInvalid ? (
+                          <span 
+                            className="inline-flex items-center gap-0.5 bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 text-[10px] font-bold px-2 py-0.5 rounded-full border border-rose-200 dark:border-rose-900/40 select-none"
+                            title="Status: Cancelled (Display only)"
+                          >
+                            <span>CANCELLED</span>
+                          </span>
+                        ) : isDispatched ? (
                           <span 
                             className="inline-flex items-center gap-0.5 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 text-[10px] font-bold px-2 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-900/40 select-none"
                             title="Status: Sent (Display only)"
@@ -301,7 +308,7 @@ export function PermitMatchingTable({
                           </span>
                         ) : (
                           <span 
-                            className="inline-flex items-center gap-0.5 bg-blue-50 dark:bg-blue-950/40 text-[#005EB8] dark:text-blue-400 text-[10px] font-bold px-2 py-0.5 rounded-full border border-blue-200 dark:border-blue-900/40 select-none"
+                            className="inline-flex items-center gap-0.5 bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 text-[10px] font-bold px-2 py-0.5 rounded-full border border-amber-200 dark:border-amber-900/40 select-none"
                             title="Status: Pending (Display only)"
                           >
                             <span>Pending</span>

@@ -1,6 +1,6 @@
 {
-  "name": "Concessions Parking QR Card Generator",
-  "description": "A professional and mobile-optimized parking QR card generator for concession staff and permit holders.",
+  "name": "Patient & Visitor Permit Management",
+  "description": "A professional and mobile-optimized parking QR card and permit dispatch management portal.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

@@ -177,16 +177,6 @@ export function formatFormId(val: string | number | undefined | null): string {
   if (val === undefined || val === null || val === "") return "-";
   const str = String(val).trim();
   if (str === "" || str === "-") return "-";
-
-  if (/^\d+$/.test(str)) {
-    return str;
-  }
-
-  const match = str.match(/\d+/);
-  if (match) {
-    return match[0];
-  }
-
   return str;
 }
 
