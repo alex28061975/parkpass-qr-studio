@@ -233,10 +233,8 @@ export function DispatchCentre({
         case "actions": {
           const aDisp = checkIsRecordDispatched(a, a.vrm, a.driverName, a.dateRequired, dispatchedKeys, unsentKeys);
           const bDisp = checkIsRecordDispatched(b, b.vrm, b.driverName, b.dateRequired, dispatchedKeys, unsentKeys);
-          const aCanc = getIsCancelled(a, aIdx);
-          const bCanc = getIsCancelled(b, bIdx);
-          const aAct = aDisp ? "Unsend" : (aCanc ? "Restore" : "Send");
-          const bAct = bDisp ? "Unsend" : (bCanc ? "Restore" : "Send");
+          const aAct = aDisp ? "Unsend" : "Send";
+          const bAct = bDisp ? "Unsend" : "Send";
           comparison = aAct.localeCompare(bAct);
           break;
         }
@@ -672,19 +670,27 @@ export function DispatchCentre({
                           type="button" 
                           disabled={busyKey === rowKey} 
                           onClick={() => handleAction(record, isDispatched)} 
-                          className="flex items-center gap-1 px-3 py-1 bg-[#1d75f2] hover:bg-[#1565d8] text-white text-xs font-semibold transition-colors disabled:opacity-50 cursor-pointer whitespace-nowrap"
+                          className={`flex items-center gap-1 px-3 py-1 text-white text-xs font-semibold transition-colors disabled:opacity-50 cursor-pointer whitespace-nowrap ${
+                            isDispatched 
+                              ? "bg-[#dc2626] hover:bg-[#b91c1c]" 
+                              : "bg-[#1d75f2] hover:bg-[#1565d8]"
+                          }`}
                         >
                           {busyKey === rowKey ? (
                             <RefreshCw className="w-3 h-3 animate-spin" />
                           ) : (
                             <Mail className="w-3 h-3" />
                           )}
-                          <span>{isDispatched ? "Unsend" : (isCancelled ? "Restore" : "Send")}</span>
+                          <span>{isDispatched ? "Unsend" : "Send"}</span>
                         </button>
                         <button 
                           type="button" 
                           onClick={() => onSelectRecord(record)} 
-                          className="px-1.5 py-1 bg-[#1565d8] hover:bg-[#0f4eb0] border-l border-[#0f4eb0] text-white transition-colors cursor-pointer"
+                          className={`px-1.5 py-1 text-white transition-colors cursor-pointer ${
+                            isDispatched
+                              ? "bg-[#b91c1c] hover:bg-[#991b1b] border-l border-[#991b1b]"
+                              : "bg-[#1565d8] hover:bg-[#0f4eb0] border-l border-[#0f4eb0]"
+                          }`}
                           title="Select permit record"
                         >
                           <ChevronDown className="w-3 h-3" />

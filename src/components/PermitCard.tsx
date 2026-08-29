@@ -504,13 +504,13 @@ function PermitCardInner({
   }, [data.voucherCodesText, data.vrm, data.name, data.validFrom, (data as any).id, (data as any).formId, isCurrentDispatched, data.emailTemplate, data.emailType, data.isResend, (data as any).status, (data as any).isDispatched]);
 
   const isCancelled = useMemo(() => {
-    // Ignore an imported "CANCELLED" value here too - recompute dynamically from
-    // the record's actual required date rather than trusting a possibly-stale marker.
     if ((data as any).isCancelled === true) return true;
     const processingDateStr = data.todayDate || "";
     const validFromStr = data.validFrom || (data as any).dateRequired || "";
     if (isDateRequiredOutsideValidWindow(validFromStr, processingDateStr)) return true;
     if (checkIsBlockedDuplicate(data as any, database || [], data.todayDate)) return true;
+    const rawCodeText = (data.voucherCodesText || data.qrOverride || "").trim().toUpperCase();
+    if (rawCodeText === "CANCELLED") return true;
     return false;
   }, [data.todayDate, data.validFrom, (data as any).dateRequired, data, database]);
 
@@ -2011,8 +2011,9 @@ function PermitCardInner({
   const sendOne = async (record?: CsvPermitRecord) => {
     if (record) {
       onSelectRecord?.(record);
+      await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
     }
-    return handleSendClick(record);
+    return (ref as any)?.current?.send?.();
   };
 
   const bulkEmail = async (records?: CsvPermitRecord[]) => {
@@ -2029,7 +2030,7 @@ function PermitCardInner({
     for (const record of targets) {
       onSelectRecord?.(record);
       await new Promise(resolve => setTimeout(resolve, 400));
-      await handleSendClick(record);
+      await (ref as any)?.current?.send?.();
       await new Promise(resolve => setTimeout(resolve, 600));
     }
   };
