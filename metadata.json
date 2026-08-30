@@ -1,5 +1,5 @@
 {
-  "name": "Patient & Visitor Permit Management",
+  "name": "Patient & Visitor Parking Voucher Generator",
   "description": "A professional and mobile-optimized parking QR card and permit dispatch management portal.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]

@@ -24,7 +24,8 @@ import {
   getSpreadsheetMatchingAllocationsMap, 
   isDateRequiredOutsideValidWindow, 
   checkIsBlockedDuplicate,
-  exportToExcel
+  exportToExcel,
+  isRecordCancelled
 } from "../utils/csvParser";
 import { checkIsRecordDispatched } from "../utils/dispatchUtils";
 
@@ -44,6 +45,7 @@ interface DispatchCentreProps {
     [key: string]: any;
   };
   totalRecordsCount?: number;
+  searchQuery?: string;
   onSelectRecord: (record: CsvPermitRecord) => void;
   onSendRecord?: (record: CsvPermitRecord) => Promise<void> | void;
   onUnsendRecord?: (record: CsvPermitRecord) => Promise<void> | void;
@@ -86,6 +88,7 @@ export function DispatchCentre({
   processingDate, 
   formData,
   totalRecordsCount,
+  searchQuery,
   onSelectRecord, 
   onSendRecord, 
   onUnsendRecord, 
@@ -104,7 +107,8 @@ export function DispatchCentre({
 
   // Base records matching Spreadsheet Permits Matching Helper logic
   const baseRecords = useMemo(() => {
-    const rawMatches = activeOnly && processingDate 
+    const hasSearch = Boolean(searchQuery && searchQuery.trim());
+    const rawMatches = activeOnly && processingDate && !hasSearch
       ? getMatchingPermits(database, processingDate)
       : database;
 
@@ -113,7 +117,7 @@ export function DispatchCentre({
       const bId = Number(String(b.formId ?? b.id ?? 0).replace(/[^0-9]/g, "")) || 0;
       return aId - bId;
     });
-  }, [database, activeOnly, processingDate]);
+  }, [database, activeOnly, processingDate, searchQuery]);
 
   // Compute dynamic voucher allocations map matching Matching Helper exactly
   const recordCodeMap = useMemo(() => {
@@ -141,12 +145,9 @@ export function DispatchCentre({
     };
 
     const getIsCancelled = (record: CsvPermitRecord, idx: number) => {
-      const isDateCancelled = isDateRequiredOutsideValidWindow(record.dateRequired || record.validFrom, processingDate);
-      const isCancelledFlag = (record as any).isCancelled === true;
-      const isDuplicateBlocked = checkIsBlockedDuplicate(record, database, processingDate);
       const recordKey = String(record.formId ?? record.id ?? idx);
       const displayCode = recordCodeMap.get(recordKey);
-      return isDateCancelled || isCancelledFlag || isDuplicateBlocked || displayCode === "CANCELLED";
+      return isRecordCancelled(record, processingDate, database) || displayCode === "CANCELLED";
     };
 
     const getStatusStr = (record: CsvPermitRecord, idx: number) => {
@@ -248,6 +249,23 @@ export function DispatchCentre({
     return sorted;
   }, [baseRecords, sortKey, sortDirection, database, processingDate, recordCodeMap, dispatchedKeys, unsentKeys]);
 
+  const filteredRecords = useMemo(() => {
+    if (!searchQuery || !searchQuery.trim()) return sortedRecords;
+    const q = searchQuery.trim().toLowerCase();
+    return sortedRecords.filter(r => {
+      const cleanFormId = String(r.formId ?? r.id ?? "");
+      return (
+        cleanFormId.toLowerCase().includes(q) ||
+        (r.driverName || "").toLowerCase().includes(q) ||
+        (r.vrm || "").toLowerCase().includes(q) ||
+        (r.hospital || "").toLowerCase().includes(q) ||
+        (r.ward || "").toLowerCase().includes(q) ||
+        (r.email || "").toLowerCase().includes(q) ||
+        (r.voucherCode || "").toLowerCase().includes(q)
+      );
+    });
+  }, [sortedRecords, searchQuery]);
+
   const handleSort = (key: SortKey) => {
     if (sortKey === key) {
       if (sortDirection === "asc") {
@@ -279,7 +297,7 @@ export function DispatchCentre({
     );
   };
 
-  const count = sortedRecords.length;
+  const count = filteredRecords.length;
   const totalDbCount = totalRecordsCount && totalRecordsCount > 0 ? totalRecordsCount : (database.length || 889);
   const totalVouchersCount = vouchersDatabase.length > 0 ? vouchersDatabase.length : 174;
 
@@ -530,22 +548,19 @@ export function DispatchCentre({
               </tr>
             </thead>
             <tbody className="divide-y divide-[#102947]">
-              {sortedRecords.map((record, index) => {
+              {filteredRecords.map((record, index) => {
                 const recordIso = parseDateToISO(record.dateRequired || record.validFrom);
                 const expiresIso = recordIso ? addDays(recordIso, 6) : "";
 
-                const isDateCancelled = isDateRequiredOutsideValidWindow(record.dateRequired || record.validFrom, processingDate);
-                const isCancelledFlag = (record as any).isCancelled === true;
-                const isDuplicateBlocked = checkIsBlockedDuplicate(record, database, processingDate);
-
+                const isCancelledRecord = isRecordCancelled(record, processingDate, database);
                 const recordKey = String(record.formId ?? record.id ?? index);
                 let displayCode = recordCodeMap.get(recordKey);
 
                 if (displayCode === undefined || displayCode === null) {
-                  displayCode = isDuplicateBlocked ? "CANCELLED" : (record.voucherCode || "-");
+                  displayCode = isCancelledRecord ? "CANCELLED" : (record.voucherCode || "-");
                 }
 
-                const isCancelled = isDateCancelled || isCancelledFlag || isDuplicateBlocked || displayCode === "CANCELLED";
+                const isCancelled = isCancelledRecord || displayCode === "CANCELLED";
                 const rowKey = String(record.formId ?? record.id ?? record.vrm ?? index);
 
                 const isDispatched = checkIsRecordDispatched(record, record.vrm, record.driverName, record.dateRequired, dispatchedKeys, unsentKeys);

@@ -19,10 +19,26 @@ export interface PermitData {
   department?: string;
   startTime?: string;
   createdAt?: string;
+  created_at?: string;
+  completionTime?: string;
   status?: string;
   emailType?: "SEND_CONCESSION" | "RESEND_CONCESSION" | string;
   isResend?: boolean;
   emailTemplate?: "new" | "replacement";
+  voucherCode?: string;
+  prePaidCode?: string;
+  qrCode?: string;
+  serialNumber?: string;
+  voucher?: string;
+  code?: string;
+  driverName?: string;
+  driverEmail?: string;
+  isCancelled?: boolean;
+  isDispatched?: boolean;
+  dispatchedAt?: string;
+  hasOriginalVoucher?: boolean;
+  processingDate?: string;
+  submissionDate?: string;
 }
 
 export const HOSPITAL_SITES = [

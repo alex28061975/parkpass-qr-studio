@@ -90,25 +90,17 @@ export function PermitForm({
 
   // Unused vouchers computation
   const unusedVouchersForDay = useMemo<ParsedVoucherData[]>(() => {
-    const permitDate = data.validFrom || (data as any).dateRequired || (data as any).processingDate || data.todayDate || "";
-    const targetIso = parseDateToISO(permitDate);
+    const targetIso = resolvePermitDate(data);
     if (!targetIso) return [];
 
-    const processingDate = resolvePermitDate(data);
-    const spreadsheetAssignedCodes = getSpreadsheetMatchingAssignedCodes(
-      matchingPermits,
-      database,
-      processingDate,
-      vouchersDatabase
+    return getUnusedVouchersForDate(
+      vouchersDatabase, 
+      database, 
+      targetIso, 
+      data.vrm, 
+      data, 
+      matchingPermits
     );
-
-    const availableVouchers = getUnusedVouchersForDate(vouchersDatabase, database, targetIso, data.vrm, data, matchingPermits);
-    return availableVouchers.filter(v => {
-      const vIso = parseDateToISO(v.validFrom || v.valid_from || (v as any).dateRequired || (v as any).date || "");
-      if (vIso !== targetIso) return false;
-      const codeUpper = (v.code || "").trim().toUpperCase();
-      return !spreadsheetAssignedCodes.has(codeUpper);
-    });
   }, [
     vouchersDatabase, 
     database, 
@@ -117,7 +109,7 @@ export function PermitForm({
   ]);
 
   const isBlockedDuplicate = useMemo(() => {
-    return checkIsBlockedDuplicate(data as any, database || [], data.todayDate);
+    return checkIsBlockedDuplicate(data, database || [], data.todayDate);
   }, [data, database, data.todayDate]);
 
   const dateWarning = useMemo(() => {
@@ -143,7 +135,7 @@ export function PermitForm({
       validFrom: fromISO || data.validFrom,
       validTo: toISO || data.validTo,
       todayDate: data.todayDate,
-      dateRequired: record.dateRequired || (record as any).dateRequired || data.todayDate,
+      dateRequired: record.dateRequired || data.todayDate,
       phone: record.phone || "",
       email: (record.email || "").toLowerCase(),
       voucherCodesText: record.voucherCode || "-",

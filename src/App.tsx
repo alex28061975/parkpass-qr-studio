@@ -23,7 +23,7 @@ import {
 // CSV Database Imports
 import { INITIAL_DEMO_CSV } from "./data/defaultCsv";
 import { isVrmSilentBlockedSync } from "./lib/blocklist";
-import { CsvPermitRecord, parsePermitCsv, parseDateToISO, addDays, formatPhoneNumber, ParsedVoucherData, addDaysSafe, parseDateRange, getDatesInRange, cleanVoucherCodeValue, exportToExcel, isVoucherCodeMatch, sortRecordsByFormIdDesc, getMatchingPermits, isDateRequiredOutsideValidWindow, getTodayISO, checkIsBlockedDuplicate, parseFullDateTimeMs, normalizeVouchersList } from "./utils/csvParser";
+import { CsvPermitRecord, parsePermitCsv, parseDateToISO, addDays, formatPhoneNumber, ParsedVoucherData, addDaysSafe, parseDateRange, getDatesInRange, cleanVoucherCodeValue, exportToExcel, isVoucherCodeMatch, sortRecordsByFormIdDesc, getMatchingPermits, isDateRequiredOutsideValidWindow, getTodayISO, checkIsBlockedDuplicate, parseFullDateTimeMs, normalizeVouchersList, isRecordCancelled } from "./utils/csvParser";
 import { CsvDatabasePanel } from "./components/CsvDatabasePanel";
 import { TableView } from "./components/TableView";
 import { AnalyticsDashboard } from "./components/AnalyticsDashboard";
@@ -294,17 +294,14 @@ export function enrichRecordsWithVouchers(
     const isSent = checkIsRecordDispatched(record, record.vrm, record.driverName, record.dateRequired, dispatchedKeys, unsentKeys);
 
     const processingDateStr = fallbackDateStr || (record.startTime ? record.startTime.trim().split(" ")[0] : "");
-    const validFromStr = record.validFrom || record.dateRequired || startISO;
-    // Ignore imported "CANCELLED" values - recompute dynamically from the record's
-    // actual required date, so a stale marker from a previous import/day doesn't stick.
-    const isCancelled = (record as any).isCancelled === true || isDateRequiredOutsideValidWindow(validFromStr, processingDateStr);
+    const isCancelled = isRecordCancelled(record, processingDateStr, recordsList);
 
     const keyWithDate = (startISO && cleanVrm) ? `${cleanVrm}_${startISO}` : "";
     const customOverride = (record.formId ? customVouchersMap[String(record.formId)] : undefined) ||
                            (record.id ? customVouchersMap[String(record.id)] : undefined) ||
                            (keyWithDate ? customVouchersMap[keyWithDate] : undefined);
 
-    const existingCode = record.voucherCode || (record as any).prePaidCode || (record as any).qrCode || (record as any).serialNumber;
+    const existingCode = record.voucherCode || record.prePaidCode || record.qrCode || record.serialNumber;
 
     return { cleanVrm, startISO, endISO, isSent, isCancelled, customOverride, existingCode };
   };
@@ -312,7 +309,7 @@ export function enrichRecordsWithVouchers(
   const getRecordSortInfo = (r: CsvPermitRecord, idx: number) => {
     const rawDateStr = r.validFrom || r.dateRequired || r.createdAt || r.startTime;
     const baseIso = parseDateToISO(rawDateStr) || fallbackDateStr || getTodayISO();
-    const cand = r.startTime || r.createdAt || (r as any).created_at || (r as any).completionTime || r.validFrom || r.dateRequired;
+    const cand = r.startTime || r.createdAt || r.created_at || r.completionTime || r.validFrom || r.dateRequired;
     const timeMs = parseFullDateTimeMs(cand, baseIso) ?? new Date(baseIso).getTime();
     const numFormId = Number(r.formId ?? r.id ?? 0) || 0;
     return { timeMs, numFormId, idx };
@@ -356,7 +353,7 @@ export function enrichRecordsWithVouchers(
   recordsList.forEach((r) => {
     const vrmKey = r.vrm ? r.vrm.toUpperCase().replace(/\s+/g, "") : "";
     if (!vrmKey) return;
-    const existing = r.voucherCode || (r as any).prePaidCode || (r as any).qrCode || (r as any).serialNumber;
+    const existing = r.voucherCode || r.prePaidCode || r.qrCode || r.serialNumber;
     if (existing) {
       const clean = cleanVoucherCodeValue(existing);
       if (clean && clean !== "-" && clean !== "CANCELLED") {
@@ -382,7 +379,7 @@ export function enrichRecordsWithVouchers(
     }
 
     // Explicitly cancelled records in database
-    if (record.voucherCode === "CANCELLED" || (record as any).isCancelled === true) {
+    if (record.voucherCode === "CANCELLED" || record.isCancelled === true) {
       enrichedByIndex.set(index, {
         ...record,
         voucherCode: "CANCELLED",
@@ -449,7 +446,7 @@ export function enrichRecordsWithVouchers(
     enrichedByIndex.set(index, {
       ...record,
       voucherCode: finalCodeValue,
-      prePaidCode: finalCodeValue !== "-" ? finalCodeValue : ((record as any).prePaidCode || "-"),
+      prePaidCode: finalCodeValue !== "-" ? finalCodeValue : (record.prePaidCode || "-"),
       hasOriginalVoucher: foundFromVouchersDb && finalCodeValue !== "-"
     });
   });
@@ -686,7 +683,7 @@ export default function App() {
   const markAsDispatched = async (vrm?: string, email?: string, record?: CsvPermitRecord): Promise<boolean> => {
     lastUserActionTimestampRef.current = Date.now();
     
-    const targetRecord = record || (vrm ? enrichedDatabase.find(r => r.vrm && r.vrm.toUpperCase().replace(/\s+/g, "") === vrm.toUpperCase().replace(/\s+/g, "")) : undefined) || (vrm ? { vrm, email } as any : undefined);
+    const targetRecord: CsvPermitRecord | undefined = record || (vrm ? enrichedDatabase.find(r => r.vrm && r.vrm.toUpperCase().replace(/\s+/g, "") === vrm.toUpperCase().replace(/\s+/g, "")) : undefined) || (vrm ? { vrm, email } : undefined);
     if (!targetRecord) {
       console.error("❌ Record not found. Cannot mark as dispatched.");
       alert("❌ Record not found. Cannot mark as dispatched.");
@@ -820,7 +817,7 @@ export default function App() {
   const unmarkAsDispatched = async (vrm?: string, email?: string, record?: CsvPermitRecord): Promise<boolean> => {
     lastUserActionTimestampRef.current = Date.now();
     
-    const targetRecord = record || (vrm ? enrichedDatabase.find(r => r.vrm && r.vrm.toUpperCase().replace(/\s+/g, "") === vrm.toUpperCase().replace(/\s+/g, "")) : undefined) || (vrm ? { vrm, email } as any : undefined);
+    const targetRecord: CsvPermitRecord | undefined = record || (vrm ? enrichedDatabase.find(r => r.vrm && r.vrm.toUpperCase().replace(/\s+/g, "") === vrm.toUpperCase().replace(/\s+/g, "")) : undefined) || (vrm ? { vrm, email } : undefined);
     if (!targetRecord) {
       console.error("❌ Record not found. Cannot unmark as dispatched.");
       alert("❌ Record not found. Cannot unmark as dispatched.");
@@ -1061,7 +1058,7 @@ export default function App() {
           safeLocalStorage.setItem("concessions_permit_db", JSON.stringify(dbPermits));
         }
 
-        const countFromDb = (dbPermits as any).totalCount;
+        const countFromDb = (dbPermits as { totalCount?: number }).totalCount;
         if (typeof countFromDb === 'number' && countFromDb > 0) {
           setTotalRecordsCount(countFromDb);
         } else {
@@ -1525,7 +1522,7 @@ export default function App() {
       const cleanVrm = activeVrm ? activeVrm.toUpperCase().replace(/\s+/g, "") : "";
       const activeDateISO = parseDateToISO(formData.validFrom || formData.todayDate || "") || getTodayISO();
       const targetId = String(updates.id || formData.id || "").trim();
-      const targetFormId = String(updates.formId || (formData as any).formId || "").trim();
+      const targetFormId = String(updates.formId || formData.formId || "").trim();
 
       if (cleanVrm || targetId || targetFormId) {
         const nextCustomVouchers = { ...customVouchers };
@@ -1572,10 +1569,10 @@ export default function App() {
         });
 
         // When a voucher code is changed or selected from Active Date Codes, reset this permit's STATUS to Pending
-        const targetRecord = (updates.id || formData.id || updates.formId || (formData as any).formId)
+        const targetRecord = (updates.id || formData.id || updates.formId || formData.formId)
           ? enrichedDatabase.find(r => 
               ((updates.id || formData.id) && r.id === (updates.id || formData.id)) ||
-              ((updates.formId || (formData as any).formId) && (r.formId === (updates.formId || (formData as any).formId) || r.id === (updates.formId || (formData as any).formId)))
+              ((updates.formId || formData.formId) && (r.formId === (updates.formId || formData.formId) || r.id === (updates.formId || formData.formId)))
             )
           : enrichedDatabase.find(r => {
               const rVrm = r.vrm ? r.vrm.toUpperCase().replace(/\s+/g, "") : "";
@@ -1592,8 +1589,8 @@ export default function App() {
         if (updates.id || formData.id) {
           keysToUnsent.push(String(updates.id || formData.id));
         }
-        if (updates.formId || (formData as any).formId) {
-          keysToUnsent.push(String(updates.formId || (formData as any).formId));
+        if (updates.formId || formData.formId) {
+          keysToUnsent.push(String(updates.formId || formData.formId));
         }
         if (cleanVrm) {
           keysToUnsent.push(cleanVrm);
@@ -1943,6 +1940,7 @@ export default function App() {
             processingDate={formData.todayDate || getTodayISO()}
             formData={formData}
             totalRecordsCount={totalRecordsCount > 0 ? totalRecordsCount : enrichedDatabase.length}
+            searchQuery={searchQuery}
             onSelectRecord={handleSelectRecord}
             onSendRecord={handleDispatchRecord}
             onUnsendRecord={handleUnsendRecord}

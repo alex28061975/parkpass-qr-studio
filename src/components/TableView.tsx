@@ -28,11 +28,13 @@ import {
   parseDateToISO,
   getTodayISO,
   checkIsBlockedDuplicate,
-  isDateRequiredOutsideValidWindow
+  isDateRequiredOutsideValidWindow,
+  getSpreadsheetMatchingAllocationsMap,
+  extractRecordVoucherCode,
+  isRecordCancelled
 } from "../utils/csvParser";
 import { checkIsRecordDispatched } from "../utils/dispatchUtils";
 import { isSupabaseConfigured } from "../lib/supabase";
-import { isRecordCancelled, isCancelled } from "./PermitCard";
 import { BlocklistPanel } from "./BlocklistPanel";
 
 interface TableViewProps {
@@ -98,102 +100,15 @@ export function TableView({
     return sortRecordsByFormIdDesc(database);
   }, [database]);
 
-  // Pre-calculate allocated codes across sortedDatabase using vouchersDatabase
+  // Pre-calculate allocated codes across sortedDatabase using canonical csvParser allocation logic
   const tableRecordCodeMap = useMemo(() => {
-    const map = new Map<string, string>();
-    const assignedCodesSet = new Set<string>();
-    const effectiveProcessingDate = processingDate || getTodayISO();
-
-    // Pass 1: Existing valid codes directly from database
-    const chronoRecords = [...database].sort((a, b) => {
-      const aId = Number(String(a.formId ?? a.id ?? 0).replace(/[^0-9]/g, "")) || 0;
-      const bId = Number(String(b.formId ?? b.id ?? 0).replace(/[^0-9]/g, "")) || 0;
-      return aId - bId;
-    });
-
-    chronoRecords.forEach((r, idx) => {
-      const recordKey = String(r.formId ?? r.id ?? idx);
-      const isRecCancelled = isRecordCancelled(r, effectiveProcessingDate) || checkIsBlockedDuplicate(r, database, effectiveProcessingDate);
-
-      // If record is dynamically cancelled or blocked
-      if (isRecCancelled) {
-        map.set(recordKey, "CANCELLED");
-        return;
-      }
-
-      // Check custom vouchers map override first
-      const rVrm = (r.vrm || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
-      const rDateIso = parseDateToISO(r.dateRequired || r.validFrom || "");
-      const keyWithDate = rDateIso ? `${rVrm}_${rDateIso}` : rVrm;
-      const customOverride = customVouchersMap ? (
-        customVouchersMap[keyWithDate] ||
-        customVouchersMap[rVrm] ||
-        (r.id ? customVouchersMap[r.id] : undefined) ||
-        (r.formId ? customVouchersMap[String(r.formId)] : undefined)
-      ) : undefined;
-
-      if (customOverride && customOverride !== "-" && customOverride.toUpperCase() !== "CANCELLED") {
-        const clean = String(customOverride).trim().split(/[\n,;\s]+/)[0]?.trim().toUpperCase();
-        if (clean && clean !== "-" && clean !== "CANCELLED") {
-          map.set(recordKey, clean);
-          assignedCodesSet.add(clean);
-          return;
-        }
-      }
-
-      const rawCode = r.voucherCode || (r as any).prePaidCode || (r as any).qrCode || (r as any).serialNumber;
-      const rawCodeUpper = rawCode ? String(rawCode).trim().toUpperCase() : "";
-      if (rawCode && rawCode !== "-" && rawCodeUpper !== "CANCELLED") {
-        const clean = String(rawCode).trim().split(/[\n,;\s]+/)[0]?.trim().toUpperCase();
-        if (clean && clean !== "-" && clean !== "CANCELLED") {
-          map.set(recordKey, clean);
-          assignedCodesSet.add(clean);
-        }
-      }
-    });
-
-    // Pass 2: Allocate from vouchersDatabase if available for records without codes
-    if (vouchersDatabase && vouchersDatabase.length > 0) {
-      chronoRecords.forEach((r, idx) => {
-        const recordKey = String(r.formId ?? r.id ?? idx);
-        if (map.has(recordKey)) return;
-
-        const isRecCancelled = isRecordCancelled(r, effectiveProcessingDate) || checkIsBlockedDuplicate(r, database, effectiveProcessingDate);
-        if (isRecCancelled) {
-          map.set(recordKey, "CANCELLED");
-          return;
-        }
-
-        const rVrm = (r.vrm || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
-
-        let nextCode = "";
-        if (rVrm) {
-          const vrmMatch = (vouchersDatabase || []).find(v => {
-            const vVrm = (v.vrm || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
-            return vVrm && vVrm === rVrm && !assignedCodesSet.has(v.code.trim().toUpperCase());
-          });
-          if (vrmMatch && vrmMatch.code) {
-            nextCode = vrmMatch.code.trim().toUpperCase();
-          }
-        }
-
-        if (!nextCode) {
-          const avail = (vouchersDatabase || []).find(v => v.code && !assignedCodesSet.has(v.code.trim().toUpperCase()))?.code;
-          if (avail) {
-            nextCode = (typeof avail === "string" ? avail : (avail as any).code).trim().toUpperCase();
-          }
-        }
-
-        if (nextCode) {
-          map.set(recordKey, nextCode);
-          assignedCodesSet.add(nextCode);
-        } else {
-          map.set(recordKey, "-");
-        }
-      });
-    }
-
-    return map;
+    return getSpreadsheetMatchingAllocationsMap(
+      database,
+      database,
+      processingDate || getTodayISO(),
+      vouchersDatabase,
+      customVouchersMap
+    );
   }, [database, vouchersDatabase, customVouchersMap, processingDate]);
 
   // Extract unique hospital sites for filtering
@@ -213,7 +128,7 @@ export function TableView({
       // Secondary in-memory Date Range Filter only when Supabase is not active
       if (!isSupabaseConfigured() && dateRangeFilter && dateRangeFilter !== 'all') {
         const days = dateRangeFilter === '7days' ? 7 : 30;
-        const rawDate = r.dateRequired || r.todayDate || (r as any).createdAt || (r as any).created_at;
+        const rawDate = r.dateRequired || r.todayDate || r.createdAt || r.created_at;
         if (rawDate) {
           const iso = parseDateToISO(rawDate);
           if (iso) {
@@ -264,7 +179,7 @@ export function TableView({
 
   const handleLoadRecord = (record: CsvPermitRecord) => {
     const effectiveProcessingDate = processingDate || getTodayISO();
-    const isRecCancelled = isRecordCancelled(record, effectiveProcessingDate) || checkIsBlockedDuplicate(record, database, effectiveProcessingDate);
+    const isRecCancelled = isRecordCancelled(record, effectiveProcessingDate, database);
 
     let displayCode = "-";
     if (isRecCancelled) {
@@ -272,7 +187,7 @@ export function TableView({
     } else {
       const recordKey = String(record.formId ?? record.id ?? "");
       const allocatedCode = tableRecordCodeMap.get(recordKey);
-      const rawVoucher = record.voucherCode || (record as any).prePaidCode || (record as any).qrCode;
+      const rawVoucher = extractRecordVoucherCode(record);
       displayCode = (allocatedCode && allocatedCode !== "-" && allocatedCode !== "CANCELLED")
         ? allocatedCode
         : (rawVoucher && rawVoucher.trim() !== "" && rawVoucher.trim().toUpperCase() !== "CANCELLED")
@@ -291,7 +206,7 @@ export function TableView({
     onSelectRecord(updatedRecord);
     
     // Update Processing Date to the record's Start Time (submission timestamp) when "Load Desk" / "Load Table" is clicked
-    const submissionTimestamp = record.startTime || (record as any).created_at || (record as any).createdAt || (record as any).completionTime || record.validFrom || record.dateRequired;
+    const submissionTimestamp = record.startTime || record.created_at || record.createdAt || record.completionTime || record.validFrom || record.dateRequired;
     const fromISO = parseDateToISO(submissionTimestamp);
     if (fromISO && onProcessingDateChange) {
       onProcessingDateChange(fromISO);
@@ -502,10 +417,10 @@ export function TableView({
                   const recordKey = String(r.formId ?? r.id ?? idx);
                   const isDispatched = checkIsRecordDispatched(r, r.vrm, r.driverName, r.dateRequired, dispatchedKeys, unsentKeys);
                   const effectiveProcessingDate = processingDate || getTodayISO();
-                  const isRecCancelled = isRecordCancelled(r, effectiveProcessingDate) || checkIsBlockedDuplicate(r, database, effectiveProcessingDate);
+                  const isRecCancelled = isRecordCancelled(r, effectiveProcessingDate, database);
 
                   const allocatedCode = tableRecordCodeMap.get(recordKey);
-                  const rawVoucherCode = r.voucherCode || (r as any).prePaidCode || (r as any).qrCode || (r as any).serialNumber;
+                  const rawVoucherCode = extractRecordVoucherCode(r);
 
                   let displayCode = "-";
                   if (isRecCancelled) {

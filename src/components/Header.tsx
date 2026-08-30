@@ -53,7 +53,7 @@ export function Header({
         </div>
 
         {/* Main Title */}
-        <h1 className="park-main-title">Patient &amp; Visitor Permit Management</h1>
+        <h1 className="park-main-title">Patient &amp; Visitor Parking Voucher Generator</h1>
       </div>
 
       <div className="park-header-controls">

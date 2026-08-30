@@ -6,8 +6,8 @@ import {
   parseDateToISO, 
   addDays, 
   getTodayISO,
-  isDateRequiredOutsideValidWindow,
-  checkIsBlockedDuplicate
+  getSpreadsheetMatchingAllocationsMap,
+  isRecordCancelled
 } from "../utils/csvParser";
 import { checkIsRecordDispatched } from "../utils/dispatchUtils";
 
@@ -77,112 +77,18 @@ export function PermitMatchingTable({
       return Boolean(vFromIso && vFromIso === activeFromISO);
     });
   }, [activeFromISO, vouchersDatabase]);
-  const activeDateCodes = React.useMemo(() => activeVouchers.map(v => v.code).filter(Boolean), [activeVouchers]);
   const matchingVouchersCount = activeVouchers.length;
 
   // Auto-Assign QR Voucher Code to Unblocked Baseline Records:
   // Pre-calculate allocated codes across sortedMatchingPermits so valid records missing a code get the next available active date code
   const recordCodeMap = React.useMemo(() => {
-    const map = new Map<string, string>();
-    const assignedCodesSet = new Set<string>();
-
-    // Pass 1: Register records that already have a specific valid code
-    sortedMatchingPermits.forEach((r, idx) => {
-      const recordKey = String(r.formId ?? r.id ?? idx);
-      
-      // 🔥 Ignore imported "CANCELLED" values - recompute dynamically from the
-      // record's actual required date, just like BLOCKED values below. A stored
-      // CANCELLED marker may be stale (re-imported from an earlier export, or
-      // left over from a previous day) so the date window is the source of truth.
-      const isCancelled = isDateRequiredOutsideValidWindow(r.dateRequired || r.validFrom, processingDate) ||
-                          (r as any).isCancelled === true;
-
-      if (isCancelled) {
-        map.set(recordKey, "CANCELLED");
-        return;
-      }
-
-      // First, check if the record is a duplicate (same VRM within the window) -
-      // duplicates are now shown as CANCELLED rather than a separate BLOCKED status.
-      const isDuplicateBlocked = checkIsBlockedDuplicate(r, effectiveDatabase, processingDate);
-      
-      if (isDuplicateBlocked) {
-        map.set(recordKey, "CANCELLED");
-        return;
-      }
-      
-      // Only use existing code if it's NOT cancelled/empty and is a valid code
-      const rawCode = r.voucherCode || (r as any).prePaidCode || (r as any).qrCode || (r as any).serialNumber;
-      const rawCodeUpper = rawCode ? String(rawCode).trim().toUpperCase() : "";
-      
-      if (rawCode && rawCode !== "-" && rawCodeUpper !== "CANCELLED") {
-        const clean = String(rawCode).trim().split(/[\n,;\s]+/)[0]?.trim().toUpperCase();
-        if (clean && clean !== "-" && clean !== "CANCELLED") {
-          map.set(recordKey, clean);
-          assignedCodesSet.add(clean);
-        }
-      }
-    });
-
-    // Pass 2: Auto-assign next available active date code for unblocked records that lack a code
-    sortedMatchingPermits.forEach((r, idx) => {
-      const recordKey = String(r.formId ?? r.id ?? idx);
-      
-      // Skip if already assigned in Pass 1
-      if (map.has(recordKey)) return;
-
-      const isCancelled = isDateRequiredOutsideValidWindow(r.dateRequired || r.validFrom, processingDate) ||
-                          (r as any).isCancelled === true;
-
-      if (isCancelled) {
-        map.set(recordKey, "CANCELLED");
-        return;
-      }
-
-      // Re-evaluate duplicate status - shown as CANCELLED
-      const isDuplicateBlocked = checkIsBlockedDuplicate(r, effectiveDatabase, processingDate);
-      
-      if (isDuplicateBlocked) {
-        map.set(recordKey, "CANCELLED");
-        return;
-      }
-
-      const rVrm = (r.vrm || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
-
-      // 1. Try matching VRM in active vouchers or vouchersDatabase
-      let nextCode = "";
-      if (rVrm) {
-        const vrmMatch = activeVouchers.find(v => {
-          const vVrm = (v.vrm || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
-          return vVrm && vVrm === rVrm && !assignedCodesSet.has(v.code.trim().toUpperCase());
-        }) || (vouchersDatabase || []).find(v => {
-          const vVrm = (v.vrm || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
-          return vVrm && vVrm === rVrm && !assignedCodesSet.has(v.code.trim().toUpperCase());
-        });
-        if (vrmMatch && vrmMatch.code) {
-          nextCode = vrmMatch.code.trim().toUpperCase();
-        }
-      }
-
-      // 2. Next available from active date codes or general vouchersDatabase
-      if (!nextCode) {
-        const avail = activeDateCodes.find(c => !assignedCodesSet.has(c.trim().toUpperCase())) ||
-                      (vouchersDatabase || []).find(v => v.code && !assignedCodesSet.has(v.code.trim().toUpperCase()))?.code;
-        if (avail) {
-          nextCode = (typeof avail === "string" ? avail : (avail as any).code).trim().toUpperCase();
-        }
-      }
-
-      if (nextCode) {
-        map.set(recordKey, nextCode);
-        assignedCodesSet.add(nextCode);
-      } else {
-        map.set(recordKey, "-");
-      }
-    });
-
-    return map;
-  }, [sortedMatchingPermits, effectiveDatabase, database, processingDate, activeVouchers, activeDateCodes, vouchersDatabase]);
+    return getSpreadsheetMatchingAllocationsMap(
+      sortedMatchingPermits,
+      database,
+      processingDate,
+      vouchersDatabase
+    );
+  }, [sortedMatchingPermits, database, processingDate, vouchersDatabase]);
 
   return (
     <div className="pt-3 border-t border-gray-100 dark:border-slate-800 space-y-2.5 animate-fade-in">
@@ -241,41 +147,29 @@ export function PermitMatchingTable({
                   const expiresIso = addDays(recordIso, 6);
                   
                   const validFromISO = parseDateToISO(record.validFrom || record.dateRequired);
-                  const refDateISO = parseDateToISO(processingDate) || parseDateToISO((record as any).todayDate) || getTodayISO();
+                  const refDateISO = parseDateToISO(processingDate) || parseDateToISO(record.todayDate) || getTodayISO();
                   const daysActive = validFromISO ? Math.round((new Date(refDateISO).getTime() - new Date(validFromISO).getTime()) / (1000 * 60 * 60 * 24)) : 0;
                   
-                  // Ignore imported "CANCELLED" values - recompute dynamically from
-                  // the record's actual required date (see recordCodeMap above).
-                  const isCancelled = isDateRequiredOutsideValidWindow(record.dateRequired || record.validFrom, processingDate) ||
-                                      (record as any).isCancelled === true;
-
+                  // Canonical isRecordCancelled check
+                  const isCancelled = isRecordCancelled(record, processingDate, effectiveDatabase);
                   const isDispatched = checkIsRecordDispatched(record, record.vrm, record.driverName, record.dateRequired, dispatchedKeys, unsentKeys);
-
-                  // Duplicate permits (same VRM within the window) are now shown as
-                  // CANCELLED, not a separate BLOCKED status.
-                  const isDuplicateBlocked = checkIsBlockedDuplicate(record, effectiveDatabase, processingDate);
 
                   // Get Form ID for display
                   const numId = Number(String(record.formId ?? record.id ?? 0).replace(/[^0-9]/g, "")) || 0;
 
                   const permitStatus = isDispatched ? '✓ Sent' : 'Pending';
 
-                  // 🔥 CRITICAL FIX: Determine QR Code display STRICTLY from recordCodeMap
-                  // Completely ignore incoming record.voucherCode if it equals a placeholder status
+                  // Determine QR Code display STRICTLY from recordCodeMap
                   const recordKey = String(record.formId ?? record.id ?? index);
                   
                   // Get the code from the map (which has been computed dynamically)
-                  // If map doesn't have it, use duplicate status as fallback
                   let displayCode = recordCodeMap.get(recordKey);
                   
-                  // If displayCode is undefined or null, determine based on duplicate status
                   if (displayCode === undefined || displayCode === null) {
-                    displayCode = isDuplicateBlocked ? "CANCELLED" : "-";
+                    displayCode = isCancelled ? "CANCELLED" : "-";
                   }
                   
-                  // All invalid states (date-invalid, duplicate, or a leftover EXPIRED/BLOCKED
-                  // placeholder from an import) are shown under a single CANCELLED status.
-                  const isInvalid = isCancelled || isDuplicateBlocked || displayCode === "CANCELLED";
+                  const isInvalid = isCancelled || displayCode === "CANCELLED";
 
                   const hasValidVoucher = Boolean(
                     displayCode &&

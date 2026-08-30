@@ -434,7 +434,7 @@ export function CsvDatabasePanel({
     if (!isSupabaseConfigured() && dateRangeFilter && dateRangeFilter !== 'all') {
       const days = dateRangeFilter === '7days' ? 7 : 30;
       result = result.filter(r => {
-        const rawDate = r.dateRequired || r.todayDate || (r as any).createdAt || (r as any).created_at;
+        const rawDate = r.dateRequired || r.todayDate || r.createdAt || r.created_at;
         if (rawDate) {
           const iso = parseDateToISO(rawDate);
           if (iso) {

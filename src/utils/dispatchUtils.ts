@@ -20,7 +20,7 @@ function hashString(str: string): string {
  * DO NOT use VRM alone for dispatch state checking.
  */
 export function getRecordPrimaryKey(
-  record?: CsvPermitRecord | any | null,
+  record?: CsvPermitRecord | null,
   fallbackVrm?: string | null,
   fallbackDate?: string | null
 ): string {
@@ -36,7 +36,7 @@ export function getRecordPrimaryKey(
 
   // Generate a deterministic fallback key based on stable properties without mutating the input object
   const vrm = (record.vrm || fallbackVrm || "").toString().trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
-  const email = (record.email || (record as any)?.driverEmail || "").toString().trim().toLowerCase();
+  const email = (record.email || record.driverEmail || "").toString().trim().toLowerCase();
   const dateRequired = (record.dateRequired || record.validFrom || record.todayDate || fallbackDate || "").toString().trim();
   const driverName = (record.driverName || record.name || "").toString().trim().toLowerCase();
 
@@ -53,7 +53,7 @@ export function getRecordPrimaryKey(
  * STRICTLY ISOLATED TO FORM ID / RECORD ID ONLY — NEVER MATCHES BY VRM ALONE.
  */
 export function getRecordKeys(
-  record?: CsvPermitRecord | any | null,
+  record?: CsvPermitRecord | null,
   _vrm?: string | null,
   _name?: string | null,
   _dateRequired?: string | null

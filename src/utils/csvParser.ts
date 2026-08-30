@@ -187,17 +187,40 @@ export interface CsvPermitRecord {
   ward: string;
   dateRequired: string;
   validFrom?: string;
+  validTo?: string;
   dateExpiry?: string;
   vrm: string;
   driverName: string;
+  name?: string;
   phone?: string;
   email?: string;
+  driverEmail?: string;
   voucherCode?: string;
   prePaidCode?: string;
+  qrCode?: string;
+  serialNumber?: string;
+  voucherCodesText?: string;
+  voucher?: string;
+  code?: string;
   startTime?: string;
   createdAt?: string;
+  created_at?: string;
+  completionTime?: string;
   hasOriginalVoucher?: boolean;
   isCancelled?: boolean;
+  isDispatched?: boolean;
+  dispatchedAt?: string;
+  status?: string;
+  todayDate?: string;
+  processingDate?: string;
+  submissionDate?: string;
+  department?: string;
+  title?: string;
+  site?: string;
+  qrOverride?: string;
+  emailType?: "SEND_CONCESSION" | "RESEND_CONCESSION" | string;
+  isResend?: boolean;
+  emailTemplate?: "new" | "replacement";
 }
 
 export function getNumericFormId(record: CsvPermitRecord): number {
@@ -294,7 +317,7 @@ export function exportToExcel(
   const sorted = sortRecordsByFormIdDesc(uniqueRecords);
 
   const rows = sorted.map(r => {
-    let voucherVal = r.voucherCode || (r as any).prePaidCode || (r as any).qrCode || (r as any).serialNumber;
+    let voucherVal = r.voucherCode || r.prePaidCode || r.qrCode || r.serialNumber;
     if ((!voucherVal || voucherVal === "-" || voucherVal.trim() === "") && customVouchersMap) {
       const cleanVrm = r.vrm ? r.vrm.toUpperCase().replace(/\s+/g, "") : "";
       const recDateISO = parseDateToISO(r.dateRequired || "") || "";
@@ -323,7 +346,7 @@ export function exportToExcel(
       "Driver Email": r.email || "-",
       "Voucher Code": finalVoucherCode,
       "Start Time": formatExportStartTime(r.dateRequired, r.startTime),
-      "Created At": formatExportCreatedAt(r.createdAt, (r as any).created_at, r.startTime)
+      "Created At": formatExportCreatedAt(r.createdAt, r.created_at, r.startTime)
     };
   });
 
@@ -398,7 +421,7 @@ export function exportToCSV(
   const csvRows = [headers.join(",")];
 
   for (const r of sorted) {
-    let voucherVal = r.voucherCode || (r as any).prePaidCode || (r as any).qrCode || (r as any).serialNumber;
+    let voucherVal = r.voucherCode || r.prePaidCode || r.qrCode || r.serialNumber;
     if ((!voucherVal || voucherVal === "-" || voucherVal.trim() === "") && customVouchersMap) {
       const cleanVrm = r.vrm ? r.vrm.toUpperCase().replace(/\s+/g, "") : "";
       const recDateISO = parseDateToISO(r.dateRequired || "") || "";
@@ -427,7 +450,7 @@ export function exportToCSV(
       escapeCsvField(r.email || "-"),
       escapeCsvField(finalVoucherCode),
       escapeCsvField(formatExportStartTime(r.dateRequired, r.startTime)),
-      escapeCsvField(formatExportCreatedAt(r.createdAt, (r as any).created_at, r.startTime))
+      escapeCsvField(formatExportCreatedAt(r.createdAt, r.created_at, r.startTime))
     ];
     csvRows.push(row.join(","));
   }
@@ -892,7 +915,7 @@ export function parsePermitExcel(arrayBuffer: ArrayBuffer): CsvPermitRecord[] {
 
     let headerRowIndex = 0;
     for (let r = 0; r < Math.min(5, rawRows.length); r++) {
-      const candidateRow = rawRows[r] as any[];
+      const candidateRow = rawRows[r] as unknown[];
       if (candidateRow && Array.isArray(candidateRow)) {
         const candidateStr = candidateRow.map(c => String(c || "").toLowerCase()).join(" ");
         if (
@@ -963,7 +986,7 @@ export function parsePermitExcel(arrayBuffer: ArrayBuffer): CsvPermitRecord[] {
     const records: CsvPermitRecord[] = [];
 
     for (let i = headerRowIndex + 1; i < rawRows.length; i++) {
-      const columns = rawRows[i] as any[];
+      const columns = rawRows[i] as unknown[];
       if (!columns || !Array.isArray(columns) || columns.length < 1) continue;
 
       const rawVrm = vrmIdx !== -1 ? columns[vrmIdx] : "";
@@ -1126,27 +1149,6 @@ export function getTodayISO(): string {
   const month = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
-}
-
-/**
- * @deprecated No longer used for cancellation decisions - superseded by
- * isDateRequiredOutsideValidWindow, which checks the record's required date
- * directly against today rather than against a submission/processing date.
- * Left in place only in case anything outside this codebase still imports it.
- */
-export function isRecordCancelledByDateGap(processingDateStr?: string, validFromStr?: string): boolean {
-  if (!processingDateStr || !validFromStr) return false;
-  const pIso = parseDateToISO(processingDateStr);
-  const vIso = parseDateToISO(validFromStr);
-  if (!pIso || !vIso) return false;
-
-  const pTime = new Date(pIso + "T00:00:00Z").getTime();
-  const vTime = new Date(vIso + "T00:00:00Z").getTime();
-  if (isNaN(pTime) || isNaN(vTime)) return false;
-
-  const diffMs = vTime - pTime;
-  const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
-  return diffDays >= 2;
 }
 
 /**
@@ -1446,7 +1448,7 @@ export function parseVoucherFile(arrayBuffer: ArrayBuffer, fileName?: string): P
     }
     const defaultDate = fileDate || getTodayISO();
 
-    const firstRow = rawRows[0] as any[];
+    const firstRow = rawRows[0] as unknown[];
     if (!firstRow || firstRow.length === 0) return [];
 
     const headers = firstRow.map(h => String(h || "").toLowerCase().trim());
@@ -1488,7 +1490,7 @@ export function parseVoucherFile(arrayBuffer: ArrayBuffer, fileName?: string): P
     const startIndex = hasHeaders ? 1 : 0;
     
     for (let i = startIndex; i < rawRows.length; i++) {
-      const row = rawRows[i] as any[];
+      const row = rawRows[i] as unknown[];
       if (!row || row.length === 0) continue;
       
       let rawCode = "";
@@ -1700,7 +1702,7 @@ export function detectDateFormat(rawText: string): "US" | "UK" {
 }
 
 /**
- * Get matching permits by target date prioritization (processingDate || submissionDate || todayDate || startTime || completionTime || validFrom || dateRequired)
+ * Get matching permits by target date prioritization using resolvePermitDate
  */
 export function getMatchingPermits(database: CsvPermitRecord[], activeDateStr: string): CsvPermitRecord[] {
   if (!database || database.length === 0 || !activeDateStr) {
@@ -1711,54 +1713,34 @@ export function getMatchingPermits(database: CsvPermitRecord[], activeDateStr: s
   if (!activeFromISO) return [];
 
   return database.filter((record) => {
-    // 1. Target Date Prioritization: resolve using processing/submission date FIRST
-    const targetDateStr = (record as any).processingDate || 
-      (record as any).submissionDate || 
-      (record as any).todayDate || 
-      (record as any).startTime || 
-      (record as any).completionTime || 
-      (record as any).validFrom || 
-      record.dateRequired || 
-      "";
-    let parkingStartISO = "";
-    
-    if (targetDateStr) {
-      const range = parseDateRange(targetDateStr);
-      if (range && range.startISO) {
-        parkingStartISO = range.startISO;
-      } else {
-        parkingStartISO = parseDateToISO(targetDateStr);
-      }
-    }
-
-    // 2. Fallbacks
-    if (!parkingStartISO && (record as any).processingDate) {
-      parkingStartISO = parseDateToISO((record as any).processingDate);
-    }
-    if (!parkingStartISO && (record as any).submissionDate) {
-      parkingStartISO = parseDateToISO((record as any).submissionDate);
-    }
-    if (!parkingStartISO && (record as any).todayDate) {
-      parkingStartISO = parseDateToISO((record as any).todayDate);
-    }
-    if (!parkingStartISO && record.startTime) {
-      const datePart = record.startTime.trim().split(" ")[0];
-      parkingStartISO = parseDateToISO(datePart);
-    }
-    if (!parkingStartISO && (record as any).completionTime) {
-      const datePart = String((record as any).completionTime).trim().split(" ")[0];
-      parkingStartISO = parseDateToISO(datePart);
-    }
-    if (!parkingStartISO && (record as any).validFrom) {
-      parkingStartISO = parseDateToISO((record as any).validFrom);
-    }
-    if (!parkingStartISO && record.dateRequired) {
-      parkingStartISO = parseDateToISO(record.dateRequired);
-    }
-
-    // 3. Match on the permit's processing/submission date bucket
-    return parkingStartISO === activeFromISO;
+    return resolvePermitDate(record) === activeFromISO;
   });
+}
+
+/**
+ * Extracts raw voucher/QR code string from any known permit record property variation.
+ */
+export function extractRecordVoucherCode(record: any): string {
+  if (!record) return "";
+  const raw = record.voucherCode ??
+              record.prePaidCode ??
+              record.qrCode ??
+              record.voucherCodesText ??
+              record.serialNumber ??
+              record.voucher ??
+              record.code ??
+              record["Voucher Code"] ??
+              record["VOUCHER CODE"] ??
+              record["Pre-Paid Code"] ??
+              record["Pre Paid Code"] ??
+              record["QR Code"] ??
+              record["QR CODE"] ??
+              "";
+  if (typeof raw !== "string") {
+    if (raw === null || raw === undefined) return "";
+    return String(raw);
+  }
+  return raw;
 }
 
 /**
@@ -1770,7 +1752,8 @@ export function getSpreadsheetMatchingAllocationsMap(
   matchingPermits: any[] = [],
   database: CsvPermitRecord[] = [],
   processingDate: string = "",
-  vouchersDatabase: ParsedVoucherData[] = []
+  vouchersDatabase: ParsedVoucherData[] = [],
+  customVouchersMap?: Record<string, string>
 ): Map<string, string> {
   const map = new Map<string, string>();
   const activeFromISO = parseDateToISO(processingDate);
@@ -1800,26 +1783,43 @@ export function getSpreadsheetMatchingAllocationsMap(
   // Pass 1: Register records that already have a specific valid code
   sortedMatchingPermits.forEach((r, idx) => {
     const recordKey = String(r.formId ?? r.id ?? idx);
-    const isCancelled = isDateRequiredOutsideValidWindow(r.dateRequired || r.validFrom, processingDate) ||
-                        (r as any).isCancelled === true;
-    if (isCancelled) {
+    if (isRecordCancelled(r, processingDate, effectiveDatabase)) {
       map.set(recordKey, "CANCELLED");
       return;
     }
 
-    const isDuplicateBlocked = checkIsBlockedDuplicate(r, effectiveDatabase, processingDate);
-    if (isDuplicateBlocked) {
-      map.set(recordKey, "CANCELLED");
-      return;
-    }
-
-    const rawCode = r.voucherCode || (r as any).prePaidCode || (r as any).qrCode || (r as any).serialNumber;
+    const rawCode = extractRecordVoucherCode(r);
     const rawCodeUpper = rawCode ? String(rawCode).trim().toUpperCase() : "";
+    if (rawCodeUpper === "CANCELLED") {
+      map.set(recordKey, "CANCELLED");
+      return;
+    }
     if (rawCode && rawCode !== "-" && rawCodeUpper !== "CANCELLED") {
-      const clean = String(rawCode).trim().split(/[\n,;\s]+/)[0]?.trim().toUpperCase();
+      const clean = cleanVoucherCodeValue(String(rawCode)).toUpperCase();
       if (clean && clean !== "-" && clean !== "CANCELLED") {
         map.set(recordKey, clean);
         internalAssignedSet.add(clean);
+        return;
+      }
+    }
+
+    // Check custom vouchers map override if record doesn't have an explicit code
+    if (customVouchersMap) {
+      const rVrm = (r.vrm || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+      const rDateIso = parseDateToISO(r.dateRequired || r.validFrom || "");
+      const keyWithDate = rDateIso ? `${rVrm}_${rDateIso}` : rVrm;
+      const customOverride = customVouchersMap[keyWithDate] ||
+                             customVouchersMap[rVrm] ||
+                             (r.id ? customVouchersMap[r.id] : undefined) ||
+                             (r.formId ? customVouchersMap[String(r.formId)] : undefined);
+
+      if (customOverride && customOverride !== "-" && customOverride.toUpperCase() !== "CANCELLED") {
+        const clean = String(customOverride).trim().split(/[\n,;\s]+/)[0]?.trim().toUpperCase();
+        if (clean && clean !== "-" && clean !== "CANCELLED") {
+          map.set(recordKey, clean);
+          internalAssignedSet.add(clean);
+          return;
+        }
       }
     }
   });
@@ -1829,15 +1829,14 @@ export function getSpreadsheetMatchingAllocationsMap(
     const recordKey = String(r.formId ?? r.id ?? idx);
     if (map.has(recordKey)) return;
 
-    const isCancelled = isDateRequiredOutsideValidWindow(r.dateRequired || r.validFrom, processingDate) ||
-                        (r as any).isCancelled === true;
-    if (isCancelled) {
+    if (isRecordCancelled(r, processingDate, effectiveDatabase)) {
       map.set(recordKey, "CANCELLED");
       return;
     }
 
-    const isDuplicateBlocked = checkIsBlockedDuplicate(r, effectiveDatabase, processingDate);
-    if (isDuplicateBlocked) {
+    const rawCode = extractRecordVoucherCode(r);
+    const rawCodeUpper = rawCode ? String(rawCode).trim().toUpperCase() : "";
+    if (rawCodeUpper === "CANCELLED") {
       map.set(recordKey, "CANCELLED");
       return;
     }
@@ -1861,7 +1860,7 @@ export function getSpreadsheetMatchingAllocationsMap(
       const avail = activeDateCodes.find(c => !internalAssignedSet.has(c.trim().toUpperCase())) ||
                     (vouchersDatabase || []).find(v => v.code && !internalAssignedSet.has(v.code.trim().toUpperCase()))?.code;
       if (avail) {
-        nextCode = (typeof avail === "string" ? avail : (avail as any).code).trim().toUpperCase();
+        nextCode = avail.trim().toUpperCase();
       }
     }
 
@@ -1910,7 +1909,7 @@ export function getSpreadsheetMatchingAssignedCodes(
 /**
  * Filter vouchers to only unused codes matching a target ISO date.
  * Excludes codes assigned to OTHER active driver records in the database
- * or in the Spreadsheet Permits Matching Helper.
+ * or in the Spreadsheet Permits Matching Helper using the canonical allocations engine.
  */
 export function getUnusedVouchersForDate(
   vouchersDatabase: ParsedVoucherData[],
@@ -1931,37 +1930,31 @@ export function getUnusedVouchersForDate(
   const currentFormId = String(currentRecord?.formId ?? "").trim();
   const currentVrmClean = (currentVrm || currentRecord?.vrm || "").toUpperCase().replace(/\s+/g, "");
   const currentRecordCode = cleanVoucherCodeValue(
-    String(currentRecord?.voucherCodesText || currentRecord?.voucherCode || currentRecord?.qrCode || currentRecord?.prePaidCode || "").trim()
+    extractRecordVoucherCode(currentRecord) || currentRecord?.qrOverride || ""
   ).toUpperCase();
 
-  // Build Set of voucher codes assigned to OTHER active driver records (excluding current record)
+  // 1. Get matching records for target ISO
+  const targetPermits = (spreadsheetMatches && spreadsheetMatches.length > 0)
+    ? spreadsheetMatches
+    : getMatchingPermits(database, targetISO);
+
+  // 2. Canonical allocations map for the date
+  const allocationsMap = getSpreadsheetMatchingAllocationsMap(
+    targetPermits,
+    database,
+    targetISO,
+    vouchersDatabase
+  );
+
+  // 3. Build Set of voucher codes assigned to OTHER active driver records
   const assignedToOtherSet = new Set<string>();
 
-  const registerAssignedCode = (rawVal: any) => {
-    if (rawVal === null || rawVal === undefined) return;
-    const str = String(rawVal).trim().toUpperCase();
-    if (!str || str === "" || str === "-" || str === "—" || str === "CANCELLED" || str === "PENDING" || str === "N/A" || str === "NA") return;
-
-    const cleaned = cleanVoucherCodeValue(str);
-    if (cleaned && cleaned !== "-" && cleaned !== "CANCELLED") {
-      assignedToOtherSet.add(cleaned);
-    }
-
-    const tokens = str.split(/[\n,;\s]+/).map(s => cleanVoucherCodeValue(s.trim())).filter(Boolean);
-    tokens.forEach(tok => {
-      if (tok && tok !== "-" && tok !== "CANCELLED") {
-        assignedToOtherSet.add(tok);
-      }
-    });
-  };
-
-  // 1. Process Database records
-  (database || []).forEach((permit) => {
+  targetPermits.forEach((permit, idx) => {
     const pId = String(permit.id ?? "").trim();
     const pFormId = String(permit.formId ?? "").trim();
     const pVrmClean = (permit.vrm || "").toUpperCase().replace(/\s+/g, "");
 
-    // Do not include codes assigned to the current active record
+    // Skip current active record
     const isCurrent = Boolean(
       (currentId && (pId === currentId || pFormId === currentId)) ||
       (currentFormId && (pId === currentFormId || pFormId === currentFormId)) ||
@@ -1969,69 +1962,19 @@ export function getUnusedVouchersForDate(
     );
     if (isCurrent) return;
 
-    // Filter permits to active drivers (exclude cancelled or duplicate-blocked permits from locking codes)
-    const isCancelled = (permit as any).isCancelled === true || (permit as any).status === "Cancelled";
-    if (isCancelled) return;
+    if (isRecordCancelled(permit, targetISO, database)) return;
 
-    registerAssignedCode(permit.voucherCode);
-    registerAssignedCode((permit as any).qrCode);
-    registerAssignedCode((permit as any).voucherCodesText);
-    registerAssignedCode((permit as any).prePaidCode);
-    registerAssignedCode((permit as any).serialNumber);
-    registerAssignedCode((permit as any).code);
-    registerAssignedCode((permit as any).voucher);
-    registerAssignedCode((permit as any)["Voucher Code"]);
-    registerAssignedCode((permit as any)["VOUCHER CODE"]);
-    registerAssignedCode((permit as any)["Pre-Paid Code"]);
-    registerAssignedCode((permit as any)["Pre Paid Code"]);
-    registerAssignedCode((permit as any)["QR Code"]);
-    registerAssignedCode((permit as any)["QR CODE"]);
-  });
-
-  // 2. Process Spreadsheet Permits Matching Helper records / matches
-  // If spreadsheetMatches was not passed explicitly, auto-derive matching permits for targetISO
-  const helperRecords = spreadsheetMatches !== undefined && spreadsheetMatches !== null
-    ? spreadsheetMatches
-    : getMatchingPermits(database, targetISO);
-
-  (helperRecords || []).forEach((m, idx) => {
-    const mId = String(m.id ?? "").trim();
-    const mFormId = String(m.formId ?? "").trim();
-    const mVrmClean = (m.vrm || "").toUpperCase().replace(/\s+/g, "");
-
-    // Skip if it's the current record being viewed
-    const isCurrent = Boolean(
-      (currentId && (mId === currentId || mFormId === currentId)) ||
-      (currentFormId && (mId === currentFormId || mFormId === currentFormId)) ||
-      (currentVrmClean && mVrmClean && currentVrmClean === mVrmClean)
-    );
-    if (isCurrent) return;
-
-    const isCancelled = (m as any).isCancelled === true || (m as any).status === "Cancelled";
-    if (isCancelled) return;
-
-    registerAssignedCode(m.qrCode);
-    registerAssignedCode(m.voucherCode);
-    registerAssignedCode(m.code);
-    registerAssignedCode((m as any).prePaidCode);
-    registerAssignedCode((m as any).serialNumber);
-    registerAssignedCode((m as any).voucher);
-    registerAssignedCode((m as any)["QR Code"]);
-    registerAssignedCode((m as any)["Voucher Code"]);
-  });
-
-  // 3. Process Spreadsheet Helper Auto-Assigned Codes
-  const spreadsheetAssigned = getSpreadsheetMatchingAssignedCodes(helperRecords, database, targetISO, vouchersDatabase);
-  spreadsheetAssigned.forEach(code => {
-    if (code && code !== "-" && code !== "CANCELLED") {
-      // Exclude if current record is using this code
-      if (!currentRecordCode || code !== currentRecordCode) {
-        assignedToOtherSet.add(code);
+    const recordKey = String(permit.formId ?? permit.id ?? idx);
+    const allocatedCode = allocationsMap.get(recordKey);
+    if (allocatedCode && allocatedCode !== "-" && allocatedCode !== "CANCELLED") {
+      const clean = cleanVoucherCodeValue(allocatedCode).toUpperCase();
+      if (clean && clean !== "-" && clean !== "CANCELLED") {
+        assignedToOtherSet.add(clean);
       }
     }
   });
 
-  // If the current record itself has an assigned code, ensure it is NOT in assignedToOtherSet
+  // If the current record itself has an assigned code, ensure it is NOT blocked in assignedToOtherSet
   if (currentRecordCode && currentRecordCode !== "-" && currentRecordCode !== "CANCELLED") {
     assignedToOtherSet.delete(currentRecordCode);
   }
@@ -2039,7 +1982,7 @@ export function getUnusedVouchersForDate(
   // Extract all daily vouchers for target ISO date
   const dailyVouchersForDate = vouchersDatabase.filter(v => {
     if (!v) return false;
-    const vFrom = parseDateToISO(v.validFrom || v.valid_from || (v as any).dateRequired || (v as any).date || "");
+    const vFrom = parseDateToISO(v.validFrom || v.valid_from || v.dateRequired || v.date || "");
     return vFrom === targetISO;
   });
 
@@ -2047,7 +1990,7 @@ export function getUnusedVouchersForDate(
   const activeUnassignedCodes: ParsedVoucherData[] = [];
 
   for (const voucher of dailyVouchersForDate) {
-    const rawCode = voucher.code || (voucher as any).voucherCode || (voucher as any).qrCode || (voucher as any).serialNumber || (voucher as any).prePaidCode;
+    const rawCode = voucher.code || voucher.voucherCode || voucher.qrCode || voucher.serialNumber || voucher.prePaidCode;
     if (!rawCode) continue;
 
     const codeUpper = cleanVoucherCodeValue(rawCode).toUpperCase();
@@ -2098,14 +2041,46 @@ export function getUnusedVouchersForDate(
 
 export interface PermitRecord {
   id?: string;
+  formId?: string | number;
+  vrm?: string;
+  driverName?: string;
+  name?: string;
+  email?: string;
+  driverEmail?: string;
+  phone?: string;
+  hospital?: string;
+  ward?: string;
   status?: string;
   isDispatched?: boolean;
   dispatchedAt?: string;
   validFrom?: string;
+  validTo?: string;
   expires?: string;
   dateRequired?: string;
   dateExpiry?: string;
   isCancelled?: boolean;
+  voucherCode?: string;
+  prePaidCode?: string;
+  qrCode?: string;
+  serialNumber?: string;
+  voucherCodesText?: string;
+  voucher?: string;
+  code?: string;
+  startTime?: string;
+  createdAt?: string;
+  created_at?: string;
+  completionTime?: string;
+  todayDate?: string;
+  processingDate?: string;
+  submissionDate?: string;
+  department?: string;
+  title?: string;
+  site?: string;
+  qrOverride?: string;
+  emailType?: "SEND_CONCESSION" | "RESEND_CONCESSION" | string;
+  isResend?: boolean;
+  emailTemplate?: "new" | "replacement";
+  hasOriginalVoucher?: boolean;
   [key: string]: any;
 }
 
@@ -2116,7 +2091,7 @@ export const getRecordStatus = (
 ): '✓ Sent' | 'Pending' | 'Expired' | 'Cancelled' | '-' => {
   if (record.status === 'Cancelled' || record.isCancelled) return 'Cancelled';
 
-  const formId = (record as any).formId || record.id || "";
+  const formId = record.formId || record.id || "";
   const cleanFormId = formId ? String(formId).replace(/[^0-9]/g, "") : "";
   const cleanVrm = (record.vrm || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
 
@@ -2133,7 +2108,7 @@ export const getRecordStatus = (
 export function findDuplicateCodes(database: CsvPermitRecord[]): string[] {
   const codeMap = new Map<string, string[]>();
   database.forEach(record => {
-    const rawVal = record.voucherCode || (record as any).prePaidCode;
+    const rawVal = record.voucherCode || record.prePaidCode;
     if (rawVal && rawVal !== "-" && rawVal !== "CANCELLED") {
       const lines = rawVal.split(/[\n,;\s]+/).map(s => s.trim().toUpperCase()).filter(Boolean);
       lines.forEach(code => {
@@ -2504,9 +2479,9 @@ export function checkIsBlockedDuplicate(
     // required date rather than trusting a stored "CANCELLED" marker, since that
     // marker may itself simply mean "this record was blocked as a duplicate" -
     // which should NOT disqualify it from blocking a still-later duplicate.
-    const earlierDateRequired = earlier.dateRequired || (earlier as any).validFrom || "";
+    const earlierDateRequired = earlier.dateRequired || earlier.validFrom || "";
     const earlierIsDateCancelled = isDateRequiredOutsideValidWindow(earlierDateRequired, refDateISO) ||
-                                    (earlier as any).isCancelled === true;
+                                    earlier.isCancelled === true;
     if (earlierIsDateCancelled) continue;
 
     // Get earlier record's required date
@@ -2539,6 +2514,47 @@ function simpleStringHash(str: string): number {
 }
 
 /**
+ * Canonical single source of truth for cancellation logic across all components and algorithms.
+ * Evaluates:
+ * 1. Explicit cancellation flags (record.isCancelled === true)
+ * 2. Date window validity (isDateRequiredOutsideValidWindow)
+ * 3. Duplicate blocking within 0-6 days window (checkIsBlockedDuplicate)
+ * 4. Stored or explicit voucher "CANCELLED" string values
+ */
+export function isRecordCancelled(
+  record: any,
+  todayDateOrReference?: string,
+  database?: CsvPermitRecord[]
+): boolean {
+  if (!record) return false;
+
+  // 1. Explicit boolean cancellation override
+  if (record.isCancelled === true) return true;
+
+  // 2. Date window validity
+  const referenceDate = todayDateOrReference || record.todayDate || record.processingDate || "";
+  const dateRequired = record.dateRequired || record.validFrom || "";
+  if (isDateRequiredOutsideValidWindow(dateRequired, referenceDate)) {
+    return true;
+  }
+
+  // 3. Duplicate blocking check if database context is available
+  if (database && database.length > 0) {
+    if (checkIsBlockedDuplicate(record, database, referenceDate)) {
+      return true;
+    }
+  }
+
+  // 4. Stored/assigned voucher code cancellation
+  const rawCode = record.voucherCode || record.prePaidCode || record.qrCode || record.voucherCodesText || record.qrOverride;
+  if (typeof rawCode === "string" && rawCode.trim().toUpperCase() === "CANCELLED") {
+    return true;
+  }
+
+  return false;
+}
+
+/**
  * Resolves the primary processing/active date from a permit record or data object in standard ISO format (YYYY-MM-DD),
  * prioritizing processingDate -> submissionDate -> todayDate -> startTime -> completionTime -> validFrom -> dateRequired -> today.
  */
@@ -2554,8 +2570,13 @@ export function resolvePermitDate(record?: any): string {
                   record.createdAt;
 
   if (rawDate) {
+    const range = parseDateRange(String(rawDate));
+    if (range && range.startISO) {
+      return range.startISO;
+    }
     const iso = parseDateToISO(rawDate);
     if (iso) return iso;
   }
   return getTodayISO();
 }
+

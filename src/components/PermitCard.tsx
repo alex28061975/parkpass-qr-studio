@@ -2,7 +2,24 @@ import React, { useState, useEffect, useMemo, useRef, useCallback, useImperative
 import QRCode from "qrcode";
 import { PermitData } from "../types";
 import { motion } from "motion/react";
-import { CsvPermitRecord, ParsedVoucherData, parseDateToISO, parseDateRange, addDays, getTodayISO, getMatchingPermits, getUnusedVouchersForDate, getSpreadsheetMatchingAssignedCodes, isDateRequiredOutsideValidWindow, checkIsBlockedDuplicate, isRecordStrictlyEarlier, extractRecordSubmissionTimeMs, extractRecordNumericFormId, resolvePermitDate } from "../utils/csvParser";
+import { 
+  CsvPermitRecord, 
+  ParsedVoucherData, 
+  parseDateToISO, 
+  parseDateRange, 
+  addDays, 
+  getTodayISO, 
+  getMatchingPermits, 
+  getUnusedVouchersForDate, 
+  getSpreadsheetMatchingAssignedCodes, 
+  isDateRequiredOutsideValidWindow, 
+  checkIsBlockedDuplicate, 
+  isRecordStrictlyEarlier, 
+  extractRecordSubmissionTimeMs, 
+  extractRecordNumericFormId, 
+  resolvePermitDate,
+  isRecordCancelled
+} from "../utils/csvParser";
 import { getRecordKeys, checkIsRecordDispatched, getRecordPrimaryKey } from "../utils/dispatchUtils";
 import { 
   getReplacementEmailContent, 
@@ -62,20 +79,7 @@ interface PermitCardProps {
 }
 
 // Exported status helpers for use across components (PermitCard, TableView, PermitForm)
-export function isRecordCancelled(record: Partial<CsvPermitRecord> | PermitData, todayDate?: string): boolean {
-  if (!record) return false;
-  const rec = record as any;
-  // Ignore imported "CANCELLED" values - recompute dynamically from the record's
-  // actual required date. A stored CANCELLED marker may be stale (re-imported
-  // from an earlier export, or left over from a previous day).
-  if (rec.isCancelled === true) return true;
-  const referenceDate = todayDate || rec.todayDate || "";
-  const dateRequired = rec.dateRequired || rec.validFrom || "";
-  return isDateRequiredOutsideValidWindow(dateRequired, referenceDate);
-}
-
-// Aliases for clean importing
-export const isCancelled = isRecordCancelled;
+export { isRecordCancelled };
 
 // Helper to format date to UK standard DD/MM/YYYY
 function formatDate(d: string): string {
@@ -194,26 +198,17 @@ function PermitCardInner({
   // 1. unusedVouchersForDay: Filters vouchers to only unused codes matching the target ISO date
   // =========================================================================
   const unusedVouchersForDay = useMemo<ParsedVoucherData[]>(() => {
-    const permitDate = data.validFrom || (data as any).dateRequired || (data as any).processingDate || data.todayDate || "";
-    const targetIso = parseDateToISO(permitDate);
+    const targetIso = resolvePermitDate(data);
     if (!targetIso) return [];
 
-    const activeDateStr = resolvePermitDate(data);
-
-    const spreadsheetAssignedCodes = getSpreadsheetMatchingAssignedCodes(
-      matchingPermits,
-      database,
-      activeDateStr,
-      vouchersDatabase
+    return getUnusedVouchersForDate(
+      vouchersDatabase, 
+      database, 
+      targetIso, 
+      data.vrm, 
+      data, 
+      matchingPermits
     );
-
-    const availableVouchers = getUnusedVouchersForDate(vouchersDatabase, database, targetIso, data.vrm, data, matchingPermits);
-    return availableVouchers.filter(v => {
-      const vIso = parseDateToISO(v.validFrom || v.valid_from || (v as any).dateRequired || (v as any).date || "");
-      if (vIso !== targetIso) return false;
-      const codeUpper = (v.code || "").trim().toUpperCase();
-      return !spreadsheetAssignedCodes.has(codeUpper);
-    });
   }, [
     vouchersDatabase, 
     database, 
@@ -246,8 +241,8 @@ function PermitCardInner({
     }
 
     const curr = matchingPermits[currentCardIndex];
-    const dataId = String((data as any).formId ?? data.id ?? "");
-    const dataDate = parseDateToISO(data.validFrom || (data as any).dateRequired || "");
+    const dataId = String(data.formId ?? data.id ?? "");
+    const dataDate = parseDateToISO(data.validFrom || data.dateRequired || "");
 
     if (curr) {
       const currId = String(curr.formId ?? curr.id ?? "");
@@ -288,7 +283,7 @@ function PermitCardInner({
     if (foundIdx !== -1 && foundIdx !== currentCardIndex) {
       setCurrentCardIndex(foundIdx);
     }
-  }, [data.vrm, data.name, (data as any).formId, data.id, data.validFrom, (data as any).dateRequired, matchingPermits]);
+  }, [data.vrm, data.name, data.formId, data.id, data.validFrom, data.dateRequired, matchingPermits]);
 
   const isRecordDispatched = useCallback((item: CsvPermitRecord) => {
     return checkIsRecordDispatched(item, item.vrm, item.driverName, item.dateRequired, dispatchedKeys, unsentKeys);
@@ -299,7 +294,7 @@ function PermitCardInner({
       const activeRec = matchingPermits[activeIndex];
       return checkIsRecordDispatched(activeRec, activeRec.vrm, activeRec.driverName, activeRec.dateRequired, dispatchedKeys, unsentKeys);
     }
-    const targetRecord = (database ? database.find(r => ((data as any).formId && (r.formId === (data as any).formId || r.id === (data as any).formId))) : undefined) || (data as any);
+    const targetRecord = (database ? database.find(r => (data.formId && (r.formId === data.formId || r.id === data.formId))) : undefined) || data;
     return checkIsRecordDispatched(targetRecord, data.vrm, data.name, data.validFrom || data.todayDate, dispatchedKeys, unsentKeys);
   }, [activeIndex, matchingPermits, data, database, dispatchedKeys, unsentKeys]);
 
@@ -310,16 +305,16 @@ function PermitCardInner({
     const vrm = (activeRec?.vrm || data.vrm || "").trim().toUpperCase();
     const name = (activeRec?.driverName || data.name || "").trim().toLowerCase();
     const date = (activeRec?.dateRequired || data.validFrom || data.todayDate || "").trim();
-    const id = activeRec?.id || (activeRec as any)?.formId || "";
+    const id = activeRec?.id || activeRec?.formId || "";
     return id ? `id_${id}` : `${vrm}_${name}_${date}`;
   }, [activeIndex, matchingPermits, data.vrm, data.name, data.validFrom, data.todayDate]);
 
   const currentSelectedCode = useMemo(() => {
-    const raw = data.voucherCodesText || (data as any).voucherCode || (data as any).prePaidCode || "";
+    const raw = data.voucherCodesText || data.voucherCode || data.prePaidCode || "";
     if (!raw) return "";
     const firstLine = raw.split("\n")[0]?.trim() || "";
     return firstLine.toUpperCase();
-  }, [data.voucherCodesText, (data as any).voucherCode, (data as any).prePaidCode]);
+  }, [data.voucherCodesText, data.voucherCode, data.prePaidCode]);
 
   useEffect(() => {
     if (isCurrentDispatched) {
@@ -327,8 +322,8 @@ function PermitCardInner({
         if (prev[recordKeyStr] === undefined) {
           const matchedRec = activeIndex !== -1 ? matchingPermits[activeIndex] : null;
           const initialCode = matchedRec
-            ? (matchedRec.voucherCode || (matchedRec as any).prePaidCode || (matchedRec as any).voucherCodesText || "")
-            : (data.voucherCodesText || (data as any).voucherCode || "");
+            ? (matchedRec.voucherCode || matchedRec.prePaidCode || matchedRec.voucherCodesText || "")
+            : (data.voucherCodesText || data.voucherCode || "");
           const cleanInit = (initialCode && initialCode !== "-" && initialCode.toUpperCase() !== "CANCELLED") ? initialCode.trim().toUpperCase() : "";
           return { ...prev, [recordKeyStr]: cleanInit };
         }
@@ -339,11 +334,11 @@ function PermitCardInner({
 
   // Original voucher code assigned to this record in the database or when first dispatched
   const originalVoucherCode = useMemo(() => {
-    const matchedRec = activeIndex !== -1 ? matchingPermits[activeIndex] : (database?.find(r => ((data as any).formId && (r.formId === (data as any).formId || r.id === (data as any).formId))));
-    const dbCode = (matchedRec?.voucherCode || (matchedRec as any)?.prePaidCode || (matchedRec as any)?.voucherCodesText || "").trim().toUpperCase();
+    const matchedRec = activeIndex !== -1 ? matchingPermits[activeIndex] : (database?.find(r => (data.formId && (r.formId === data.formId || r.id === data.formId))));
+    const dbCode = (matchedRec?.voucherCode || matchedRec?.prePaidCode || matchedRec?.voucherCodesText || "").trim().toUpperCase();
     const dispatchedCode = (lastDispatchedCodeMap[recordKeyStr] ?? "").trim().toUpperCase();
     return dispatchedCode || (dbCode && dbCode !== "-" && dbCode !== "CANCELLED" ? dbCode : "");
-  }, [activeIndex, matchingPermits, database, (data as any).formId, lastDispatchedCodeMap, recordKeyStr]);
+  }, [activeIndex, matchingPermits, database, data.formId, lastDispatchedCodeMap, recordKeyStr]);
 
   // Determine whether the QR code / voucher code has actually changed from the original code
   const qrCodeChanged = useMemo(() => {
@@ -391,9 +386,8 @@ function PermitCardInner({
     const todayStr = `${year}-${month}-${day}`;
 
     return records.filter(p => {
-      const recProcessingDate = p.todayDate || (p as any).createdAt || (p as any).created_at || data.todayDate || "";
-      const recValidFrom = p.dateRequired || p.validFrom || "";
-      const recCancelled = (p as any).isCancelled === true || isDateRequiredOutsideValidWindow(recValidFrom, recProcessingDate);
+      const recProcessingDate = p.todayDate || p.createdAt || p.created_at || data.todayDate || "";
+      const recCancelled = isRecordCancelled(p, recProcessingDate, database);
 
       return !recCancelled && !isRecordDispatched(p);
     });
@@ -407,9 +401,8 @@ function PermitCardInner({
     if (total === 0) return { sent: 0, pending: 0, expired: 0, cancelled: 0, processed: 0, total: 0, progressPct: 0, pendingPct: 0 };
 
     records.forEach(p => {
-      const recProcessingDate = p.todayDate || (p as any).createdAt || (p as any).created_at || data.todayDate || "";
-      const recValidFrom = p.dateRequired || p.validFrom || "";
-      const recCancelled = (p as any).isCancelled === true || isDateRequiredOutsideValidWindow(recValidFrom, recProcessingDate);
+      const recProcessingDate = p.todayDate || p.createdAt || p.created_at || data.todayDate || "";
+      const recCancelled = isRecordCancelled(p, recProcessingDate, database);
 
       if (recCancelled) {
         cancelled++;
@@ -442,14 +435,14 @@ function PermitCardInner({
   const prevVoucherCodeRef = useRef<string | undefined>(data.voucherCodesText);
   
   useEffect(() => {
-    const currentIdentity = `${data.vrm || ""}_${data.name || ""}_${data.validFrom || ""}_${(data as any).id || (data as any).formId || ""}`;
+    const currentIdentity = `${data.vrm || ""}_${data.name || ""}_${data.validFrom || ""}_${data.id || data.formId || ""}`;
     const isNewRecordLoaded = prevRecordIdentityRef.current !== currentIdentity;
     
     if (isNewRecordLoaded) {
       prevRecordIdentityRef.current = currentIdentity;
       prevVoucherCodeRef.current = data.voucherCodesText;
       
-      const isPending = !isCurrentDispatched || (data as any).status === "Pending" || !(data as any).isDispatched;
+      const isPending = !isCurrentDispatched || data.status === "Pending" || !data.isDispatched;
       if (isPending) {
         setEmailTemplate("new");
         if (data.isResend || data.emailType === "RESEND_CONCESSION" || data.emailTemplate === "replacement") {
@@ -501,45 +494,38 @@ function PermitCardInner({
       setEmailTemplate("replacement");
     }
     prevVoucherCodeRef.current = data.voucherCodesText;
-  }, [data.voucherCodesText, data.vrm, data.name, data.validFrom, (data as any).id, (data as any).formId, isCurrentDispatched, data.emailTemplate, data.emailType, data.isResend, (data as any).status, (data as any).isDispatched]);
+  }, [data.voucherCodesText, data.vrm, data.name, data.validFrom, data.id, data.formId, isCurrentDispatched, data.emailTemplate, data.emailType, data.isResend, data.status, data.isDispatched]);
 
   const isCancelled = useMemo(() => {
-    if ((data as any).isCancelled === true) return true;
-    const processingDateStr = data.todayDate || "";
-    const validFromStr = data.validFrom || (data as any).dateRequired || "";
-    if (isDateRequiredOutsideValidWindow(validFromStr, processingDateStr)) return true;
-    if (checkIsBlockedDuplicate(data as any, database || [], data.todayDate)) return true;
-    const rawCodeText = (data.voucherCodesText || data.qrOverride || "").trim().toUpperCase();
-    if (rawCodeText === "CANCELLED") return true;
-    return false;
-  }, [data.todayDate, data.validFrom, (data as any).dateRequired, data, database]);
+    return isRecordCancelled(data, data.todayDate, database);
+  }, [data.todayDate, data.validFrom, data.dateRequired, data, database]);
 
   // isDateRequiredOutsideValidWindow covers both "too far in the future" and
   // "too far in the past" in one boolean - this distinguishes which, purely
   // for choosing an accurate caption below (does not affect isCancelled itself).
   const isCancelledInFuture = useMemo(() => {
     if (!isCancelled) return false;
-    const validFromStr = data.validFrom || (data as any).dateRequired || "";
+    const validFromStr = data.validFrom || data.dateRequired || "";
     const validFromISO = parseDateToISO(validFromStr);
     const refDateISO = parseDateToISO(data.todayDate) || getTodayISO();
     if (!validFromISO) return true;
     return validFromISO > refDateISO;
-  }, [isCancelled, data.validFrom, (data as any).dateRequired, data.todayDate]);
+  }, [isCancelled, data.validFrom, data.dateRequired, data.todayDate]);
 
   const daysActive = useMemo(() => {
-    const validFromISO = parseDateToISO(data.validFrom || (data as any).dateRequired || "");
+    const validFromISO = parseDateToISO(data.validFrom || data.dateRequired || "");
     const refDateISO = parseDateToISO(data.todayDate) || getTodayISO();
     if (!validFromISO) return 0;
     const diff = Math.round((new Date(refDateISO).getTime() - new Date(validFromISO).getTime()) / (1000 * 60 * 60 * 24));
     return Math.max(0, diff);
-  }, [data.validFrom, (data as any).dateRequired, data.todayDate]);
+  }, [data.validFrom, data.dateRequired, data.todayDate]);
 
   const cancellationDetails = useMemo(() => {
     let reason: 'future' | 'expired' | 'duplicate' = 'future';
     let currentExpiryDate = "";
     let earliestRenewalDate = "";
 
-    const isDuplicate = checkIsBlockedDuplicate(data as any, database || [], data.todayDate);
+    const isDuplicate = checkIsBlockedDuplicate(data, database || [], data.todayDate);
 
     if (isDuplicate) {
       reason = 'duplicate';
@@ -550,10 +536,8 @@ function PermitCardInner({
       const validEarlierRecords = (database || []).filter(r => {
         const rVrm = (r.vrm || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
         if (rVrm !== cleanVrm) return false;
-        if (!isRecordStrictlyEarlier(r, data as any, database || [])) return false;
-        const earlierDate = r.dateRequired || r.validFrom || "";
-        if (isDateRequiredOutsideValidWindow(earlierDate, refDateISO) || (r as any).isCancelled === true) return false;
-        if (checkIsBlockedDuplicate(r, database || [], refDateISO)) return false;
+        if (!isRecordStrictlyEarlier(r, data, database || [])) return false;
+        if (isRecordCancelled(r, refDateISO, database)) return false;
         return true;
       });
 
@@ -571,7 +555,7 @@ function PermitCardInner({
       const activeEarlier = validEarlierRecords[0];
       if (activeEarlier) {
         const startIso = parseDateToISO(activeEarlier.dateRequired || activeEarlier.validFrom || activeEarlier.startTime || activeEarlier.createdAt || "");
-        const expiryIso = (activeEarlier as any).validTo ? parseDateToISO((activeEarlier as any).validTo) : (startIso ? addDays(startIso, 6) : null);
+        const expiryIso = activeEarlier.validTo ? parseDateToISO(activeEarlier.validTo) : (startIso ? addDays(startIso, 6) : null);
         if (expiryIso) {
           currentExpiryDate = formatDate(expiryIso);
           const renewalIso = addDays(expiryIso, 1);
@@ -595,14 +579,14 @@ function PermitCardInner({
       driverName: data.name,
       validFrom: data.validFrom,
       todayDate: data.todayDate,
-      dateRequired: (data as any).dateRequired,
+      dateRequired: data.dateRequired,
       reason: cancellationDetails.reason,
       currentExpiryDate: cancellationDetails.currentExpiryDate,
       earliestRenewalDate: cancellationDetails.earliestRenewalDate,
       activePermitExpiry: cancellationDetails.currentExpiryDate,
       reapplyDate: cancellationDetails.earliestRenewalDate,
     });
-  }, [data.name, data.vrm, data.validFrom, data.todayDate, (data as any).dateRequired, cancellationDetails]);
+  }, [data.name, data.vrm, data.validFrom, data.todayDate, data.dateRequired, cancellationDetails]);
 
   const isReplacement = useMemo(() => {
     // 0. Explicit resend / replacement markers on form data
@@ -625,13 +609,13 @@ function PermitCardInner({
     // independently-computed auto-assigned code and this card's own
     // auto-assigned code picked different (but equally unsent) codes from the
     // same pool, which is not a replacement.
-    const matchedRec = activeIndex !== -1 ? matchingPermits[activeIndex] : (database?.find(r => ((data as any).formId && (r.formId === (data as any).formId || r.id === (data as any).formId))));
-    const initialDbCode = (matchedRec?.voucherCode || (matchedRec as any)?.prePaidCode || (matchedRec as any)?.voucherCodesText || "").trim().toUpperCase();
+    const matchedRec = activeIndex !== -1 ? matchingPermits[activeIndex] : (database?.find(r => (data.formId && (r.formId === data.formId || r.id === data.formId))));
+    const initialDbCode = (matchedRec?.voucherCode || matchedRec?.prePaidCode || matchedRec?.voucherCodesText || "").trim().toUpperCase();
     if (isCurrentDispatched && initialDbCode && initialDbCode !== "-" && initialDbCode !== "CANCELLED" && currentSelectedCode && currentSelectedCode !== initialDbCode) {
       return true;
     }
     return false;
-  }, [data.emailType, data.isResend, data.emailTemplate, emailTemplate, isCurrentDispatched, isVoucherChangedOnSent, currentSelectedCode, lastDispatchedCodeMap, recordKeyStr, activeIndex, matchingPermits, database, (data as any).formId]);
+  }, [data.emailType, data.isResend, data.emailTemplate, emailTemplate, isCurrentDispatched, isVoucherChangedOnSent, currentSelectedCode, lastDispatchedCodeMap, recordKeyStr, activeIndex, matchingPermits, database, data.formId]);
 
   const getEmailContent = useCallback((template: "new" | "replacement") => {
     const hasUpdatedVoucherCode = isCurrentDispatched && isVoucherChangedOnSent;
@@ -644,7 +628,7 @@ function PermitCardInner({
       validFrom: data.validFrom,
       validTo: data.validTo,
       todayDate: data.todayDate,
-      dateRequired: (data as any).dateRequired,
+      dateRequired: data.dateRequired,
     };
 
     if (isResentMode) {
@@ -652,7 +636,7 @@ function PermitCardInner({
     } else {
       return getSendEmailContent(params);
     }
-  }, [data.name, data.vrm, data.validFrom, data.validTo, data.todayDate, (data as any).dateRequired, data.emailType, data.isResend, data.emailTemplate, isCurrentDispatched, isVoucherChangedOnSent, emailTemplate, isReplacement]);
+  }, [data.name, data.vrm, data.validFrom, data.validTo, data.todayDate, data.dateRequired, data.emailType, data.isResend, data.emailTemplate, isCurrentDispatched, isVoucherChangedOnSent, emailTemplate, isReplacement]);
   
   const showToast = (message: string) => {
     setToastMessage(message);
@@ -714,26 +698,26 @@ function PermitCardInner({
       validFrom: data.validFrom,
       validTo: data.validTo,
       todayDate: data.todayDate,
-      dateRequired: (data as any).dateRequired,
+      dateRequired: data.dateRequired,
     };
     const content = getReplacementEmailContent(params);
     const subject = content.subject;
     const mailBody = content.plainText;
     const htmlText = content.htmlText;
 
-    (window as any).__styledEmailBody = htmlText;
+    (window as unknown as { __styledEmailBody?: string }).__styledEmailBody = htmlText;
 
     const currentTargetRecord = (activeIndex !== -1 && matchingPermits[activeIndex])
       ? matchingPermits[activeIndex]
-      : (database ? database.find(r => ((data as any).formId && (r.formId === (data as any).formId || r.id === (data as any).formId))) : undefined) || {
-          id: (data as any).id,
-          formId: (data as any).formId,
+      : (database ? database.find(r => (data.formId && (r.formId === data.formId || r.id === data.formId))) : undefined) || {
+          id: data.id,
+          formId: data.formId,
           vrm: data.vrm,
           driverName: data.name,
           dateRequired: data.validFrom || data.todayDate,
           email: data.email,
           ward: data.ward
-        } as any;
+        };
 
     let dispatchResult;
     try {
@@ -858,7 +842,7 @@ function PermitCardInner({
 
   const handleSendClick = async (targetRecord?: CsvPermitRecord) => {
     const rec = targetRecord || (activeIndex !== -1 && matchingPermits[activeIndex] ? matchingPermits[activeIndex] : null);
-    const isCancelledRec = rec ? (rec.voucherCode === "CANCELLED" || (rec as any).isCancelled === true) : isCancelled;
+    const isCancelledRec = rec ? (rec.voucherCode === "CANCELLED" || rec.isCancelled === true) : isCancelled;
     const vrm = rec?.vrm || data.vrm || "";
 
     if (!isCancelledRec && !targetRecord && qrCodeChanged) {
@@ -879,7 +863,7 @@ function PermitCardInner({
       return;
     }
     
-    const recCode = rec?.voucherCode || (rec as any)?.prePaidCode || (!targetRecord ? (activeVoucherCode || currentSelectedCode || qrUrl) : "");
+    const recCode = rec?.voucherCode || rec?.prePaidCode || (!targetRecord ? (activeVoucherCode || currentSelectedCode || qrUrl) : "");
     if (!isCancelledRec && !recCode && !qrUrl && !targetRecord) {
       showToast(`⚠️ Cannot send email: No QR code is available for this permit. Please assign a valid voucher code.`);
       return;
@@ -888,7 +872,7 @@ function PermitCardInner({
     const result = await handleSendWithOutlook(targetRecord);
     if (result !== false) {
       const targetDriverName = rec?.driverName || data.name || "Driver";
-      const targetPayloadCode = rec?.voucherCode || (rec as any)?.prePaidCode || (!targetRecord ? currentSelectedCode : "");
+      const targetPayloadCode = rec?.voucherCode || rec?.prePaidCode || (!targetRecord ? currentSelectedCode : "");
       const targetRecordKeyStr = rec ? (getRecordPrimaryKey(rec) || vrm) : recordKeyStr;
       if (targetPayloadCode && targetPayloadCode !== "-" && targetPayloadCode !== "CANCELLED") {
         setLastDispatchedCodeMap(prev => ({ ...prev, [targetRecordKeyStr]: targetPayloadCode }));
@@ -917,15 +901,15 @@ function PermitCardInner({
     setShowUnsendConfirm(false);
     const matchedRecord = (activeIndex !== -1 && matchingPermits[activeIndex])
       ? matchingPermits[activeIndex]
-      : (database ? database.find(r => ((data as any).formId && (r.formId === (data as any).formId || r.id === (data as any).formId))) : undefined) || {
-          id: (data as any).id,
-          formId: (data as any).formId,
+      : (database ? database.find(r => (data.formId && (r.formId === data.formId || r.id === data.formId))) : undefined) || {
+          id: data.id,
+          formId: data.formId,
           vrm: data.vrm,
           driverName: data.name,
           dateRequired: data.validFrom || data.todayDate,
           email: data.email,
           ward: data.ward
-        } as any;
+        };
     const res = await unmarkAsDispatched?.(data.vrm, data.email, matchedRecord);
     if (res !== false) {
       setLastDispatchedCodeMap(prev => {
@@ -947,7 +931,7 @@ function PermitCardInner({
     return safeLocalStorage.getItem("outlook_permit_last_recipient") || "";
   });
   const [outlookClientType, setOutlookClientType] = useState<"app" | "web" | "live">(() => {
-    return (safeLocalStorage.getItem("outlook_permit_client_type") as any) || "app";
+    return (safeLocalStorage.getItem("outlook_permit_client_type") as "app" | "web" | "live" | null) || "app";
   });
   const [showOutlookGuide, setShowOutlookGuide] = useState<boolean>(false);
   const [copyTarget, setCopyTarget] = useState<"card" | "qr">("qr");
@@ -991,12 +975,12 @@ function PermitCardInner({
         return code;
       }
     }
-    const raw = (data as any).voucherCode || (data as any).prePaidCode || (data as any).qrCode || (data as any).serialNumber;
+    const raw = data.voucherCode || data.prePaidCode || data.qrCode || data.serialNumber;
     if (raw && raw !== "-" && raw.toUpperCase() !== "CANCELLED") {
       return raw;
     }
-    if ((data as any).formId) {
-      const matched = database?.find(r => (r.formId === (data as any).formId || r.id === (data as any).formId));
+    if (data.formId) {
+      const matched = database?.find(r => (r.formId === data.formId || r.id === data.formId));
       if (matched && matched.voucherCode && matched.voucherCode !== "CANCELLED" && matched.voucherCode !== "-") {
         return matched.voucherCode;
       }
@@ -1006,8 +990,8 @@ function PermitCardInner({
     if (availableVouchersForDate.length > 0) {
       // Collect codes already used by other records in the database for this date
       const usedCodesByOthers = new Set<string>();
-      const currentFormId = String((data as any).formId ?? data.id ?? "");
-      const targetDate = data.validFrom || (data as any).dateRequired || getTodayISO();
+      const currentFormId = String(data.formId ?? data.id ?? "");
+      const targetDate = data.validFrom || data.dateRequired || getTodayISO();
       const targetISO = parseDateToISO(targetDate);
       
       (database || []).forEach(r => {
@@ -1018,7 +1002,7 @@ function PermitCardInner({
         const rDate = parseDateToISO(r.dateRequired || r.validFrom || "");
         if (rDate !== targetISO) return;
         
-        const rawCode = r.voucherCode || (r as any).prePaidCode || (r as any).qrCode || (r as any).serialNumber;
+        const rawCode = r.voucherCode || r.prePaidCode || r.qrCode || r.serialNumber;
         if (rawCode && rawCode !== "-" && rawCode.toUpperCase() !== "CANCELLED") {
           const lines = String(rawCode).split(/[\n,;\s]+/).map(s => s.trim().toUpperCase()).filter(Boolean);
           lines.forEach(c => usedCodesByOthers.add(c));
@@ -1043,7 +1027,7 @@ function PermitCardInner({
     }
 
     return "";
-  }, [isCancelled, voucherCodes, activeVoucherIndex, (data as any).voucherCode, (data as any).prePaidCode, (data as any).qrCode, (data as any).serialNumber, (data as any).formId, (data as any).dateRequired, (data as any).startTime, data.validFrom, data.todayDate, data.vrm, data.id, database, availableVouchersForDate]);
+  }, [isCancelled, voucherCodes, activeVoucherIndex, data.voucherCode, data.prePaidCode, data.qrCode, data.serialNumber, data.formId, data.dateRequired, data.startTime, data.validFrom, data.todayDate, data.vrm, data.id, database, availableVouchersForDate]);
 
   const qrPayload = useMemo(() => {
     if (data.qrOverride.trim()) {
@@ -1804,9 +1788,9 @@ function PermitCardInner({
     }
 
     // 2. Identify the target record context strictly
-    const targetRec = targetRecord || (activeIndex !== -1 && matchingPermits[activeIndex] ? matchingPermits[activeIndex] : null) || (database && (data as any).formId ? database.find(r => r.formId === (data as any).formId || r.id === (data as any).formId) : null) || {
-      id: (data as any).id,
-      formId: (data as any).formId,
+    const targetRec = targetRecord || (activeIndex !== -1 && matchingPermits[activeIndex] ? matchingPermits[activeIndex] : null) || (database && data.formId ? database.find(r => r.formId === data.formId || r.id === data.formId) : null) || {
+      id: data.id,
+      formId: data.formId,
       vrm: data.vrm,
       driverName: data.name,
       dateRequired: data.validFrom || data.todayDate,
@@ -1816,19 +1800,19 @@ function PermitCardInner({
       validFrom: data.validFrom,
       validTo: data.validTo,
       todayDate: data.todayDate
-    } as any;
+    };
 
     const targetVrm = (targetRec.vrm || (targetRecord ? "" : data.vrm) || "").toUpperCase().trim();
     const targetDriverName = (targetRec.driverName || targetRec.name || (targetRecord ? "" : data.name) || "").trim();
-    const targetEmail = (targetRec.email || (targetRec as any).driverEmail || (targetRecord ? "" : data.email) || "").toLowerCase().trim();
+    const targetEmail = (targetRec.email || targetRec.driverEmail || (targetRecord ? "" : data.email) || "").toLowerCase().trim();
     const targetWard = (targetRec.ward || (targetRecord ? "" : data.ward) || "").trim();
     const targetSite = (targetRec.site || targetRec.hospital || (targetRecord ? "" : data.site) || "").trim();
     const targetValidFrom = targetRec.validFrom || targetRec.dateRequired || (targetRecord ? "" : data.validFrom) || "";
     const targetValidTo = targetRec.validTo || (targetValidFrom ? addDays(targetValidFrom, 6) : "") || (targetRecord ? "" : data.validTo) || "";
-    const targetTodayDate = (targetRec as any).todayDate || (targetRecord ? "" : data.todayDate) || getTodayISO();
-    const targetDateRequired = targetRec.dateRequired || targetRec.validFrom || (targetRecord ? "" : (data as any).dateRequired) || "";
-    const targetIsCancelled = targetRec.voucherCode === "CANCELLED" || (targetRec as any).isCancelled === true || (!targetRecord && isCancelled);
-    const targetPayloadCode = targetRec.voucherCode || (targetRec as any).prePaidCode || (targetRec as any).voucherCodesText || (!targetRecord ? (data.qrOverride?.trim() || activeVoucherCode || currentSelectedCode || "") : "");
+    const targetTodayDate = targetRec.todayDate || (targetRecord ? "" : data.todayDate) || getTodayISO();
+    const targetDateRequired = targetRec.dateRequired || targetRec.validFrom || (targetRecord ? "" : data.dateRequired) || "";
+    const targetIsCancelled = targetRec.voucherCode === "CANCELLED" || targetRec.isCancelled === true || (!targetRecord && isCancelled);
+    const targetPayloadCode = targetRec.voucherCode || targetRec.prePaidCode || targetRec.voucherCodesText || (!targetRecord ? (data.qrOverride?.trim() || activeVoucherCode || currentSelectedCode || "") : "");
 
     // 3. Silent block check
     const silentBlocked = await isVrmSilentBlocked(targetVrm || "");
@@ -1881,7 +1865,7 @@ function PermitCardInner({
       htmlText = content.htmlText;
     }
 
-    (window as any).__styledEmailBody = htmlText;
+    (window as unknown as { __styledEmailBody?: string }).__styledEmailBody = htmlText;
 
     // 5. Update dispatched status in database and local UI state strictly for THIS target record
     let dispatchResult;
@@ -2013,7 +1997,7 @@ function PermitCardInner({
       onSelectRecord?.(record);
       await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
     }
-    return (ref as any)?.current?.send?.();
+    return handleSendClick(record);
   };
 
   const bulkEmail = async (records?: CsvPermitRecord[]) => {
@@ -2030,7 +2014,7 @@ function PermitCardInner({
     for (const record of targets) {
       onSelectRecord?.(record);
       await new Promise(resolve => setTimeout(resolve, 400));
-      await (ref as any)?.current?.send?.();
+      await handleSendClick(record);
       await new Promise(resolve => setTimeout(resolve, 600));
     }
   };
@@ -2080,7 +2064,7 @@ function PermitCardInner({
     sendOne,
     bulkEmail,
     unsend: async (record?: CsvPermitRecord) => {
-      const matchedRecord = record || (activeIndex !== -1 && matchingPermits[activeIndex] ? matchingPermits[activeIndex] : null) || (database ? database.find(r => ((data as any).formId && (r.formId === (data as any).formId || r.id === (data as any).formId))) : undefined) || (record as any);
+      const matchedRecord = record || (activeIndex !== -1 && matchingPermits[activeIndex] ? matchingPermits[activeIndex] : null) || (database ? database.find(r => (data.formId && (r.formId === data.formId || r.id === data.formId))) : undefined) || record;
       if (!matchedRecord) return false;
       const targetVrm = record?.vrm || data.vrm;
       const targetEmail = record?.email || data.email;
@@ -2575,7 +2559,7 @@ function PermitCardInner({
                     {unusedVouchersForDay.length}
                   </span>
                   <span className="text-xs text-slate-500 dark:text-slate-400 ml-1">
-                    codes available for {data.validFrom || (data as any).dateRequired || getTodayISO()}
+                    codes available for {data.validFrom || data.dateRequired || getTodayISO()}
                   </span>
                 </div>
               </div>
