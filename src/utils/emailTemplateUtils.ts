@@ -1,4 +1,12 @@
-import { formatDate, parseDateToISO, addDays, toTitleCase } from "./csvParser";
+import { 
+  formatDate, 
+  parseDateToISO, 
+  addDays, 
+  toTitleCase,
+  getTodayISO,
+  checkIsBlockedDuplicate,
+  isRecordCancelled
+} from "./csvParser";
 
 export type CancellationReason = 'future' | 'expired' | 'duplicate';
 
@@ -24,6 +32,119 @@ export interface EmailContentResult {
 }
 
 export const NHS_SUPPORT_EMAIL = "parkingadminbh.bartshealth@nhs.net";
+
+/**
+ * Automatically resolves the cancellation details (reason: duplicate/expired/future,
+ * currentExpiryDate, earliestRenewalDate) for a permit record based on the database.
+ */
+export function resolveCancellationDetails(
+  record?: { 
+    vrm?: string; 
+    name?: string; 
+    driverName?: string; 
+    validFrom?: string; 
+    dateRequired?: string; 
+    todayDate?: string; 
+    id?: string | number; 
+    formId?: string | number; 
+    isCancelled?: boolean; 
+    voucherCode?: string;
+    status?: string;
+    isDispatched?: boolean;
+    startTime?: string;
+    createdAt?: string;
+    validTo?: string;
+  },
+  database?: any[],
+  refDateStr?: string
+): {
+  reason: CancellationReason;
+  currentExpiryDate: string;
+  earliestRenewalDate: string;
+} {
+  if (!record) {
+    return { reason: 'future', currentExpiryDate: '', earliestRenewalDate: '' };
+  }
+
+  const cleanVrm = (record.vrm || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const refDateISO = parseDateToISO(refDateStr || record.todayDate) || getTodayISO();
+
+  let isDuplicate = false;
+  let activePermit: any = null;
+
+  if (cleanVrm && cleanVrm !== "PENDING" && cleanVrm !== "-" && database && database.length > 0) {
+    // 1. Check if blocked duplicate via checkIsBlockedDuplicate
+    const isBlocked = checkIsBlockedDuplicate(record, database, refDateISO);
+
+    // 2. Look for any matching record for this VRM in database (excluding self)
+    const matchingRecords = database.filter(r => {
+      const rVrm = (r.vrm || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+      if (rVrm !== cleanVrm) return false;
+      // Exclude self if ID / formId matches
+      if (record.formId !== undefined && r.formId !== undefined && String(record.formId) === String(r.formId)) return false;
+      if (record.id !== undefined && r.id !== undefined && String(record.id) === String(r.id)) return false;
+      return true;
+    });
+
+    if (matchingRecords.length > 0) {
+      // Find active / sent / valid permits for this VRM
+      const activeMatches = matchingRecords.filter(r => {
+        if (r.status === 'sent' || r.isDispatched === true) return true;
+        if (r.voucherCode && r.voucherCode !== '-' && r.voucherCode !== 'CANCELLED' && r.voucherCode !== 'Cancelled') return true;
+        if (!isRecordCancelled(r, refDateISO, database)) return true;
+        return false;
+      });
+
+      if (isBlocked || activeMatches.length > 0) {
+        isDuplicate = true;
+        activePermit = activeMatches[0] || matchingRecords[0];
+      }
+    }
+  }
+
+  if (isDuplicate && activePermit) {
+    const startIso = parseDateToISO(activePermit.validFrom || activePermit.dateRequired || activePermit.startTime || activePermit.createdAt || "");
+    const expiryIso = activePermit.validTo ? parseDateToISO(activePermit.validTo) : (startIso ? addDays(startIso, 6) : null);
+    let currentExpiryDate = "";
+    let earliestRenewalDate = "";
+    if (expiryIso) {
+      currentExpiryDate = formatDate(expiryIso);
+      const renewalIso = addDays(expiryIso, 1);
+      if (renewalIso) {
+        earliestRenewalDate = formatDate(renewalIso);
+      }
+    }
+    return {
+      reason: 'duplicate',
+      currentExpiryDate,
+      earliestRenewalDate
+    };
+  }
+
+  if (isDuplicate) {
+    return {
+      reason: 'duplicate',
+      currentExpiryDate: '',
+      earliestRenewalDate: ''
+    };
+  }
+
+  const validFromStr = record.validFrom || record.dateRequired || "";
+  const validFromISO = parseDateToISO(validFromStr);
+  if (validFromISO && validFromISO < refDateISO) {
+    return {
+      reason: 'expired',
+      currentExpiryDate: '',
+      earliestRenewalDate: ''
+    };
+  }
+
+  return {
+    reason: 'future',
+    currentExpiryDate: '',
+    earliestRenewalDate: ''
+  };
+}
 
 /**
  * Normalizes VRM for email display (Upper-case, e.g., FY21CVX)

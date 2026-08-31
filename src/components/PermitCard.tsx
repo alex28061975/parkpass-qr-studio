@@ -27,6 +27,7 @@ import {
   getResendConcessionEmailContent,
   getSendEmailContent,
   getCancellationEmailContent, 
+  resolveCancellationDetails,
   formatVrmForEmail,
   formatDriverNameForEmail,
   deriveDateRangeForEmail,
@@ -522,72 +523,24 @@ function PermitCardInner({
   }, [data.validFrom, data.dateRequired, data.todayDate]);
 
   const cancellationDetails = useMemo(() => {
-    let reason: 'future' | 'expired' | 'duplicate' = 'future';
-    let currentExpiryDate = "";
-    let earliestRenewalDate = "";
-
-    const isDuplicate = checkIsBlockedDuplicate(data, database || [], data.todayDate);
-
-    if (isDuplicate) {
-      reason = 'duplicate';
-      const cleanVrm = (data.vrm || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
-      const refDateISO = parseDateToISO(data.todayDate) || getTodayISO();
-      
-      // Find all earlier records for the same VRM that are valid (not date-invalid, not blocked duplicates themselves)
-      const validEarlierRecords = (database || []).filter(r => {
-        const rVrm = (r.vrm || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
-        if (rVrm !== cleanVrm) return false;
-        if (!isRecordStrictlyEarlier(r, data, database || [])) return false;
-        if (isRecordCancelled(r, refDateISO, database)) return false;
-        return true;
-      });
-
-      // Sort deterministically: latest submission time / form ID among valid earlier records
-      validEarlierRecords.sort((a, b) => {
-        const timeA = extractRecordSubmissionTimeMs(a);
-        const timeB = extractRecordSubmissionTimeMs(b);
-        if (timeA > 0 && timeB > 0 && timeA !== timeB) return timeB - timeA;
-        const idA = extractRecordNumericFormId(a);
-        const idB = extractRecordNumericFormId(b);
-        if (idA > 0 && idB > 0 && idA !== idB) return idB - idA;
-        return 0;
-      });
-
-      const activeEarlier = validEarlierRecords[0];
-      if (activeEarlier) {
-        const startIso = parseDateToISO(activeEarlier.dateRequired || activeEarlier.validFrom || activeEarlier.startTime || activeEarlier.createdAt || "");
-        const expiryIso = activeEarlier.validTo ? parseDateToISO(activeEarlier.validTo) : (startIso ? addDays(startIso, 6) : null);
-        if (expiryIso) {
-          currentExpiryDate = formatDate(expiryIso);
-          const renewalIso = addDays(expiryIso, 1);
-          if (renewalIso) {
-            earliestRenewalDate = formatDate(renewalIso);
-          }
-        }
-      }
-    } else if (isCancelled && !isCancelledInFuture) {
-      reason = 'expired';
-    } else {
-      reason = 'future';
-    }
-
-    return { reason, currentExpiryDate, earliestRenewalDate };
-  }, [isCancelled, isCancelledInFuture, data, database]);
+    return resolveCancellationDetails(data, database || [], data.todayDate);
+  }, [data, database]);
 
   const getCancellationEmailContentCallback = useCallback(() => {
+    const details = resolveCancellationDetails(data, database || [], data.todayDate);
     return getCancellationEmailContent({
       vrm: data.vrm,
       driverName: data.name,
       validFrom: data.validFrom,
       todayDate: data.todayDate,
       dateRequired: data.dateRequired,
-      reason: cancellationDetails.reason,
-      currentExpiryDate: cancellationDetails.currentExpiryDate,
-      earliestRenewalDate: cancellationDetails.earliestRenewalDate,
-      activePermitExpiry: cancellationDetails.currentExpiryDate,
-      reapplyDate: cancellationDetails.earliestRenewalDate,
+      reason: details.reason,
+      currentExpiryDate: details.currentExpiryDate,
+      earliestRenewalDate: details.earliestRenewalDate,
+      activePermitExpiry: details.currentExpiryDate,
+      reapplyDate: details.earliestRenewalDate,
     });
-  }, [data.name, data.vrm, data.validFrom, data.todayDate, data.dateRequired, cancellationDetails]);
+  }, [data, database]);
 
   const isReplacement = useMemo(() => {
     // 0. Explicit resend / replacement markers on form data
@@ -1843,17 +1796,18 @@ function PermitCardInner({
     };
 
     if (targetIsCancelled) {
+      const details = resolveCancellationDetails(targetRec, database || [], targetTodayDate);
       const cancelContent = getCancellationEmailContent({
         vrm: targetVrm,
         driverName: targetDriverName,
         validFrom: targetValidFrom,
         todayDate: targetTodayDate,
         dateRequired: targetDateRequired,
-        reason: cancellationDetails.reason,
-        currentExpiryDate: cancellationDetails.currentExpiryDate,
-        earliestRenewalDate: cancellationDetails.earliestRenewalDate,
-        activePermitExpiry: cancellationDetails.currentExpiryDate,
-        reapplyDate: cancellationDetails.earliestRenewalDate,
+        reason: details.reason,
+        currentExpiryDate: details.currentExpiryDate,
+        earliestRenewalDate: details.earliestRenewalDate,
+        activePermitExpiry: details.currentExpiryDate,
+        reapplyDate: details.earliestRenewalDate,
       });
       subject = cancelContent.subject;
       mailBody = cancelContent.plainText;
