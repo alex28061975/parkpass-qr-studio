@@ -1757,6 +1757,7 @@ export default function App() {
             formData={formData}
             totalRecordsCount={totalRecordsCount > 0 ? totalRecordsCount : enrichedDatabase.length}
             searchQuery={searchQuery}
+            onSearchQueryChange={setSearchQuery}
             onSelectRecord={handleSelectRecord}
             onSendRecord={handleDispatchRecord}
             onUnsendRecord={handleUnsendRecord}

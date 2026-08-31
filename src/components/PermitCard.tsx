@@ -2113,9 +2113,8 @@ function PermitCardInner({
               </div>
             ) : (
               <div className="w-36 h-36 flex flex-col items-center justify-center bg-slate-100 dark:bg-slate-950 rounded-lg text-xs text-slate-400 dark:text-slate-500 p-2 text-center border border-dashed border-slate-200 dark:border-slate-800">
-                <span className="text-base mb-1">⚠️</span>
-                <span className="font-semibold text-slate-500 dark:text-slate-400">No Unique QR</span>
-                <span className="text-[8px] mt-0.5 text-slate-400 dark:text-slate-500">(Duplicate or Empty Code)</span>
+                <span className="font-mono text-2xl text-slate-300 dark:text-slate-600 mb-1">-</span>
+                <span className="text-[10px] font-medium text-slate-400 dark:text-slate-500">No Code Assigned</span>
               </div>
             )}
             

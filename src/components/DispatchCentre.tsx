@@ -13,14 +13,15 @@ import {
   Lock, 
   RefreshCw,
   Download,
-  QrCode
+  QrCode,
+  Search,
+  X
 } from "lucide-react";
 import { 
   CsvPermitRecord, 
   ParsedVoucherData, 
   parseDateToISO, 
   addDays, 
-  getMatchingPermits, 
   getSpreadsheetMatchingAllocationsMap, 
   isDateRequiredOutsideValidWindow, 
   checkIsBlockedDuplicate,
@@ -46,6 +47,7 @@ interface DispatchCentreProps {
   };
   totalRecordsCount?: number;
   searchQuery?: string;
+  onSearchQueryChange?: (query: string) => void;
   onSelectRecord: (record: CsvPermitRecord) => void;
   onSendRecord?: (record: CsvPermitRecord) => Promise<void> | void;
   onUnsendRecord?: (record: CsvPermitRecord) => Promise<void> | void;
@@ -88,7 +90,8 @@ export function DispatchCentre({
   processingDate, 
   formData,
   totalRecordsCount,
-  searchQuery,
+  searchQuery: searchQueryProp,
+  onSearchQueryChange,
   onSelectRecord, 
   onSendRecord, 
   onUnsendRecord, 
@@ -96,7 +99,17 @@ export function DispatchCentre({
   onClear,
   onChangeFormData
 }: DispatchCentreProps) {
-  const [activeOnly, setActiveOnly] = useState(true);
+  const [internalSearchQuery, setInternalSearchQuery] = useState("");
+  const isControlled = searchQueryProp !== undefined;
+  const searchQuery = isControlled ? searchQueryProp : internalSearchQuery;
+  const handleSearchChange = (val: string) => {
+    if (onSearchQueryChange) {
+      onSearchQueryChange(val);
+    } else {
+      setInternalSearchQuery(val);
+    }
+  };
+
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [actionsOpen, setActionsOpen] = useState(false);
   const [wardDropdownOpen, setWardDropdownOpen] = useState(false);
@@ -105,19 +118,14 @@ export function DispatchCentre({
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [sortDirection, setSortDirection] = useState<SortDirection>(null);
 
-  // Base records matching Spreadsheet Permits Matching Helper logic
+  // Base records: always shows all records (sorted by numeric id / formId)
   const baseRecords = useMemo(() => {
-    const hasSearch = Boolean(searchQuery && searchQuery.trim());
-    const rawMatches = activeOnly && processingDate && !hasSearch
-      ? getMatchingPermits(database, processingDate)
-      : database;
-
-    return [...rawMatches].sort((a, b) => {
+    return [...database].sort((a, b) => {
       const aId = Number(String(a.formId ?? a.id ?? 0).replace(/[^0-9]/g, "")) || 0;
       const bId = Number(String(b.formId ?? b.id ?? 0).replace(/[^0-9]/g, "")) || 0;
       return aId - bId;
     });
-  }, [database, activeOnly, processingDate, searchQuery]);
+  }, [database]);
 
   // Compute dynamic voucher allocations map matching Matching Helper exactly
   const recordCodeMap = useMemo(() => {
@@ -335,43 +343,54 @@ export function DispatchCentre({
   return (
     <section className="w-full bg-[#07172b] border border-[#183a5e] rounded-2xl p-4 md:p-6 shadow-2xl text-slate-200">
       {/* Top Header Section */}
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-[#143252]">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-full bg-blue-600 flex items-center justify-center shadow-lg shadow-blue-500/20 text-white shrink-0">
-            <Send className="w-5 h-5 -rotate-45" />
+      <div className="flex flex-col gap-3 pb-4 border-b border-[#143252]">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-blue-600 flex items-center justify-center shadow-lg shadow-blue-500/20 text-white shrink-0">
+              <Send className="w-5 h-5 -rotate-45" />
+            </div>
+            <div>
+              <h2 className="text-xl font-bold text-white tracking-tight">Permit Dispatch Centre</h2>
+              <p className="text-xs text-slate-400 font-normal mt-0.5">Select recipients and dispatch emails via Outlook</p>
+            </div>
           </div>
-          <div>
-            <h2 className="text-xl font-bold text-white tracking-tight">Permit Dispatch Centre</h2>
-            <p className="text-xs text-slate-400 font-normal mt-0.5">Select recipients and dispatch emails via Outlook</p>
+
+          <div className="flex items-center gap-2 self-start sm:self-auto">
+            {/* Outlook info badge */}
+            <div className="flex items-center gap-1.5 bg-[#0b2138] border border-[#1b436c] text-[#93c5fd] text-xs px-3 py-1.5 rounded-lg select-none">
+              <Mail className="w-3.5 h-3.5 text-blue-400" />
+              <span>Select recipients and dispatch emails via Outlook</span>
+            </div>
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3">
-          {/* Outlook info badge */}
-          <div className="hidden sm:flex items-center gap-1.5 bg-[#0b2138] border border-[#1b436c] text-[#93c5fd] text-xs px-3 py-1.5 rounded-lg select-none">
-            <Mail className="w-3.5 h-3.5 text-blue-400" />
-            <span>Select recipients and dispatch emails via Outlook</span>
+        {/* Header Search Bar */}
+        <div className="relative w-full">
+          <div className="flex items-center w-full bg-[#041222] border border-[#1b436c] focus-within:border-[#1677FF] focus-within:ring-2 focus-within:ring-[#1677FF]/20 rounded-xl px-3.5 py-2 transition shadow-inner">
+            <Search className="w-4 h-4 text-blue-400 shrink-0 mr-2.5" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => handleSearchChange(e.target.value)}
+              placeholder="Search by driver's name, number plate (VRM), or hospital..."
+              className="w-full bg-transparent text-sm text-white placeholder-slate-400 focus:outline-none font-normal"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => handleSearchChange("")}
+                className="text-slate-400 hover:text-white p-1 rounded-md transition"
+                title="Clear search"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
-
-          {/* Active Date Only Toggle */}
-          <div className="flex items-center gap-2 text-xs font-medium text-slate-300 select-none bg-[#091e34] px-3 py-1.5 rounded-lg border border-[#1a3d64]">
-            <span>Active Date Only:</span>
-            <button 
-              type="button" 
-              role="switch"
-              aria-checked={activeOnly}
-              onClick={() => setActiveOnly(v => !v)}
-              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors cursor-pointer ${
-                activeOnly ? "bg-[#22c55e]" : "bg-slate-700"
-              }`}
-            >
-              <span 
-                className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
-                  activeOnly ? "translate-x-4" : "translate-x-1"
-                }`} 
-              />
-            </button>
-          </div>
+          {searchQuery && (
+            <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-[11px] text-slate-400 bg-[#081f38] px-2 py-0.5 rounded border border-[#194068] hidden md:block">
+              {filteredRecords.length} {filteredRecords.length === 1 ? 'match' : 'matches'}
+            </div>
+          )}
         </div>
       </div>
 
