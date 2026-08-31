@@ -7,7 +7,8 @@ import {
   addDays, 
   getTodayISO,
   getSpreadsheetMatchingAllocationsMap,
-  isRecordCancelled
+  isRecordCancelled,
+  isVoucherExactPeriodEligible
 } from "../utils/csvParser";
 import { checkIsRecordDispatched } from "../utils/dispatchUtils";
 
@@ -71,11 +72,7 @@ export function PermitMatchingTable({
     if (!activeFromISO || !vouchersDatabase || vouchersDatabase.length === 0) {
       return [];
     }
-    return vouchersDatabase.filter(v => {
-      if (!v || !v.code) return false;
-      const vFromIso = v.validFrom ? parseDateToISO(v.validFrom) : "";
-      return Boolean(vFromIso && vFromIso === activeFromISO);
-    });
+    return vouchersDatabase.filter(v => isVoucherExactPeriodEligible(v, activeFromISO));
   }, [activeFromISO, vouchersDatabase]);
   const matchingVouchersCount = activeVouchers.length;
 

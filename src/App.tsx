@@ -23,7 +23,7 @@ import {
 // CSV Database Imports
 import { INITIAL_DEMO_CSV } from "./data/defaultCsv";
 import { isVrmSilentBlockedSync } from "./lib/blocklist";
-import { CsvPermitRecord, parsePermitCsv, parseDateToISO, addDays, formatPhoneNumber, ParsedVoucherData, addDaysSafe, parseDateRange, getDatesInRange, cleanVoucherCodeValue, exportToExcel, isVoucherCodeMatch, sortRecordsByFormIdDesc, getMatchingPermits, isDateRequiredOutsideValidWindow, getTodayISO, checkIsBlockedDuplicate, parseFullDateTimeMs, normalizeVouchersList, isRecordCancelled } from "./utils/csvParser";
+import { CsvPermitRecord, parsePermitCsv, parseDateToISO, addDays, formatPhoneNumber, ParsedVoucherData, addDaysSafe, parseDateRange, getDatesInRange, cleanVoucherCodeValue, exportToExcel, isVoucherCodeMatch, sortRecordsByFormIdDesc, getMatchingPermits, isDateRequiredOutsideValidWindow, getTodayISO, checkIsBlockedDuplicate, parseFullDateTimeMs, normalizeVouchersList, isRecordCancelled, getRequestedPermitDateISO, isVoucherExactPeriodEligible, isVoucherAvailableStatus, isVoucherVrmCompatible } from "./utils/csvParser";
 import { CsvDatabasePanel } from "./components/CsvDatabasePanel";
 import { TableView } from "./components/TableView";
 import { AnalyticsDashboard } from "./components/AnalyticsDashboard";
@@ -65,7 +65,7 @@ export function enrichRecordsWithVouchers(
   const assignedPerCustomer = new Map<string, Set<string>>();
 
   const getCustomerKey = (rec: CsvPermitRecord) => {
-    const vrm = rec.vrm ? rec.vrm.toUpperCase().replace(/\s+/g, "") : "";
+    const vrm = rec.vrm ? rec.vrm.toUpperCase().replace(/[^A-Z0-9]/g, "") : "";
     if (vrm && vrm !== "PENDING") return `vrm:${vrm}`;
     if (rec.email) return `email:${rec.email.trim().toLowerCase()}`;
     return `driver:${(rec.driverName || "").trim().toUpperCase()}`;
@@ -98,8 +98,8 @@ export function enrichRecordsWithVouchers(
   };
 
   const mapRecordFallback = (record: CsvPermitRecord, index: number, defaultVal: string) => {
-    const cleanVrm = record.vrm ? record.vrm.toUpperCase().replace(/\s+/g, "") : "";
-    const recDateISO = parseDateToISO(record.dateRequired || "") || "";
+    const cleanVrm = record.vrm ? record.vrm.toUpperCase().replace(/[^A-Z0-9]/g, "") : "";
+    const recDateISO = getRequestedPermitDateISO(record, fallbackDateStr);
     const keyWithDate = recDateISO ? `${cleanVrm}_${recDateISO}` : cleanVrm;
     const hasOriginalVoucher = false;
     let code = "";
@@ -136,181 +136,12 @@ export function enrichRecordsWithVouchers(
   }
 
   const vouchersList: ParsedVoucherData[] = vouchersDb.filter(v => v && v.code);
-
-  const isVrmCompatible = (vVrm: string | undefined, cleanVrm: string): boolean => {
-    if (!vVrm) return true;
-    const vVrmClean = vVrm.toUpperCase().replace(/\s+/g, "");
-    const isUnrestricted = !vVrmClean ||
-      vVrmClean === "-" ||
-      vVrmClean === "—" ||
-      vVrmClean === "PENDING" ||
-      vVrmClean === "N/A" ||
-      vVrmClean === "NA" ||
-      vVrmClean === "UNKNOWN" ||
-      vVrmClean === "NULL" ||
-      vVrmClean === "UNDEFINED";
-    if (isUnrestricted) return true;
-    return cleanVrm !== "" && vVrmClean === cleanVrm;
-  };
-
-  const hasAnyDatedVouchers = vouchersDb.some(v => v.validFrom || v.validTo);
-
-  const isDateCompatible = (v: ParsedVoucherData, targetDate: string): boolean => {
-    if (!targetDate) return false;
-    const vFrom = v.validFrom ? parseDateToISO(v.validFrom) : "";
-    if (!vFrom) return false;
-    const vTo = v.validTo ? parseDateToISO(v.validTo) : vFrom;
-    return targetDate >= vFrom && targetDate <= vTo;
-  };
-
-  const isVoucherAvailable = (v: ParsedVoucherData): boolean => {
-    const status = String(v.status || "").toLowerCase();
-    if (v.isUsed === true || status === "used" || status === "assigned" || status === "sent" || status === "completed") {
-      return false;
-    }
-    return true;
-  };
-
-  const findBestVoucher = (targetDate: string, cleanVrm: string, custAssignedSet: Set<string>): ParsedVoucherData | null => {
-    if (targetDate) {
-      let match = vouchersList.find(v => {
-        if (!v.code || !isVoucherAvailable(v)) return false;
-        const codeUpper = v.code.toUpperCase();
-        if (checkIsAssigned(codeUpper, custAssignedSet)) return false;
-        if (!v.vrm || v.vrm.toUpperCase().replace(/\s+/g, "") !== cleanVrm) return false;
-        const vFrom = v.validFrom ? parseDateToISO(v.validFrom) : "";
-        return vFrom && vFrom === targetDate;
-      });
-      if (match) return match;
-
-      match = vouchersList.find(v => {
-        if (!v.code || !isVoucherAvailable(v)) return false;
-        const codeUpper = v.code.toUpperCase();
-        if (checkIsAssigned(codeUpper, custAssignedSet)) return false;
-        if (!v.vrm || v.vrm.toUpperCase().replace(/\s+/g, "") !== cleanVrm) return false;
-        return isDateCompatible(v, targetDate);
-      });
-      if (match) return match;
-
-      match = vouchersList.find(v => {
-        if (!v.code || !isVoucherAvailable(v)) return false;
-        const codeUpper = v.code.toUpperCase();
-        if (checkIsAssigned(codeUpper, custAssignedSet)) return false;
-        if (!isVrmCompatible(v.vrm, cleanVrm)) return false;
-        const vFrom = v.validFrom ? parseDateToISO(v.validFrom) : "";
-        return vFrom && vFrom === targetDate;
-      });
-      if (match) return match;
-
-      match = vouchersList.find(v => {
-        if (!v.code || !isVoucherAvailable(v)) return false;
-        const codeUpper = v.code.toUpperCase();
-        if (checkIsAssigned(codeUpper, custAssignedSet)) return false;
-        if (!isVrmCompatible(v.vrm, cleanVrm)) return false;
-        return isDateCompatible(v, targetDate);
-      });
-      if (match) return match;
-    }
-
-    let vrmExactMatch = vouchersList.find(v => {
-      if (!v.code || !isVoucherAvailable(v)) return false;
-      const codeUpper = v.code.toUpperCase();
-      if (checkIsAssigned(codeUpper, custAssignedSet)) return false;
-      return v.vrm && v.vrm.toUpperCase().replace(/\s+/g, "") === cleanVrm;
-    });
-    if (vrmExactMatch) return vrmExactMatch;
-
-    let match = vouchersList.find(v => {
-      if (!v.code || !isVoucherAvailable(v)) return false;
-      const codeUpper = v.code.toUpperCase();
-      if (checkIsAssigned(codeUpper, custAssignedSet)) return false;
-      if (!isVrmCompatible(v.vrm, cleanVrm)) return false;
-      return !v.validFrom && !v.validTo;
-    });
-    if (match) return match;
-
-    if (!targetDate) {
-      let fallbackMatch = vouchersList.find(v => {
-        if (!v.code || !isVoucherAvailable(v)) return false;
-        const codeUpper = v.code.toUpperCase();
-        if (checkIsAssigned(codeUpper, custAssignedSet)) return false;
-        return true;
-      });
-      if (fallbackMatch) return fallbackMatch;
-    }
-
-    return null;
-  };
-
   const recordClaimedCodes = new Map<number, string>();
 
-  const inspectRecord = (record: CsvPermitRecord) => {
-    const cleanVrm = record.vrm ? record.vrm.toUpperCase().replace(/\s+/g, "") : "";
-    let startISO = "";
-    let endISO = "";
-    const range = parseDateRange(record.dateRequired);
-    if (range) {
-      startISO = range.startISO;
-      endISO = range.endISO;
-    } else if (record.dateRequired) {
-      const singleIso = parseDateToISO(record.dateRequired);
-      if (/^\d{4}-\d{2}-\d{2}$/.test(singleIso)) {
-        startISO = singleIso;
-        endISO = singleIso;
-      }
-    }
-
-    if (!startISO && record.validFrom) {
-      const range = parseDateRange(record.validFrom);
-      if (range) {
-        startISO = range.startISO;
-        endISO = range.endISO;
-      } else {
-        const validFromIso = parseDateToISO(record.validFrom);
-        if (/^\d{4}-\d{2}-\d{2}$/.test(validFromIso)) {
-          startISO = validFromIso;
-          endISO = validFromIso;
-        }
-      }
-    }
-
-    if (!startISO && record.startTime) {
-      const datePart = record.startTime.trim().split(" ")[0];
-      const startIsoFromTime = parseDateToISO(datePart);
-      if (/^\d{4}-\d{2}-\d{2}$/.test(startIsoFromTime)) {
-        startISO = startIsoFromTime;
-        endISO = startIsoFromTime;
-      }
-    }
-
-    if (!startISO && fallbackDateStr) {
-      const activeFallback = parseDateToISO(fallbackDateStr);
-      if (activeFallback && /^\d{4}-\d{2}-\d{2}$/.test(activeFallback)) {
-        startISO = activeFallback;
-        endISO = activeFallback;
-      }
-    }
-
-    const isSent = checkIsRecordDispatched(record, record.vrm, record.driverName, record.dateRequired, dispatchedKeys, unsentKeys);
-
-    const processingDateStr = fallbackDateStr || (record.startTime ? record.startTime.trim().split(" ")[0] : "");
-    const isCancelled = isRecordCancelled(record, processingDateStr, recordsList);
-
-    const keyWithDate = (startISO && cleanVrm) ? `${cleanVrm}_${startISO}` : "";
-    const customOverride = (record.formId ? customVouchersMap[String(record.formId)] : undefined) ||
-                           (record.id ? customVouchersMap[String(record.id)] : undefined) ||
-                           (keyWithDate ? customVouchersMap[keyWithDate] : undefined);
-
-    const existingCode = record.voucherCode || record.prePaidCode || record.qrCode || record.serialNumber;
-
-    return { cleanVrm, startISO, endISO, isSent, isCancelled, customOverride, existingCode };
-  };
-
   const getRecordSortInfo = (r: CsvPermitRecord, idx: number) => {
-    const rawDateStr = r.validFrom || r.dateRequired || r.createdAt || r.startTime;
-    const baseIso = parseDateToISO(rawDateStr) || fallbackDateStr || getTodayISO();
+    const reqIso = getRequestedPermitDateISO(r, fallbackDateStr) || getTodayISO();
     const cand = r.startTime || r.createdAt || r.created_at || r.completionTime || r.validFrom || r.dateRequired;
-    const timeMs = parseFullDateTimeMs(cand, baseIso) ?? new Date(baseIso).getTime();
+    const timeMs = parseFullDateTimeMs(cand, reqIso) ?? new Date(reqIso).getTime();
     const numFormId = Number(r.formId ?? r.id ?? 0) || 0;
     return { timeMs, numFormId, idx };
   };
@@ -331,41 +162,42 @@ export function enrichRecordsWithVouchers(
   // Pass 0: Register all existing valid codes from database / custom overrides
   chronologicalIndices.forEach((index) => {
     const record = recordsList[index];
+    const cleanVrm = record.vrm ? record.vrm.toUpperCase().replace(/[^A-Z0-9]/g, "") : "";
     const customerKey = getCustomerKey(record);
     if (!assignedPerCustomer.has(customerKey)) {
       assignedPerCustomer.set(customerKey, new Set());
     }
     const custAssignedSet = assignedPerCustomer.get(customerKey)!;
-    const info = inspectRecord(record);
+    const reqIso = getRequestedPermitDateISO(record, fallbackDateStr);
+    const keyWithDate = (reqIso && cleanVrm) ? `${cleanVrm}_${reqIso}` : "";
+    const customOverride = (record.formId ? customVouchersMap[String(record.formId)] : undefined) ||
+                           (record.id ? customVouchersMap[String(record.id)] : undefined) ||
+                           (keyWithDate ? customVouchersMap[keyWithDate] : undefined) ||
+                           (cleanVrm ? customVouchersMap[cleanVrm] : undefined);
 
-    if (info.customOverride) {
-      if (!checkIsAssigned(info.customOverride, custAssignedSet)) {
-        registerCodeGlobally(info.customOverride, custAssignedSet);
-        recordClaimedCodes.set(index, info.customOverride);
+    const existingCode = record.voucherCode || record.prePaidCode || record.qrCode || record.serialNumber;
+
+    if (customOverride && customOverride !== "-" && customOverride.toUpperCase() !== "CANCELLED") {
+      const clean = cleanVoucherCodeValue(customOverride).toUpperCase();
+      if (clean && clean !== "-" && clean !== "CANCELLED" && !checkIsAssigned(clean, custAssignedSet)) {
+        registerCodeGlobally(clean, custAssignedSet);
+        recordClaimedCodes.set(index, clean);
       }
-    } else if (info.existingCode && info.existingCode !== "-" && info.existingCode.toUpperCase() !== "CANCELLED") {
-      registerCodeGlobally(info.existingCode, custAssignedSet);
-      recordClaimedCodes.set(index, info.existingCode);
-    }
-  });
-
-  const vrmToCodeMap = new Map<string, string>();
-  recordsList.forEach((r) => {
-    const vrmKey = r.vrm ? r.vrm.toUpperCase().replace(/\s+/g, "") : "";
-    if (!vrmKey) return;
-    const existing = r.voucherCode || r.prePaidCode || r.qrCode || r.serialNumber;
-    if (existing) {
-      const clean = cleanVoucherCodeValue(existing);
-      if (clean && clean !== "-" && clean !== "CANCELLED") {
-        if (!vrmToCodeMap.has(vrmKey)) {
-          vrmToCodeMap.set(vrmKey, clean);
-        }
+    } else if (existingCode && existingCode !== "-" && existingCode.toUpperCase() !== "CANCELLED") {
+      const clean = cleanVoucherCodeValue(existingCode).toUpperCase();
+      if (clean && clean !== "-" && clean !== "CANCELLED" && !checkIsAssigned(clean, custAssignedSet)) {
+        registerCodeGlobally(clean, custAssignedSet);
+        recordClaimedCodes.set(index, clean);
       }
     }
   });
 
+  // Pass 1: Allocate vouchers using strict exact-period matching on requested permit date D:
+  // Eligible if and only if voucher.validFrom === D AND voucher.validTo === addDays(D, 6).
   chronologicalIndices.forEach((index) => {
     const record = recordsList[index];
+    const cleanVrm = record.vrm ? record.vrm.toUpperCase().replace(/[^A-Z0-9]/g, "") : "";
+    const reqDateD = getRequestedPermitDateISO(record, fallbackDateStr);
 
     // Any VRM on the actual security blocklist is always blocked
     if (isVrmSilentBlockedSync(record.vrm)) {
@@ -378,8 +210,8 @@ export function enrichRecordsWithVouchers(
       return;
     }
 
-    // Explicitly cancelled records in database
-    if (record.voucherCode === "CANCELLED" || record.isCancelled === true) {
+    // Explicitly cancelled records in database or dynamic cancellation
+    if (record.voucherCode === "CANCELLED" || record.isCancelled === true || isRecordCancelled(record, reqDateD || fallbackDateStr, recordsList)) {
       enrichedByIndex.set(index, {
         ...record,
         voucherCode: "CANCELLED",
@@ -400,81 +232,65 @@ export function enrichRecordsWithVouchers(
       return;
     }
 
+    if (!reqDateD) {
+      enrichedByIndex.set(index, {
+        ...record,
+        voucherCode: "-",
+        prePaidCode: record.prePaidCode && record.prePaidCode !== "CANCELLED" ? record.prePaidCode : "-",
+        hasOriginalVoucher: false
+      });
+      return;
+    }
+
     const customerKey = getCustomerKey(record);
     if (!assignedPerCustomer.has(customerKey)) {
       assignedPerCustomer.set(customerKey, new Set());
     }
     const custAssignedSet = assignedPerCustomer.get(customerKey)!;
-    const info = inspectRecord(record);
 
-    const targetDates = (info.startISO && info.endISO) ? getDatesInRange(info.startISO, info.endISO) : (info.startISO ? [info.startISO] : [""]);
-    const allocatedCodes: string[] = [];
-    let activeWeeklyVoucher: ParsedVoucherData | null = null;
-    let foundFromVouchersDb = false;
-
-    for (const targetDate of targetDates) {
-      let codeForDay = "-";
-
-      if (activeWeeklyVoucher && targetDate && isDateCompatible(activeWeeklyVoucher, targetDate)) {
-        codeForDay = activeWeeklyVoucher.code.toUpperCase();
-        foundFromVouchersDb = true;
-      } else {
-        const matchedVoucher = findBestVoucher(targetDate, info.cleanVrm, custAssignedSet);
-        if (matchedVoucher) {
-          codeForDay = matchedVoucher.code.toUpperCase();
-          registerCodeGlobally(codeForDay, custAssignedSet);
-          foundFromVouchersDb = true;
-
-          const vFrom = matchedVoucher.validFrom ? parseDateToISO(matchedVoucher.validFrom) : "";
-          const vTo = matchedVoucher.validTo ? parseDateToISO(matchedVoucher.validTo) : "";
-          if (vFrom && vTo && vFrom !== vTo && info.endISO && vTo >= info.endISO) {
-            activeWeeklyVoucher = matchedVoucher;
-          }
-        }
-      }
-
-      allocatedCodes.push(codeForDay);
-    }
-
-    let nonHyphenCodes = Array.from(new Set(allocatedCodes.filter(c => c && c !== "-")));
-    if (nonHyphenCodes.length === 0 && info.cleanVrm && vrmToCodeMap.has(info.cleanVrm)) {
-      nonHyphenCodes = [vrmToCodeMap.get(info.cleanVrm)!];
-      foundFromVouchersDb = true;
-    }
-    const finalCodeValue = nonHyphenCodes.length > 0 ? nonHyphenCodes.join("\n") : "-";
-
-    enrichedByIndex.set(index, {
-      ...record,
-      voucherCode: finalCodeValue,
-      prePaidCode: finalCodeValue !== "-" ? finalCodeValue : (record.prePaidCode || "-"),
-      hasOriginalVoucher: foundFromVouchersDb && finalCodeValue !== "-"
+    // Filter available vouchers eligible for this EXACT requested permit date D
+    const eligibleVouchers = vouchersList.filter(v => {
+      if (!isVoucherAvailableStatus(v)) return false;
+      const cleanCode = cleanVoucherCodeValue(v.code).toUpperCase();
+      if (!cleanCode || checkIsAssigned(cleanCode, custAssignedSet)) return false;
+      return isVoucherExactPeriodEligible(v, reqDateD);
     });
+
+    let matchedVoucher: ParsedVoucherData | undefined;
+
+    // 1. Try exact VRM match among eligible vouchers for requested date D
+    if (cleanVrm) {
+      matchedVoucher = eligibleVouchers.find(v => {
+        const vVrm = (v.vrm || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+        return vVrm && vVrm === cleanVrm;
+      });
+    }
+
+    // 2. Try generic/unrestricted VRM voucher among eligible vouchers for requested date D
+    if (!matchedVoucher) {
+      matchedVoucher = eligibleVouchers.find(v => isVoucherVrmCompatible(v.vrm, cleanVrm));
+    }
+
+    if (matchedVoucher && matchedVoucher.code) {
+      const code = cleanVoucherCodeValue(matchedVoucher.code).toUpperCase();
+      registerCodeGlobally(code, custAssignedSet);
+      enrichedByIndex.set(index, {
+        ...record,
+        voucherCode: code,
+        prePaidCode: code,
+        hasOriginalVoucher: true
+      });
+    } else {
+      enrichedByIndex.set(index, {
+        ...record,
+        voucherCode: "-",
+        prePaidCode: record.prePaidCode && record.prePaidCode !== "CANCELLED" ? record.prePaidCode : "-",
+        hasOriginalVoucher: false
+      });
+    }
   });
 
-  const enriched = recordsList.map((record, index) => enrichedByIndex.get(index) || record);
-
-  return enriched.map((record) => {
-    if (record.voucherCode === "CANCELLED") {
-      return record;
-    }
-    const cleanVrm = record.vrm ? record.vrm.toUpperCase().replace(/\s+/g, "") : "";
-    const isSentRec = checkIsRecordDispatched(record, record.vrm, record.driverName, record.dateRequired, dispatchedKeys, unsentKeys);
-
-    if (isSentRec && (!record.voucherCode || record.voucherCode === "-")) {
-      const bestVoucher = vouchersList.find(v => v.code && !checkIsAssigned(v.code.toUpperCase(), new Set()));
-      if (bestVoucher) {
-        const codeUpper = bestVoucher.code.toUpperCase();
-        registerCodeGlobally(codeUpper);
-        return {
-          ...record,
-          voucherCode: codeUpper,
-          prePaidCode: codeUpper,
-          hasOriginalVoucher: true
-        };
-      }
-    }
-    return record;
-  });
+  return recordsList.map((record, index) => enrichedByIndex.get(index) || record);
 }
 
 export default function App() {

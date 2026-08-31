@@ -18,7 +18,8 @@ import {
   extractRecordSubmissionTimeMs, 
   extractRecordNumericFormId, 
   resolvePermitDate,
-  isRecordCancelled
+  isRecordCancelled,
+  getRequestedPermitDateISO
 } from "../utils/csvParser";
 import { getRecordKeys, checkIsRecordDispatched, getRecordPrimaryKey } from "../utils/dispatchUtils";
 import { 
@@ -198,7 +199,7 @@ function PermitCardInner({
   // 1. unusedVouchersForDay: Filters vouchers to only unused codes matching the target ISO date
   // =========================================================================
   const unusedVouchersForDay = useMemo<ParsedVoucherData[]>(() => {
-    const targetIso = resolvePermitDate(data);
+    const targetIso = getRequestedPermitDateISO(data, resolvePermitDate(data));
     if (!targetIso) return [];
 
     return getUnusedVouchersForDate(

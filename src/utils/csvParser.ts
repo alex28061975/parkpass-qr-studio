@@ -1743,10 +1743,107 @@ export function extractRecordVoucherCode(record: any): string {
   return raw;
 }
 
+export function isVoucherAvailableStatus(v: ParsedVoucherData | undefined | null): boolean {
+  if (!v || !v.code) return false;
+  const cleanCode = cleanVoucherCodeValue(v.code).toUpperCase();
+  if (!cleanCode || cleanCode === "-" || cleanCode === "CANCELLED") return false;
+  const status = String(v.status || "").toLowerCase();
+  if (v.isUsed === true || status === "used" || status === "assigned" || status === "sent" || status === "completed") {
+    return false;
+  }
+  return true;
+}
+
+export function isVoucherVrmCompatible(vVrm: string | undefined | null, cleanVrm: string): boolean {
+  if (!vVrm) return true;
+  const vVrmClean = String(vVrm).toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const isUnrestricted = !vVrmClean ||
+    ["-", "—", "PENDING", "N/A", "NA", "UNKNOWN", "NULL", "UNDEFINED"].includes(vVrmClean);
+  if (isUnrestricted) return true;
+  return cleanVrm !== "" && vVrmClean === cleanVrm;
+}
+
+/**
+ * Resolves the Excel/requested permit date D from a permit record in ISO format (YYYY-MM-DD).
+ * Uses dateRequired / validFrom (or date range start), falling back to other record dates if missing.
+ */
+export function getRequestedPermitDateISO(record?: any, fallbackDateStr?: string): string {
+  if (!record) {
+    return fallbackDateStr ? (parseDateToISO(fallbackDateStr) || "") : "";
+  }
+  const rawDate = record.dateRequired ||
+                  record.validFrom ||
+                  record.valid_from ||
+                  record["Date Required"] ||
+                  record["DATE REQUIRED"] ||
+                  record["Valid From"] ||
+                  record["VALID FROM"];
+
+  if (rawDate) {
+    const range = parseDateRange(String(rawDate));
+    if (range && range.startISO) {
+      return range.startISO;
+    }
+    const iso = parseDateToISO(String(rawDate));
+    if (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso)) {
+      return iso;
+    }
+  }
+
+  if (fallbackDateStr) {
+    const fbIso = parseDateToISO(fallbackDateStr);
+    if (fbIso && /^\d{4}-\d{2}-\d{2}$/.test(fbIso)) {
+      return fbIso;
+    }
+  }
+
+  const secondaryDate = record.startTime || record.completionTime || record.todayDate || record.createdAt || record.processingDate;
+  if (secondaryDate) {
+    const iso = parseDateToISO(String(secondaryDate));
+    if (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso)) {
+      return iso;
+    }
+  }
+
+  return "";
+}
+
+/**
+ * Shared helper for strict exact-period voucher eligibility comparison.
+ * For a requested permit date D (ISO YYYY-MM-DD), a CSV voucher is eligible
+ * IF AND ONLY IF:
+ *   voucher.validFrom === D AND voucher.validTo === addDays(D, 6).
+ *
+ * Rules:
+ * - Does NOT use date-range containment (validFrom <= D <= validTo).
+ * - Does NOT match on validFrom alone.
+ * - Does NOT fall back to vouchers from other validity periods.
+ */
+export function isVoucherExactPeriodEligible(
+  voucher: ParsedVoucherData | undefined | null,
+  requestedDateStr: string
+): boolean {
+  if (!voucher || !voucher.code || !requestedDateStr) return false;
+  const dIso = parseDateToISO(requestedDateStr);
+  if (!dIso || !/^\d{4}-\d{2}-\d{2}$/.test(dIso)) return false;
+
+  const rawFrom = voucher.validFrom || voucher.valid_from || voucher.ValidFrom || voucher.startDate || voucher.start_date;
+  const rawTo = voucher.validTo || voucher.valid_to || voucher.ValidTo || voucher.expires || voucher.expiryDate || voucher.endDate || voucher.end_date;
+
+  const vFromIso = rawFrom ? parseDateToISO(String(rawFrom)) : "";
+  const vToIso = rawTo ? parseDateToISO(String(rawTo)) : "";
+  const expectedToIso = addDays(dIso, 6);
+
+  return Boolean(vFromIso && vToIso && vFromIso === dIso && vToIso === expectedToIso);
+}
+
 /**
  * Replicates the Spreadsheet Permits Matching Helper's exact two-pass logic
  * (explicit codes on records, then auto-assigned next-available codes) and returns
  * the canonical Map of recordKey to assigned code (or "CANCELLED" / "-").
+ *
+ * Voucher allocation strictly uses the Excel/requested permit date (D), not processingDate.
+ * A CSV voucher is eligible only when voucher.validFrom === D AND voucher.validTo === addDays(D, 6).
  */
 export function getSpreadsheetMatchingAllocationsMap(
   matchingPermits: any[] = [],
@@ -1757,11 +1854,12 @@ export function getSpreadsheetMatchingAllocationsMap(
 ): Map<string, string> {
   const map = new Map<string, string>();
   const activeFromISO = parseDateToISO(processingDate);
-  if (!activeFromISO) return map;
 
   const targetPermits = (matchingPermits && matchingPermits.length > 0)
     ? matchingPermits
-    : getMatchingPermits(database, activeFromISO);
+    : (activeFromISO ? getMatchingPermits(database, activeFromISO) : database);
+
+  if (!targetPermits || targetPermits.length === 0) return map;
 
   const sortedMatchingPermits = [...targetPermits].sort((a, b) => {
     const aId = Number(String(a.formId ?? a.id ?? 0).replace(/[^0-9]/g, "")) || 0;
@@ -1770,20 +1868,13 @@ export function getSpreadsheetMatchingAllocationsMap(
   });
 
   const effectiveDatabase = database.length > 0 ? database : sortedMatchingPermits;
-
-  const activeVouchers = (vouchersDatabase || []).filter(v => {
-    if (!v || !v.code) return false;
-    const vFromIso = v.validFrom ? parseDateToISO(v.validFrom) : (v.valid_from ? parseDateToISO(v.valid_from) : "");
-    return Boolean(vFromIso && vFromIso === activeFromISO);
-  });
-  const activeDateCodes = activeVouchers.map(v => v.code).filter(Boolean);
-
   const internalAssignedSet = new Set<string>();
 
-  // Pass 1: Register records that already have a specific valid code
+  // Pass 1: Register records that already have a specific valid code or custom override
   sortedMatchingPermits.forEach((r, idx) => {
     const recordKey = String(r.formId ?? r.id ?? idx);
-    if (isRecordCancelled(r, processingDate, effectiveDatabase)) {
+    const reqDate = getRequestedPermitDateISO(r, processingDate);
+    if (isRecordCancelled(r, reqDate || processingDate, effectiveDatabase)) {
       map.set(recordKey, "CANCELLED");
       return;
     }
@@ -1806,7 +1897,7 @@ export function getSpreadsheetMatchingAllocationsMap(
     // Check custom vouchers map override if record doesn't have an explicit code
     if (customVouchersMap) {
       const rVrm = (r.vrm || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
-      const rDateIso = parseDateToISO(r.dateRequired || r.validFrom || "");
+      const rDateIso = reqDate;
       const keyWithDate = rDateIso ? `${rVrm}_${rDateIso}` : rVrm;
       const customOverride = customVouchersMap[keyWithDate] ||
                              customVouchersMap[rVrm] ||
@@ -1824,12 +1915,16 @@ export function getSpreadsheetMatchingAllocationsMap(
     }
   });
 
-  // Pass 2: Auto-assign next available active date code for unblocked records that lack a code
+  // Pass 2: Auto-assign next available active date code for unblocked records that lack a code.
+  // CRITICAL RULE: Voucher allocation must use the Excel/requested permit date (D), not processingDate.
+  // For requested date D, a CSV voucher is eligible ONLY when voucher.validFrom === D AND voucher.validTo === addDays(D, 6).
+  // Do not use date-range containment. Do not match on validFrom alone. Do not fall back to vouchers from other validity periods.
   sortedMatchingPermits.forEach((r, idx) => {
     const recordKey = String(r.formId ?? r.id ?? idx);
     if (map.has(recordKey)) return;
 
-    if (isRecordCancelled(r, processingDate, effectiveDatabase)) {
+    const reqDateD = getRequestedPermitDateISO(r, processingDate);
+    if (isRecordCancelled(r, reqDateD || processingDate, effectiveDatabase)) {
       map.set(recordKey, "CANCELLED");
       return;
     }
@@ -1841,30 +1936,43 @@ export function getSpreadsheetMatchingAllocationsMap(
       return;
     }
 
+    if (!reqDateD) {
+      map.set(recordKey, "-");
+      return;
+    }
+
+    // Filter available vouchers eligible for this EXACT requested permit date D
+    const eligibleVouchers = (vouchersDatabase || []).filter(v => {
+      if (!isVoucherAvailableStatus(v)) return false;
+      const cleanCode = cleanVoucherCodeValue(v.code).toUpperCase();
+      if (internalAssignedSet.has(cleanCode)) return false;
+      return isVoucherExactPeriodEligible(v, reqDateD);
+    });
+
     const rVrm = (r.vrm || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
     let nextCode = "";
+
+    // 1. Try exact VRM match among eligible vouchers for requested date D
     if (rVrm) {
-      const vrmMatch = activeVouchers.find(v => {
+      const vrmMatch = eligibleVouchers.find(v => {
         const vVrm = (v.vrm || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
-        return vVrm && vVrm === rVrm && !internalAssignedSet.has(v.code.trim().toUpperCase());
-      }) || (vouchersDatabase || []).find(v => {
-        const vVrm = (v.vrm || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
-        return vVrm && vVrm === rVrm && !internalAssignedSet.has(v.code.trim().toUpperCase());
+        return vVrm && vVrm === rVrm;
       });
       if (vrmMatch && vrmMatch.code) {
-        nextCode = vrmMatch.code.trim().toUpperCase();
+        nextCode = cleanVoucherCodeValue(vrmMatch.code).toUpperCase();
       }
     }
 
+    // 2. Try generic/unrestricted VRM voucher among eligible vouchers for requested date D
     if (!nextCode) {
-      const avail = activeDateCodes.find(c => !internalAssignedSet.has(c.trim().toUpperCase())) ||
-                    (vouchersDatabase || []).find(v => v.code && !internalAssignedSet.has(v.code.trim().toUpperCase()))?.code;
-      if (avail) {
-        nextCode = avail.trim().toUpperCase();
+      const genericMatch = eligibleVouchers.find(v => isVoucherVrmCompatible(v.vrm, rVrm));
+      if (genericMatch && genericMatch.code) {
+        nextCode = cleanVoucherCodeValue(genericMatch.code).toUpperCase();
       }
     }
 
-    if (nextCode) {
+    // 3. Set assigned code or '-' (NO fallback to other dates/periods!)
+    if (nextCode && nextCode !== "-" && nextCode !== "CANCELLED") {
       map.set(recordKey, nextCode);
       internalAssignedSet.add(nextCode);
     } else {
@@ -1910,6 +2018,8 @@ export function getSpreadsheetMatchingAssignedCodes(
  * Filter vouchers to only unused codes matching a target ISO date.
  * Excludes codes assigned to OTHER active driver records in the database
  * or in the Spreadsheet Permits Matching Helper using the canonical allocations engine.
+ *
+ * Enforces strict exact-period rule: voucher.validFrom === D AND voucher.validTo === addDays(D, 6).
  */
 export function getUnusedVouchersForDate(
   vouchersDatabase: ParsedVoucherData[],
@@ -1928,7 +2038,7 @@ export function getUnusedVouchersForDate(
 
   const currentId = String(currentRecord?.id ?? "").trim();
   const currentFormId = String(currentRecord?.formId ?? "").trim();
-  const currentVrmClean = (currentVrm || currentRecord?.vrm || "").toUpperCase().replace(/\s+/g, "");
+  const currentVrmClean = (currentVrm || currentRecord?.vrm || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
   const currentRecordCode = cleanVoucherCodeValue(
     extractRecordVoucherCode(currentRecord) || currentRecord?.qrOverride || ""
   ).toUpperCase();
@@ -1952,7 +2062,7 @@ export function getUnusedVouchersForDate(
   targetPermits.forEach((permit, idx) => {
     const pId = String(permit.id ?? "").trim();
     const pFormId = String(permit.formId ?? "").trim();
-    const pVrmClean = (permit.vrm || "").toUpperCase().replace(/\s+/g, "");
+    const pVrmClean = (permit.vrm || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
 
     // Skip current active record
     const isCurrent = Boolean(
@@ -1962,7 +2072,8 @@ export function getUnusedVouchersForDate(
     );
     if (isCurrent) return;
 
-    if (isRecordCancelled(permit, targetISO, database)) return;
+    const permitReqDate = getRequestedPermitDateISO(permit, targetISO);
+    if (isRecordCancelled(permit, permitReqDate || targetISO, database)) return;
 
     const recordKey = String(permit.formId ?? permit.id ?? idx);
     const allocatedCode = allocationsMap.get(recordKey);
@@ -1979,17 +2090,17 @@ export function getUnusedVouchersForDate(
     assignedToOtherSet.delete(currentRecordCode);
   }
 
-  // Extract all daily vouchers for target ISO date
-  const dailyVouchersForDate = vouchersDatabase.filter(v => {
+  // Filter vouchers eligible for target ISO date D:
+  // Must satisfy exact-period rule: voucher.validFrom === D AND voucher.validTo === addDays(D, 6)
+  const eligibleVouchersForDate = vouchersDatabase.filter(v => {
     if (!v) return false;
-    const vFrom = parseDateToISO(v.validFrom || v.valid_from || v.dateRequired || v.date || "");
-    return vFrom === targetISO;
+    return isVoucherExactPeriodEligible(v, targetISO);
   });
 
   const seenCodes = new Set<string>();
   const activeUnassignedCodes: ParsedVoucherData[] = [];
 
-  for (const voucher of dailyVouchersForDate) {
+  for (const voucher of eligibleVouchersForDate) {
     const rawCode = voucher.code || voucher.voucherCode || voucher.qrCode || voucher.serialNumber || voucher.prePaidCode;
     if (!rawCode) continue;
 
@@ -2013,18 +2124,13 @@ export function getUnusedVouchersForDate(
     }
 
     // Exclude if voucher status is used
-    const status = String(voucher.status || "").toLowerCase();
-    if (voucher.isUsed === true || status === "used" || status === "assigned" || status === "sent" || status === "completed") {
+    if (!isVoucherAvailableStatus(voucher)) {
       continue;
     }
 
     // VRM check if voucher has specific VRM
-    if (voucher.vrm) {
-      const vVrmClean = String(voucher.vrm).toUpperCase().replace(/\s+/g, "");
-      const isUnrestricted = !vVrmClean || ["-", "—", "PENDING", "N/A", "NA", "UNKNOWN", "NULL"].includes(vVrmClean);
-      if (!isUnrestricted && currentVrmClean && vVrmClean !== currentVrmClean) {
-        continue;
-      }
+    if (!isVoucherVrmCompatible(voucher.vrm, currentVrmClean)) {
+      continue;
     }
 
     if (!seenCodes.has(codeUpper)) {

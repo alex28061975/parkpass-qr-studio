@@ -9,7 +9,8 @@ import {
   getUnusedVouchersForDate, 
   getSpreadsheetMatchingAssignedCodes, 
   checkIsBlockedDuplicate, 
-  resolvePermitDate 
+  resolvePermitDate,
+  getRequestedPermitDateISO
 } from "../utils/csvParser";
 import { 
   Building2, 
@@ -90,7 +91,7 @@ export function PermitForm({
 
   // Unused vouchers computation
   const unusedVouchersForDay = useMemo<ParsedVoucherData[]>(() => {
-    const targetIso = resolvePermitDate(data);
+    const targetIso = getRequestedPermitDateISO(data, resolvePermitDate(data));
     if (!targetIso) return [];
 
     return getUnusedVouchersForDate(
