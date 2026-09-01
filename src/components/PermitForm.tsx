@@ -11,8 +11,8 @@ import {
   checkIsBlockedDuplicate, 
   resolvePermitDate,
   getRequestedPermitDateISO,
-  isRecordCancelledCanonical as isCancelled,
-  getVoucherDateISO
+  getVoucherDateISO,
+  isRecordCancelledCanonical as isCancelled
 } from "../utils/csvParser";
 import { 
   Building2, 
@@ -79,6 +79,10 @@ export function PermitForm({
 
   // Target ISO for the permit being viewed/edited
   const targetIso = useMemo(() => {
+    const processingIso = data.todayDate ? parseDateToISO(String(data.todayDate)) : "";
+    if (processingIso && /^\d{4}-\d{2}-\d{2}$/.test(processingIso)) {
+      return processingIso;
+    }
     return getRequestedPermitDateISO(data);
   }, [data.validFrom, data.dateRequired, data.startTime, data.createdAt, data.todayDate]);
 
@@ -88,7 +92,7 @@ export function PermitForm({
     return getMatchingPermits(database, targetIso);
   }, [data, database, targetIso]);
 
-  // Unused vouchers computation with date filter
+  // Unused vouchers computation
   const unusedVouchersForDay = useMemo<ParsedVoucherData[]>(() => {
     if (!targetIso) return [];
 
@@ -101,20 +105,27 @@ export function PermitForm({
       matchingPermits
     );
 
-    // EXTRA SAFETY: Filter to ONLY vouchers that match the target date exactly
-    const dateFiltered = vouchers.filter(v => {
-      const vIso = getVoucherDateISO(v);
-      return vIso === targetIso;
+    const dateFiltered = vouchers.filter(v => getVoucherDateISO(v) === targetIso);
+
+    const spreadsheetAssignedCodes = getSpreadsheetMatchingAssignedCodes(
+      matchingPermits,
+      database,
+      targetIso,
+      vouchersDatabase
+    );
+    const finalFiltered = dateFiltered.filter(v => {
+      const codeUpper = (v.code || "").trim().toUpperCase();
+      return !spreadsheetAssignedCodes.has(codeUpper);
     });
 
     console.log('🔍 Unused Codes Debug:', {
       targetISO: targetIso,
       totalVouchers: vouchersDatabase?.length || 0,
-      unusedCount: dateFiltered.length,
-      unusedCodes: dateFiltered.map(v => v.code)
+      unusedCount: finalFiltered.length,
+      unusedCodes: finalFiltered.map(v => v.code)
     });
 
-    return dateFiltered;
+    return finalFiltered;
   }, [vouchersDatabase, database, matchingPermits, targetIso, data]);
 
   const isBlockedDuplicate = useMemo(() => {

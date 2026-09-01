@@ -223,14 +223,27 @@ function PermitCardInner({
       return vIso === targetIso;
     });
 
+    // Exclude codes already assigned via the Spreadsheet Permits Matching Helper
+    const processingDate = resolvePermitDate(data);
+    const spreadsheetAssignedCodes = getSpreadsheetMatchingAssignedCodes(
+      matchingPermits,
+      database,
+      processingDate,
+      vouchersDatabase
+    );
+    const finalFiltered = dateFiltered.filter(v => {
+      const codeUpper = (v.code || "").trim().toUpperCase();
+      return !spreadsheetAssignedCodes.has(codeUpper);
+    });
+
     console.log('🔍 [PermitCard] Unused Codes Debug:', {
       targetISO: targetIso,
       totalVouchers: vouchersDatabase?.length || 0,
-      unusedCount: dateFiltered.length,
-      unusedCodes: dateFiltered.map(v => v.code)
+      unusedCount: finalFiltered.length,
+      unusedCodes: finalFiltered.map(v => v.code)
     });
 
-    return dateFiltered;
+    return finalFiltered;
   }, [
     vouchersDatabase, 
     database, 
