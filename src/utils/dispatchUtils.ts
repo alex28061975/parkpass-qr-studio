@@ -1,5 +1,5 @@
 import { CsvPermitRecord } from "./csvParser";
-import { getSupabaseClient, syncDispatchedToSupabase, deleteDispatchedFromSupabase, fetchDispatchedFromSupabase } from "../lib/supabase";
+import { getSupabaseClient, syncDispatchedToSupabase, deleteDispatchedFromSupabase, deleteDispatchedKeysFromSupabase, fetchDispatchedFromSupabase } from "../lib/supabase";
 
 /**
  * Helper to compute a simple 32-bit FNV-1a hash string for deterministic fallback key generation
@@ -321,9 +321,7 @@ export async function unmarkRecordAsDispatched(
   try {
     const allKeys = getRecordKeys(record);
     const keysToDelete = Array.from(new Set([primaryKey, ...allKeys]));
-    for (const key of keysToDelete) {
-      await deleteDispatchedFromSupabase(key).catch(() => {});
-    }
+    await deleteDispatchedKeysFromSupabase(keysToDelete);
 
     return { success: true };
   } catch (error: any) {

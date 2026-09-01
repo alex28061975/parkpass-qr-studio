@@ -26,9 +26,10 @@ import {
   isDateRequiredOutsideValidWindow, 
   checkIsBlockedDuplicate,
   exportToExcel,
-  isRecordCancelled
+  isRecordCancelled,
+  sortRecordsBySubmissionTimeDesc
 } from "../utils/csvParser";
-import { checkIsRecordDispatched } from "../utils/dispatchUtils";
+import { checkIsRecordDispatched, getRecordKeys } from "../utils/dispatchUtils";
 
 interface DispatchCentreProps {
   database: CsvPermitRecord[];
@@ -118,13 +119,9 @@ export function DispatchCentre({
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [sortDirection, setSortDirection] = useState<SortDirection>(null);
 
-  // Base records: always shows all records (sorted by numeric id / formId)
+  // Base records: always shows all records (sorted by newest submission time / createdAt descending)
   const baseRecords = useMemo(() => {
-    return [...database].sort((a, b) => {
-      const aId = Number(String(a.formId ?? a.id ?? 0).replace(/[^0-9]/g, "")) || 0;
-      const bId = Number(String(b.formId ?? b.id ?? 0).replace(/[^0-9]/g, "")) || 0;
-      return aId - bId;
-    });
+    return sortRecordsBySubmissionTimeDesc(database);
   }, [database]);
 
   // Compute dynamic voucher allocations map matching Matching Helper exactly
@@ -161,7 +158,8 @@ export function DispatchCentre({
     const getStatusStr = (record: CsvPermitRecord, idx: number) => {
       const isDispatched = checkIsRecordDispatched(record, record.vrm, record.driverName, record.dateRequired, dispatchedKeys, unsentKeys);
       const rowKey = String(record.formId ?? record.id ?? record.vrm ?? idx);
-      const isUnsent = Boolean(unsentKeys && unsentKeys.length > 0 && unsentKeys.includes(rowKey));
+      const recordKeys = getRecordKeys(record);
+      const isUnsent = Boolean(unsentKeys && unsentKeys.length > 0 && (unsentKeys.includes(rowKey) || recordKeys.some(k => unsentKeys.includes(k))));
       if (isDispatched) return "SENT";
       if (isUnsent) return "UNSENT";
       return "PENDING";
@@ -583,7 +581,8 @@ export function DispatchCentre({
                 const rowKey = String(record.formId ?? record.id ?? record.vrm ?? index);
 
                 const isDispatched = checkIsRecordDispatched(record, record.vrm, record.driverName, record.dateRequired, dispatchedKeys, unsentKeys);
-                const isUnsent = Boolean(unsentKeys && unsentKeys.length > 0 && unsentKeys.includes(rowKey));
+                const recordKeys = getRecordKeys(record);
+                const isUnsent = Boolean(unsentKeys && unsentKeys.length > 0 && (unsentKeys.includes(rowKey) || recordKeys.some(k => unsentKeys.includes(k))));
 
                 // 2. # Column: Excel ID with row number fallback
                 const excelId = (() => {

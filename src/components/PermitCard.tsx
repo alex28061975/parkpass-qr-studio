@@ -19,7 +19,8 @@ import {
   extractRecordNumericFormId, 
   resolvePermitDate,
   isRecordCancelled,
-  getRequestedPermitDateISO
+  getRequestedPermitDateISO,
+  getVoucherDateISO
 } from "../utils/csvParser";
 import { getRecordKeys, checkIsRecordDispatched, getRecordPrimaryKey } from "../utils/dispatchUtils";
 import { 
@@ -190,20 +191,24 @@ function PermitCardInner({
     };
   }, [data.vrm]);
 
-  // FIXED: Use the processing/submission date for matching
+  // Target ISO for the permit being viewed
+  const targetIso = useMemo(() => {
+    return getRequestedPermitDateISO(data);
+  }, [data.validFrom, data.dateRequired, data.startTime, data.createdAt, data.todayDate]);
+
+  // Use the requested permit date for matching permits
   const matchingPermits = useMemo(() => {
-    const activeDateStr = resolvePermitDate(data);
-    return getMatchingPermits(database, activeDateStr);
-  }, [data, database]);
+    if (!targetIso) return [];
+    return getMatchingPermits(database, targetIso);
+  }, [database, targetIso]);
 
   // =========================================================================
   // 1. unusedVouchersForDay: Filters vouchers to only unused codes matching the target ISO date
   // =========================================================================
   const unusedVouchersForDay = useMemo<ParsedVoucherData[]>(() => {
-    const targetIso = getRequestedPermitDateISO(data, resolvePermitDate(data));
     if (!targetIso) return [];
 
-    return getUnusedVouchersForDate(
+    const vouchers = getUnusedVouchersForDate(
       vouchersDatabase, 
       database, 
       targetIso, 
@@ -211,10 +216,26 @@ function PermitCardInner({
       data, 
       matchingPermits
     );
+
+    // EXTRA SAFETY: Filter to ONLY vouchers that match the target date exactly
+    const dateFiltered = vouchers.filter(v => {
+      const vIso = getVoucherDateISO(v);
+      return vIso === targetIso;
+    });
+
+    console.log('🔍 [PermitCard] Unused Codes Debug:', {
+      targetISO: targetIso,
+      totalVouchers: vouchersDatabase?.length || 0,
+      unusedCount: dateFiltered.length,
+      unusedCodes: dateFiltered.map(v => v.code)
+    });
+
+    return dateFiltered;
   }, [
     vouchersDatabase, 
     database, 
     matchingPermits,
+    targetIso,
     data
   ]);
 
@@ -796,7 +817,7 @@ function PermitCardInner({
 
   const handleSendClick = async (targetRecord?: CsvPermitRecord) => {
     const rec = targetRecord || (activeIndex !== -1 && matchingPermits[activeIndex] ? matchingPermits[activeIndex] : null);
-    const isCancelledRec = rec ? (rec.voucherCode === "CANCELLED" || rec.isCancelled === true) : isCancelled;
+    const isCancelledRec = rec ? isRecordCancelled(rec, rec.todayDate || data.todayDate, database) : isCancelled;
     const vrm = rec?.vrm || data.vrm || "";
 
     if (!isCancelledRec && !targetRecord && qrCodeChanged) {
@@ -1765,7 +1786,7 @@ function PermitCardInner({
     const targetValidTo = targetRec.validTo || (targetValidFrom ? addDays(targetValidFrom, 6) : "") || (targetRecord ? "" : data.validTo) || "";
     const targetTodayDate = targetRec.todayDate || (targetRecord ? "" : data.todayDate) || getTodayISO();
     const targetDateRequired = targetRec.dateRequired || targetRec.validFrom || (targetRecord ? "" : data.dateRequired) || "";
-    const targetIsCancelled = targetRec.voucherCode === "CANCELLED" || targetRec.isCancelled === true || (!targetRecord && isCancelled);
+    const targetIsCancelled = targetRecord ? isRecordCancelled(targetRec, targetTodayDate, database) : isCancelled;
     const targetPayloadCode = targetRec.voucherCode || targetRec.prePaidCode || targetRec.voucherCodesText || (!targetRecord ? (data.qrOverride?.trim() || activeVoucherCode || currentSelectedCode || "") : "");
 
     // 3. Silent block check

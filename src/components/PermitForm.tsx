@@ -10,7 +10,9 @@ import {
   getSpreadsheetMatchingAssignedCodes, 
   checkIsBlockedDuplicate, 
   resolvePermitDate,
-  getRequestedPermitDateISO
+  getRequestedPermitDateISO,
+  isRecordCancelledCanonical as isCancelled,
+  getVoucherDateISO
 } from "../utils/csvParser";
 import { 
   Building2, 
@@ -75,30 +77,45 @@ export function PermitForm({
     return Array.from(set);
   }, [database]);
 
+  // Target ISO for the permit being viewed/edited
+  const targetIso = useMemo(() => {
+    return getRequestedPermitDateISO(data);
+  }, [data.validFrom, data.dateRequired, data.startTime, data.createdAt, data.todayDate]);
+
   // Matching permits for the active date
   const matchingPermits = useMemo(() => {
-    return getMatchingPermits(database, resolvePermitDate(data));
-  }, [data, database]);
+    if (!targetIso) return [];
+    return getMatchingPermits(database, targetIso);
+  }, [data, database, targetIso]);
 
-  // Unused vouchers computation
+  // Unused vouchers computation with date filter
   const unusedVouchersForDay = useMemo<ParsedVoucherData[]>(() => {
-    const targetIso = getRequestedPermitDateISO(data, resolvePermitDate(data));
     if (!targetIso) return [];
 
-    return getUnusedVouchersForDate(
-      vouchersDatabase, 
-      database, 
-      targetIso, 
-      data.vrm, 
-      data, 
+    const vouchers = getUnusedVouchersForDate(
+      vouchersDatabase,
+      database,
+      targetIso,
+      data.vrm,
+      data,
       matchingPermits
     );
-  }, [
-    vouchersDatabase, 
-    database, 
-    matchingPermits,
-    data
-  ]);
+
+    // EXTRA SAFETY: Filter to ONLY vouchers that match the target date exactly
+    const dateFiltered = vouchers.filter(v => {
+      const vIso = getVoucherDateISO(v);
+      return vIso === targetIso;
+    });
+
+    console.log('🔍 Unused Codes Debug:', {
+      targetISO: targetIso,
+      totalVouchers: vouchersDatabase?.length || 0,
+      unusedCount: dateFiltered.length,
+      unusedCodes: dateFiltered.map(v => v.code)
+    });
+
+    return dateFiltered;
+  }, [vouchersDatabase, database, matchingPermits, targetIso, data]);
 
   const isBlockedDuplicate = useMemo(() => {
     return checkIsBlockedDuplicate(data, database || [], data.todayDate);
@@ -326,8 +343,8 @@ export function PermitForm({
         </div>
       </div>
 
-      {/* 4. Form Layout - Row 3 (4 columns) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+      {/* 4. Form Layout - Row 3 (Phone & Email) */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
         {/* Phone Number */}
         <div className="flex flex-col">
           <label htmlFor="phoneNumber" className="text-[10px] font-medium uppercase tracking-[0.5px] text-[#B7D4FF] flex items-center gap-1.5 mb-1">
@@ -359,61 +376,74 @@ export function PermitForm({
             className={inputClass}
           />
         </div>
+      </div>
 
-        {/* Voucher Code */}
-        <div className="flex flex-col">
-          <label htmlFor="voucherManual" className="text-[10px] font-medium uppercase tracking-[0.5px] text-[#B7D4FF] flex items-center gap-1.5 mb-1">
-            <Key className="w-3 h-3 text-[#1677FF]" />
-            <span>Voucher Code</span>
-          </label>
+      {/* 5. Form Layout - Row 4: Standalone Code Display Box (Left 50%) and Active Date Codes Dropdown (Right 50%) */}
+      <div className="grid grid-cols-2 gap-3 md:gap-4 w-full items-center">
+        {/* Left Half (50% Width): Standalone Code Display Box */}
+        <div className="w-full">
           <input
-            id="voucherManual"
             type="text"
             value={isBlockedDuplicate ? "CANCELLED" : (data.voucherCodesText || "")}
-            onChange={e => onChange({ voucherCodesText: e.target.value.toUpperCase(), status: "Pending" })}
-            placeholder="E.G. OXHM4NQUTHSID"
+            onChange={(e) =>
+              onChange({
+                voucherCodesText: isBlockedDuplicate ? "CANCELLED" : e.target.value,
+                status: "Pending"
+              })
+            }
+            className={`w-full h-9 px-3 py-1.5 border rounded-md text-xs font-extrabold focus:outline-none transition-all ${
+              isBlockedDuplicate || isCancelled(data, data.todayDate) ||
+              data.voucherCodesText === "-" || data.voucherCodesText === "CANCELLED" || data.voucherCodesText === "Cancelled"
+                ? "border-rose-200 dark:border-rose-900/60 bg-rose-50 dark:bg-rose-950/30 text-rose-700 dark:text-rose-300 font-mono"
+                : "border-gray-300 dark:border-slate-800 bg-white dark:bg-slate-950 text-gray-800 dark:text-slate-100 focus:border-[#005EB8] dark:focus:border-blue-500 font-mono"
+            }`}
+            placeholder="e.g. CON9012JXM"
             disabled={isBlockedDuplicate}
-            className={`${inputClass} uppercase disabled:opacity-50`}
           />
         </div>
 
-        {/* Unused Codes */}
-        <div className="flex flex-col">
-          <label htmlFor="unusedCodesSelect" className="text-[10px] font-medium uppercase tracking-[0.5px] text-[#B7D4FF] flex items-center gap-1.5 mb-1">
-            <Ticket className="w-3 h-3 text-[#1677FF]" />
-            <span>Unused Codes</span>
-          </label>
-          <div className="relative">
+        {/* Right Half (50% Width): Label + Dropdown Select */}
+        {vouchersDatabase && vouchersDatabase.length > 0 ? (
+          <div className="flex items-center gap-2 w-full">
+            <label className="text-sm font-medium text-slate-700 dark:text-slate-200 whitespace-nowrap shrink-0">
+              Active Date Codes ({unusedVouchersForDay.length}):
+            </label>
+
             <select
-              id="unusedCodesSelect"
-              value={unusedVouchersForDay.some(v => v.code === data.voucherCodesText) ? data.voucherCodesText : ""}
-              onChange={e => {
+              value=""
+              onChange={(e) => {
                 if (e.target.value) {
                   onChange({
                     voucherCodesText: e.target.value,
-                    status: "Pending"
+                    status: "Pending",
+                    emailType: "RESEND_CONCESSION",
+                    isResend: true,
+                    emailTemplate: "replacement"
                   });
                 }
               }}
-              disabled={!unusedVouchersForDay.length}
-              className={selectClass}
+              disabled={unusedVouchersForDay.length === 0}
+              className={`flex-1 min-w-[180px] w-full h-9 px-3 py-1.5 border rounded-md text-xs font-mono font-extrabold focus:outline-none transition-all ${
+                unusedVouchersForDay.length > 0
+                  ? "border-gray-300 dark:border-slate-700 focus:border-[#005EB8] dark:focus:border-blue-500 bg-emerald-50/80 dark:bg-emerald-950/30 text-emerald-900 dark:text-emerald-200 cursor-pointer"
+                  : "border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-900 text-gray-400 dark:text-slate-500 cursor-not-allowed font-normal"
+              }`}
             >
-              <option value="" className="bg-[#041320] text-white text-[12px] font-normal">
-                {unusedVouchersForDay.length === 0 ? "— Choose (0) —" : `— Choose (${unusedVouchersForDay.length}) —`}
+              <option value="" disabled className="font-mono font-normal">
+                -- Choose Code --
               </option>
-              {unusedVouchersForDay.map((voucher, idx) => (
+              {unusedVouchersForDay.map((v, index) => (
                 <option
-                  key={`${voucher.code}-${idx}`}
-                  value={voucher.code}
-                  className="bg-[#041320] text-white text-[12px] font-mono"
+                  key={`voucher_${v.code}_${index}`}
+                  value={v.code}
+                  className="font-mono font-extrabold text-gray-800 dark:bg-slate-900 dark:text-slate-100"
                 >
-                  {voucher.code}
+                  {v.code}
                 </option>
               ))}
             </select>
-            <ChevronDown className="w-3 h-3 text-[#B7D4FF] absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
           </div>
-        </div>
+        ) : null}
       </div>
 
     </section>

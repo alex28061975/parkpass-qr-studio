@@ -23,7 +23,7 @@ import {
 // CSV Database Imports
 import { INITIAL_DEMO_CSV } from "./data/defaultCsv";
 import { isVrmSilentBlockedSync } from "./lib/blocklist";
-import { CsvPermitRecord, parsePermitCsv, parseDateToISO, addDays, formatPhoneNumber, ParsedVoucherData, addDaysSafe, parseDateRange, getDatesInRange, cleanVoucherCodeValue, exportToExcel, isVoucherCodeMatch, sortRecordsByFormIdDesc, getMatchingPermits, isDateRequiredOutsideValidWindow, getTodayISO, checkIsBlockedDuplicate, parseFullDateTimeMs, normalizeVouchersList, isRecordCancelled, getRequestedPermitDateISO, isVoucherExactPeriodEligible, isVoucherAvailableStatus, isVoucherVrmCompatible } from "./utils/csvParser";
+import { CsvPermitRecord, parsePermitCsv, parseDateToISO, addDays, formatPhoneNumber, ParsedVoucherData, addDaysSafe, parseDateRange, getDatesInRange, cleanVoucherCodeValue, exportToExcel, isVoucherCodeMatch, sortRecordsByFormIdDesc, getMatchingPermits, isDateRequiredOutsideValidWindow, getTodayISO, checkIsBlockedDuplicate, parseFullDateTimeMs, normalizeVouchersList, isRecordCancelled, getRequestedPermitDateISO, isVoucherExactPeriodEligible, isVoucherAvailableStatus, isVoucherVrmCompatible, getDefaultSampleVouchers } from "./utils/csvParser";
 import { CsvDatabasePanel } from "./components/CsvDatabasePanel";
 import { TableView } from "./components/TableView";
 import { AnalyticsDashboard } from "./components/AnalyticsDashboard";
@@ -387,13 +387,15 @@ export default function App() {
   const [vouchersDatabase, setVouchersDatabase] = useState<ParsedVoucherData[]>(() => {
     const cached = safeLocalStorage.getItem("concessions_vouchers_db") || safeLocalStorage.getItem("vouchers") || safeLocalStorage.getItem("activeCodes");
     try {
-      if (!cached) return [];
-      const parsed = JSON.parse(cached);
-      if (!Array.isArray(parsed)) return [];
-      return normalizeVouchersList(parsed);
-    } catch (e) {
-      return [];
-    }
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const list = normalizeVouchersList(parsed);
+          if (list.length > 0) return list;
+        }
+      }
+    } catch (e) {}
+    return getDefaultSampleVouchers(getTodayISO());
   });
 
   // Storage Mode: "cloud" or "offline" - persisted in localStorage under "app_storage_mode"
@@ -616,11 +618,6 @@ export default function App() {
         return next;
       });
 
-      // Lightweight refresh of dispatched keys only
-      refreshDispatchedKeysOnly().catch(err => {
-        console.warn("Background dispatched refresh error after dispatch:", err);
-      });
-
       return true;
     } catch (err: any) {
       console.error("❌ [Supabase Dispatch Exception]:", err);
@@ -644,33 +641,35 @@ export default function App() {
     const allKeys = getRecordKeys(targetRecord);
     const combinedKeys = Array.from(new Set([pk, ...allKeys].filter(Boolean)));
 
-    // If in Offline Local Storage mode, update localStorage without network calls
+    // Optimistically update React state immediately in both offline and cloud modes
+    setDispatchedKeys(prev => {
+      const next = prev.filter(k => !combinedKeys.includes(k));
+      dispatchedKeysRef.current = next;
+      safeLocalStorage.setItem("concessions_dispatched_keys", JSON.stringify(next));
+      return next;
+    });
+    setDispatchDates(prev => {
+      const updated = { ...prev };
+      combinedKeys.forEach(k => { delete updated[k]; });
+      dispatchDatesRef.current = updated;
+      safeLocalStorage.setItem("concessions_dispatch_dates", JSON.stringify(updated));
+      return updated;
+    });
+    setDispatchBy(prev => {
+      const updated = { ...prev };
+      combinedKeys.forEach(k => { delete updated[k]; });
+      dispatchByRef.current = updated;
+      safeLocalStorage.setItem("concessions_dispatch_by", JSON.stringify(updated));
+      return updated;
+    });
+    setUnsentKeys(prev => {
+      const next = Array.from(new Set([...prev, ...combinedKeys]));
+      unsentKeysRef.current = next;
+      return next;
+    });
+
+    // If in Offline Local Storage mode, state and storage are already updated
     if (storageModeRef.current === "offline") {
-      setDispatchedKeys(prev => {
-        const next = prev.filter(k => !combinedKeys.includes(k));
-        dispatchedKeysRef.current = next;
-        safeLocalStorage.setItem("concessions_dispatched_keys", JSON.stringify(next));
-        return next;
-      });
-      setDispatchDates(prev => {
-        const updated = { ...prev };
-        combinedKeys.forEach(k => { delete updated[k]; });
-        dispatchDatesRef.current = updated;
-        safeLocalStorage.setItem("concessions_dispatch_dates", JSON.stringify(updated));
-        return updated;
-      });
-      setDispatchBy(prev => {
-        const updated = { ...prev };
-        combinedKeys.forEach(k => { delete updated[k]; });
-        dispatchByRef.current = updated;
-        safeLocalStorage.setItem("concessions_dispatch_by", JSON.stringify(updated));
-        return updated;
-      });
-      setUnsentKeys(prev => {
-        const next = Array.from(new Set([...prev, ...combinedKeys]));
-        unsentKeysRef.current = next;
-        return next;
-      });
       console.log("💾 [Offline Storage] Record unmarked as dispatched locally:", pk);
       return true;
     }
@@ -686,38 +685,8 @@ export default function App() {
 
       console.log("✅ [Supabase Unmark Success] Record unmarked as dispatched:", pk);
 
-      // 2. Fetch fresh keys from Supabase
-      const freshResult = await fetchDispatchedFromSupabase();
-      if (freshResult && freshResult.dispatchedKeys) {
-        dispatchedKeysRef.current = freshResult.dispatchedKeys;
-        setDispatchedKeys(freshResult.dispatchedKeys);
-        setDispatchDates(freshResult.dispatchDates);
-        setDispatchBy(freshResult.dispatchBy);
-      } else {
-        setDispatchedKeys(prev => {
-          const next = prev.filter(k => !combinedKeys.includes(k));
-          dispatchedKeysRef.current = next;
-          return next;
-        });
-        setDispatchDates(prev => {
-          const updated = { ...prev };
-          combinedKeys.forEach(k => { delete updated[k]; });
-          dispatchDatesRef.current = updated;
-          return updated;
-        });
-      }
-
-      setUnsentKeys(prev => {
-        const next = Array.from(new Set([...prev, ...combinedKeys]));
-        unsentKeysRef.current = next;
-        return next;
-      });
-
-      // Lightweight refresh of dispatched keys only
-      refreshDispatchedKeysOnly().catch(err => {
-        console.warn("Background dispatched refresh error after unmark:", err);
-      });
-
+      // Local optimistic state is already updated and persisted cleanly.
+      // Do NOT run immediate background refreshes that could overwrite local Unsend overrides.
       return true;
     } catch (err: any) {
       console.error("❌ [Supabase Unmark Exception]:", err);
@@ -775,15 +744,15 @@ export default function App() {
           return false;
         };
 
-        const validKeys = dbDispatchedData.dispatchedKeys.filter(k => !isCorrupted(k));
+        const currentUnsent = unsentKeysRef.current || [];
+        const validKeys = dbDispatchedData.dispatchedKeys
+          .filter(k => !isCorrupted(k))
+          .filter(k => !currentUnsent.includes(k));
 
         dispatchedKeysRef.current = validKeys;
         setDispatchedKeys(validKeys);
         setDispatchDates(dbDispatchedData.dispatchDates || {});
         setDispatchBy(dbDispatchedData.dispatchBy || {});
-
-        unsentKeysRef.current = [];
-        setUnsentKeys([]);
       }
     } catch (err) {
       console.warn("Dispatched keys background sync error:", err);
@@ -908,7 +877,10 @@ export default function App() {
           return false;
         };
 
-        const validKeys = dbDispatchedData.dispatchedKeys.filter(k => !isCorrupted(k));
+        const currentUnsent = unsentKeysRef.current || [];
+        const validKeys = dbDispatchedData.dispatchedKeys
+          .filter(k => !isCorrupted(k))
+          .filter(k => !currentUnsent.includes(k));
         
         dispatchedKeysRef.current = validKeys;
         setDispatchedKeys(validKeys);
@@ -918,10 +890,6 @@ export default function App() {
         safeLocalStorage.setItem("concessions_dispatched_keys", JSON.stringify(validKeys));
         safeLocalStorage.setItem("concessions_dispatch_dates", JSON.stringify(dbDispatchedData.dispatchDates || {}));
         safeLocalStorage.setItem("concessions_dispatch_by", JSON.stringify(dbDispatchedData.dispatchBy || {}));
-        
-        // Clear unsent keys on fresh database load
-        unsentKeysRef.current = [];
-        setUnsentKeys([]);
       }
     } catch (err) {
       console.warn("Real-time database fetch error:", err);

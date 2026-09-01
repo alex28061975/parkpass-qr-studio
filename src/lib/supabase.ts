@@ -654,6 +654,33 @@ export const deleteDispatchedFromSupabase = async (key: string): Promise<boolean
   }
 };
 
+export const deleteDispatchedKeysFromSupabase = async (keys: string[]): Promise<boolean> => {
+  const client = getSupabaseClient();
+  if (!client || !keys || keys.length === 0) return false;
+
+  const cleanKeys = Array.from(new Set(keys.map(k => String(k).trim()).filter(Boolean)));
+  if (cleanKeys.length === 0) return true;
+
+  try {
+    console.log('[Supabase Delete] Removing keys from dispatched_history:', cleanKeys);
+    const { error } = await client.from('dispatched_history').delete().in('key', cleanKeys);
+    if (error) {
+      console.warn('[Supabase Delete Warning] Batch delete failed, falling back to individual deletes:', error.message);
+      let allOk = true;
+      for (const k of cleanKeys) {
+        const ok = await deleteDispatchedFromSupabase(k);
+        if (!ok) allOk = false;
+      }
+      return allOk;
+    }
+    console.log('[Supabase Delete Success] Deleted keys:', cleanKeys);
+    return true;
+  } catch (err) {
+    console.error('[Supabase Delete Exception]', err);
+    return false;
+  }
+};
+
 export const clearSupabaseDispatches = async (): Promise<boolean> => {
   const client = getSupabaseClient();
   if (!client) return false;

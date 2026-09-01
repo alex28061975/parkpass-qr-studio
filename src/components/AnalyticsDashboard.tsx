@@ -3,7 +3,9 @@ import {
   CsvPermitRecord, 
   ParsedVoucherData, 
   parseDateToISO, 
-  addDays 
+  addDays,
+  cleanVoucherCodeValue,
+  isRecordCancelled
 } from "../utils/csvParser";
 import { checkIsRecordDispatched } from "../utils/dispatchUtils";
 import { 
@@ -146,9 +148,22 @@ export function AnalyticsDashboard({
     }
   });
 
+  // 6. Recent dispatches details
+  // Let's reconstruct list of recently dispatched records
+  const dispatchedRecords = database.filter(record => {
+    return checkIsRecordDispatched(record, record.vrm, record.driverName, record.dateRequired, dispatchedKeys, unsentKeys);
+  }).map(record => {
+    const signature = `${record.driverName || ""}_${record.vrm || ""}_${parseDateToISO(record.dateRequired) || ""}`.toUpperCase().replace(/[^A-Z0-9]/g, "");
+    const dateOfDispatch = (record.id && dispatchDates[record.id]) || (record.formId && dispatchDates[String(record.formId)]) || dispatchDates[signature] || todayISO;
+    return {
+      ...record,
+      dispatchDate: dateOfDispatch
+    };
+  }).sort((a, b) => b.dispatchDate.localeCompare(a.dispatchDate));
+
   // 1. Total Dispatched Today (progress ring towards target)
-  const dispatchedTodayCount = dispatchedKeys.filter(key => {
-    const dDate = dispatchDates[key] || todayISO;
+  const dispatchedTodayCount = dispatchedRecords.filter(record => {
+    const dDate = record.dispatchDate || todayISO;
     return dDate === todayISO;
   }).length;
   const percentage = Math.min((dispatchedTodayCount / dailyTarget) * 100, 100);
@@ -192,23 +207,23 @@ export function AnalyticsDashboard({
   // 5. Voucher Pool Inventory Calculations
   // Total vouchers uploaded
   const totalVouchers = vouchersDatabase.length;
-  // Let's identify how many of them have been dispatched
-  // Since we assign vouchers dynamically, we count how many dispatched keys exist
-  const totalDispatched = dispatchedKeys.length;
-  const vouchersRemaining = Math.max(totalVouchers - totalDispatched, 0);
-
-  // 6. Recent dispatches details
-  // Let's reconstruct list of recently dispatched records
-  const dispatchedRecords = database.filter(record => {
-    return checkIsRecordDispatched(record, record.vrm, record.driverName, record.dateRequired, dispatchedKeys, unsentKeys);
-  }).map(record => {
-    const signature = `${record.driverName || ""}_${record.vrm || ""}_${parseDateToISO(record.dateRequired) || ""}`.toUpperCase().replace(/[^A-Z0-9]/g, "");
-    const dateOfDispatch = (record.id && dispatchDates[record.id]) || (record.formId && dispatchDates[String(record.formId)]) || dispatchDates[signature] || todayISO;
-    return {
-      ...record,
-      dispatchDate: dateOfDispatch
-    };
-  }).sort((a, b) => b.dispatchDate.localeCompare(a.dispatchDate));
+  // Count of unique dispatched permit records
+  const totalDispatched = dispatchedRecords.length;
+  
+  // Track all unique voucher codes currently assigned to active (non-cancelled) records
+  const assignedVouchersSet = new Set<string>();
+  database.forEach(r => {
+    if (r.voucherCode === "CANCELLED" || r.isCancelled === true || isRecordCancelled(r, r.dateRequired || "", database)) return;
+    const raw = r.voucherCode || r.prePaidCode || r.qrCode || r.serialNumber;
+    if (raw && raw !== "-" && raw !== "CANCELLED" && raw !== "PENDING") {
+      const clean = cleanVoucherCodeValue(raw).toUpperCase();
+      if (clean && clean !== "-" && clean !== "CANCELLED") {
+        assignedVouchersSet.add(clean);
+      }
+    }
+  });
+  const totalAssignedVouchers = assignedVouchersSet.size;
+  const vouchersRemaining = Math.max(totalVouchers - totalAssignedVouchers, 0);
 
   return (
     <div className="space-y-6 animate-fade-in select-none">
@@ -335,7 +350,7 @@ export function AnalyticsDashboard({
             <div className="flex items-center gap-3">
               <span>Permit Records: <strong className="text-slate-200">{recordsCount}</strong></span>
               <span>•</span>
-              <span>Dispatched Keys: <strong className="text-slate-200">{dispatchedKeys.length}</strong></span>
+              <span>Dispatched Permits: <strong className="text-slate-200">{dispatchedRecords.length}</strong></span>
               <span>•</span>
               <span>Voucher Pool: <strong className="text-slate-200">{vouchersDatabase.length}</strong></span>
             </div>
