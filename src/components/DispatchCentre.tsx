@@ -27,7 +27,8 @@ import {
   checkIsBlockedDuplicate,
   exportToExcel,
   isRecordCancelled,
-  sortRecordsBySubmissionTimeDesc
+  sortRecordsBySubmissionTimeDesc,
+  getRequestedPermitDateISO
 } from "../utils/csvParser";
 import { checkIsRecordDispatched, getRecordKeys } from "../utils/dispatchUtils";
 
@@ -37,6 +38,7 @@ interface DispatchCentreProps {
   dispatchedKeys: string[];
   unsentKeys?: string[];
   dispatchDates?: Record<string, string>;
+  customVouchers?: Record<string, string>;
   processingDate: string;
   formData?: {
     todayDate?: string;
@@ -88,6 +90,8 @@ export function DispatchCentre({
   vouchersDatabase, 
   dispatchedKeys, 
   unsentKeys = [], 
+  dispatchDates,
+  customVouchers,
   processingDate, 
   formData,
   totalRecordsCount,
@@ -130,9 +134,60 @@ export function DispatchCentre({
       baseRecords,
       database,
       processingDate,
-      vouchersDatabase
+      vouchersDatabase,
+      customVouchers
     );
-  }, [baseRecords, database, processingDate, vouchersDatabase]);
+  }, [baseRecords, database, processingDate, vouchersDatabase, customVouchers]);
+
+  // A replacement is temporarily UNSENT while its new QR code is prepared.
+  // Keep that state visible in the Dispatch Centre using the selected form's
+  // explicit replacement marker rather than relying on dispatchedKeys alone.
+  /**
+   * IMPORTANT: replacement state must belong to ONE exact permit record.
+   * VRM/date is NOT a safe identity because multiple rows can share the same
+   * VRM and valid-from date (including cancelled + active records).
+   *
+   * If either side has a stable id/formId, we ONLY compare stable ids.
+   * VRM/date fallback is permitted only for genuinely legacy rows where BOTH
+   * the row and the selected form have no stable identity.
+   */
+  const isSameSelectedRecord = (record: CsvPermitRecord) => {
+    if (!formData) return false;
+
+    const recordId = String(record.id ?? "").trim();
+    const recordFormId = String(record.formId ?? "").trim();
+    const selectedId = String(formData.id ?? "").trim();
+    const selectedFormId = String(formData.formId ?? "").trim();
+
+    const recordHasStableId = Boolean(recordId || recordFormId);
+    const selectedHasStableId = Boolean(selectedId || selectedFormId);
+
+    // Stable identity exists: NEVER fall back to VRM/date.
+    if (recordHasStableId || selectedHasStableId) {
+      return Boolean(
+        (recordId && selectedId && recordId === selectedId) ||
+        (recordFormId && selectedFormId && recordFormId === selectedFormId) ||
+        (recordId && selectedFormId && recordId === selectedFormId) ||
+        (recordFormId && selectedId && recordFormId === selectedId)
+      );
+    }
+
+    // Legacy records with no stable identity on either side.
+    const recordVrm = (record.vrm || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+    const selectedVrm = (formData.vrm || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+    const recordDate = parseDateToISO(record.dateRequired || record.validFrom) || "";
+    const selectedDate = parseDateToISO(formData.validFrom || formData.todayDate) || "";
+    return Boolean(
+      recordVrm && selectedVrm &&
+      recordVrm === selectedVrm &&
+      recordDate && selectedDate &&
+      recordDate === selectedDate
+    );
+  };
+
+  const isReplacementPending = (record: CsvPermitRecord) =>
+    isSameSelectedRecord(record) &&
+    (formData?.emailType === "RESEND_CONCESSION" || formData?.isResend === true || formData?.emailTemplate === "replacement");
 
   // Sorted records based on active column sort
   const sortedRecords = useMemo(() => {
@@ -152,10 +207,14 @@ export function DispatchCentre({
     const getIsCancelled = (record: CsvPermitRecord, idx: number) => {
       const recordKey = String(record.formId ?? record.id ?? idx);
       const displayCode = recordCodeMap.get(recordKey);
-      return isRecordCancelled(record, processingDate, database) || displayCode === "CANCELLED";
+      const reqDate = getRequestedPermitDateISO(record, processingDate);
+      return isRecordCancelled(record, reqDate, database) || displayCode === "CANCELLED";
     };
 
     const getStatusStr = (record: CsvPermitRecord, idx: number) => {
+      const isCanc = getIsCancelled(record, idx);
+      if (isCanc) return "CANCELLED";
+      if (isReplacementPending(record)) return "REPLACEMENT";
       const isDispatched = checkIsRecordDispatched(record, record.vrm, record.driverName, record.dateRequired, dispatchedKeys, unsentKeys);
       const rowKey = String(record.formId ?? record.id ?? record.vrm ?? idx);
       const recordKeys = getRecordKeys(record);
@@ -240,8 +299,8 @@ export function DispatchCentre({
         case "actions": {
           const aDisp = checkIsRecordDispatched(a, a.vrm, a.driverName, a.dateRequired, dispatchedKeys, unsentKeys);
           const bDisp = checkIsRecordDispatched(b, b.vrm, b.driverName, b.dateRequired, dispatchedKeys, unsentKeys);
-          const aAct = aDisp ? "Unsend" : "Send";
-          const bAct = bDisp ? "Unsend" : "Send";
+          const aAct = isReplacementPending(a) ? "Resend" : (aDisp ? "Unsend" : "Send");
+          const bAct = isReplacementPending(b) ? "Resend" : (bDisp ? "Unsend" : "Send");
           comparison = aAct.localeCompare(bAct);
           break;
         }
@@ -253,7 +312,7 @@ export function DispatchCentre({
     });
 
     return sorted;
-  }, [baseRecords, sortKey, sortDirection, database, processingDate, recordCodeMap, dispatchedKeys, unsentKeys]);
+  }, [baseRecords, sortKey, sortDirection, database, processingDate, recordCodeMap, dispatchedKeys, unsentKeys, formData]);
 
   const filteredRecords = useMemo(() => {
     if (!searchQuery || !searchQuery.trim()) return sortedRecords;
@@ -323,11 +382,12 @@ export function DispatchCentre({
     return Array.from(set);
   }, [database]);
 
-  const handleAction = async (record: CsvPermitRecord, sent: boolean) => {
+  const handleAction = async (record: CsvPermitRecord, sent: boolean, replacement = false) => {
     const key = String(record.formId ?? record.id ?? record.vrm);
     setBusyKey(key);
     try {
-      if (sent) await onUnsendRecord?.(record);
+      if (replacement) await onSendRecord?.(record);
+      else if (sent) await onUnsendRecord?.(record);
       else await onSendRecord?.(record);
     } finally {
       setBusyKey(null);
@@ -569,20 +629,25 @@ export function DispatchCentre({
                 const recordIso = parseDateToISO(record.dateRequired || record.validFrom);
                 const expiresIso = recordIso ? addDays(recordIso, 6) : "";
 
-                const isCancelledRecord = isRecordCancelled(record, processingDate, database);
+                const reqDate = getRequestedPermitDateISO(record, processingDate);
+                const isCancelled = isRecordCancelled(record, reqDate, database);
                 const recordKey = String(record.formId ?? record.id ?? index);
                 let displayCode = recordCodeMap.get(recordKey);
 
-                if (displayCode === undefined || displayCode === null) {
-                  displayCode = isCancelledRecord ? "CANCELLED" : (record.voucherCode || "-");
+                if (isCancelled) {
+                  displayCode = "CANCELLED";
+                } else if (displayCode === undefined || displayCode === null || displayCode === "CANCELLED") {
+                  const rawCode = (record.voucherCode || (customVouchers && (customVouchers[recordKey] || (record.vrm && customVouchers[`${record.vrm.toUpperCase().replace(/\s+/g, "")}_${reqDate}`]))) || "").trim();
+                  displayCode = (rawCode && rawCode.toUpperCase() !== "CANCELLED") ? rawCode : "-";
                 }
-
-                const isCancelled = isCancelledRecord || displayCode === "CANCELLED";
                 const rowKey = String(record.formId ?? record.id ?? record.vrm ?? index);
 
                 const isDispatched = checkIsRecordDispatched(record, record.vrm, record.driverName, record.dateRequired, dispatchedKeys, unsentKeys);
                 const recordKeys = getRecordKeys(record);
                 const isUnsent = Boolean(unsentKeys && unsentKeys.length > 0 && (unsentKeys.includes(rowKey) || recordKeys.some(k => unsentKeys.includes(k))));
+                // CANCELLED is terminal and must never inherit the selected
+                // record's replacement state, even when VRM/date are identical.
+                const replacementPending = !isCancelled && isReplacementPending(record);
 
                 // 2. # Column: Excel ID with row number fallback
                 const excelId = (() => {
@@ -680,7 +745,11 @@ export function DispatchCentre({
 
                     {/* 10. STATUS Column (Never displays CANCELLED - only SENT, UNSENT, or PENDING) */}
                     <td className="py-3 px-3 text-center border-r border-[#102947]/60 select-none whitespace-nowrap">
-                      {isDispatched ? (
+                      {replacementPending ? (
+                        <span className="border border-[#a855f7]/40 bg-[#a855f7]/15 text-[#c084fc] font-bold px-2.5 py-0.5 rounded text-[10px] tracking-wider uppercase inline-flex items-center justify-center whitespace-nowrap">
+                          REPLACEMENT
+                        </span>
+                      ) : isDispatched ? (
                         <span className="border border-[#32D74B]/40 bg-[#32D74B]/15 text-[#32D74B] font-bold px-2.5 py-0.5 rounded text-[10px] tracking-wider uppercase inline-flex items-center justify-center gap-1 whitespace-nowrap">
                           <span>✅</span>
                           <span>SENT</span>
@@ -702,11 +771,13 @@ export function DispatchCentre({
                         <button 
                           type="button" 
                           disabled={busyKey === rowKey} 
-                          onClick={() => handleAction(record, isDispatched)} 
+                          onClick={() => handleAction(record, isDispatched, replacementPending)} 
                           className={`flex items-center gap-1 px-3 py-1 text-white text-xs font-semibold transition-colors disabled:opacity-50 cursor-pointer whitespace-nowrap ${
-                            isDispatched 
-                              ? "bg-[#dc2626] hover:bg-[#b91c1c]" 
-                              : "bg-[#1d75f2] hover:bg-[#1565d8]"
+                            replacementPending
+                              ? "bg-[#7c3aed] hover:bg-[#6d28d9]"
+                              : isDispatched
+                                ? "bg-[#dc2626] hover:bg-[#b91c1c]"
+                                : "bg-[#1d75f2] hover:bg-[#1565d8]"
                           }`}
                         >
                           {busyKey === rowKey ? (
@@ -714,7 +785,7 @@ export function DispatchCentre({
                           ) : (
                             <Mail className="w-3 h-3" />
                           )}
-                          <span>{isDispatched ? "Unsend" : "Send"}</span>
+                          <span>{replacementPending ? "Resend" : (isDispatched ? "Unsend" : "Send")}</span>
                         </button>
                         <button 
                           type="button" 

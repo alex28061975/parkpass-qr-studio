@@ -213,7 +213,7 @@ export function AnalyticsDashboard({
   // Track all unique voucher codes currently assigned to active (non-cancelled) records
   const assignedVouchersSet = new Set<string>();
   database.forEach(r => {
-    if (r.voucherCode === "CANCELLED" || r.isCancelled === true || isRecordCancelled(r, r.dateRequired || "", database)) return;
+    if (r.isCancelled === true || isRecordCancelled(r, r.dateRequired || "", database)) return;
     const raw = r.voucherCode || r.prePaidCode || r.qrCode || r.serialNumber;
     if (raw && raw !== "-" && raw !== "CANCELLED" && raw !== "PENDING") {
       const clean = cleanVoucherCodeValue(raw).toUpperCase();

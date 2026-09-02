@@ -103,14 +103,18 @@ export function enrichRecordsWithVouchers(
     const keyWithDate = recDateISO ? `${cleanVrm}_${recDateISO}` : cleanVrm;
     const hasOriginalVoucher = false;
     let code = "";
-    if (customVouchersMap[keyWithDate]) {
-      code = customVouchersMap[keyWithDate];
-    } else if (customVouchersMap[cleanVrm]) {
-      code = customVouchersMap[cleanVrm];
-    } else if (record.id && customVouchersMap[record.id]) {
-      code = customVouchersMap[record.id];
-    } else if (record.formId && customVouchersMap[String(record.formId)]) {
+    const hasStableId = Boolean(
+      (record.formId !== undefined && record.formId !== null && String(record.formId).trim() !== "") ||
+      (record.id !== undefined && record.id !== null && String(record.id).trim() !== "")
+    );
+    if (record.formId && customVouchersMap[String(record.formId)]) {
       code = customVouchersMap[String(record.formId)];
+    } else if (record.id && customVouchersMap[String(record.id)]) {
+      code = customVouchersMap[String(record.id)];
+    } else if (!hasStableId && customVouchersMap[keyWithDate]) {
+      code = customVouchersMap[keyWithDate];
+    } else if (!hasStableId && customVouchersMap[cleanVrm]) {
+      code = customVouchersMap[cleanVrm];
     } else {
       const rawCode = record.voucherCode || defaultVal;
       if (rawCode && rawCode.toUpperCase() === "CANCELLED") {
@@ -170,10 +174,13 @@ export function enrichRecordsWithVouchers(
     const custAssignedSet = assignedPerCustomer.get(customerKey)!;
     const reqIso = getRequestedPermitDateISO(record, fallbackDateStr);
     const keyWithDate = (reqIso && cleanVrm) ? `${cleanVrm}_${reqIso}` : "";
+    const hasStableId = Boolean(
+      (record.formId !== undefined && record.formId !== null && String(record.formId).trim() !== "") ||
+      (record.id !== undefined && record.id !== null && String(record.id).trim() !== "")
+    );
     const customOverride = (record.formId ? customVouchersMap[String(record.formId)] : undefined) ||
                            (record.id ? customVouchersMap[String(record.id)] : undefined) ||
-                           (keyWithDate ? customVouchersMap[keyWithDate] : undefined) ||
-                           (cleanVrm ? customVouchersMap[cleanVrm] : undefined);
+                           (!hasStableId ? ((keyWithDate ? customVouchersMap[keyWithDate] : undefined) || (cleanVrm ? customVouchersMap[cleanVrm] : undefined)) : undefined);
 
     const existingCode = record.voucherCode || record.prePaidCode || record.qrCode || record.serialNumber;
 
@@ -211,7 +218,7 @@ export function enrichRecordsWithVouchers(
     }
 
     // Explicitly cancelled records in database or dynamic cancellation
-    if (record.voucherCode === "CANCELLED" || record.isCancelled === true || isRecordCancelled(record, reqDateD || fallbackDateStr, recordsList)) {
+    if (record.isCancelled === true || isRecordCancelled(record, reqDateD || fallbackDateStr, recordsList)) {
       enrichedByIndex.set(index, {
         ...record,
         voucherCode: "CANCELLED",
@@ -1310,13 +1317,17 @@ export default function App() {
 
       if (cleanVrm || targetId || targetFormId) {
         const nextCustomVouchers = { ...customVouchers };
+        // IMPORTANT: voucher overrides are record-specific.
+        // Never write a VRM/date override when the record has a stable ID,
+        // because multiple permits can legitimately share the same VRM/date
+        // (e.g. an earlier CANCELLED record and a later active record).
         if (targetFormId) {
           nextCustomVouchers[targetFormId] = updates.voucherCodesText || "";
         }
         if (targetId) {
           nextCustomVouchers[targetId] = updates.voucherCodesText || "";
         }
-        if (cleanVrm && activeDateISO) {
+        if (!targetFormId && !targetId && cleanVrm && activeDateISO) {
           const keyWithDate = `${cleanVrm}_${activeDateISO}`;
           nextCustomVouchers[keyWithDate] = updates.voucherCodesText || "";
         }
@@ -1376,8 +1387,11 @@ export default function App() {
         if (updates.formId || formData.formId) {
           keysToUnsent.push(String(updates.formId || formData.formId));
         }
-        if (cleanVrm) {
-          keysToUnsent.push(cleanVrm);
+        // Keep dispatch/unsent state scoped to this exact record.
+        // VRM-only and VRM/date keys are intentionally NOT used when an
+        // ID/formId exists, otherwise every permit sharing that VRM can be
+        // marked unsent/replaced together.
+        if (!targetId && !targetFormId && cleanVrm) {
           if (activeDateISO) {
             keysToUnsent.push(`${cleanVrm}_${activeDateISO}`);
           }
@@ -1431,25 +1445,33 @@ export default function App() {
       unsentKeys
     );
 
-    setFormData((prev) => ({
-      ...prev,
-      id: enrichedRecord.id,
-      formId: enrichedRecord.formId || enrichedRecord.id,
-      site: enrichedRecord.hospital,
-      name: enrichedRecord.driverName ? toTitleCase(enrichedRecord.driverName) : "",
-      vrm: enrichedRecord.vrm ? enrichedRecord.vrm.toUpperCase() : "",
-      ward: enrichedRecord.ward ? toTitleCase(enrichedRecord.ward) : "",
-      validFrom: fromISO,
-      validTo: toISO,
-      phone: formatPhoneNumber(enrichedRecord.phone || ""),
-      email: (enrichedRecord.email || "").toLowerCase(),
-      voucherCodesText: enrichedRecord.voucherCode || "-",
-      startTime: enrichedRecord.startTime,
-      createdAt: enrichedRecord.createdAt,
-      isResend: isRecordDispatched ? prev.isResend : false,
-      emailType: isRecordDispatched ? prev.emailType : "SEND_CONCESSION",
-      emailTemplate: isRecordDispatched ? prev.emailTemplate : "new"
-    }));
+    setFormData((prev) => {
+      const sameAsCurrent =
+        (enrichedRecord.id != null && prev.id != null && String(enrichedRecord.id) === String(prev.id)) ||
+        (enrichedRecord.formId != null && prev.formId != null && String(enrichedRecord.formId) === String(prev.formId));
+      const replacementPending = sameAsCurrent &&
+        (prev.emailType === "RESEND_CONCESSION" || prev.isResend === true || prev.emailTemplate === "replacement");
+
+      return {
+        ...prev,
+        id: enrichedRecord.id,
+        formId: enrichedRecord.formId || enrichedRecord.id,
+        site: enrichedRecord.hospital,
+        name: enrichedRecord.driverName ? toTitleCase(enrichedRecord.driverName) : "",
+        vrm: enrichedRecord.vrm ? enrichedRecord.vrm.toUpperCase() : "",
+        ward: enrichedRecord.ward ? toTitleCase(enrichedRecord.ward) : "",
+        validFrom: fromISO,
+        validTo: toISO,
+        phone: formatPhoneNumber(enrichedRecord.phone || ""),
+        email: (enrichedRecord.email || "").toLowerCase(),
+        voucherCodesText: enrichedRecord.voucherCode || "-",
+        startTime: enrichedRecord.startTime,
+        createdAt: enrichedRecord.createdAt,
+        isResend: replacementPending ? true : (isRecordDispatched ? prev.isResend : false),
+        emailType: replacementPending ? "RESEND_CONCESSION" : (isRecordDispatched ? prev.emailType : "SEND_CONCESSION"),
+        emailTemplate: replacementPending ? "replacement" : (isRecordDispatched ? prev.emailTemplate : "new")
+      };
+    });
   };
 
   const handleSelectRecordQuickSearch = (record: CsvPermitRecord) => {
@@ -1470,25 +1492,33 @@ export default function App() {
       unsentKeys
     );
 
-    setFormData((prev) => ({
-      ...prev,
-      id: enrichedRecord.id,
-      formId: enrichedRecord.formId || enrichedRecord.id,
-      site: enrichedRecord.hospital,
-      name: enrichedRecord.driverName ? toTitleCase(enrichedRecord.driverName) : "",
-      vrm: enrichedRecord.vrm ? enrichedRecord.vrm.toUpperCase() : "",
-      ward: enrichedRecord.ward ? toTitleCase(enrichedRecord.ward) : "",
-      validFrom: fromISO,
-      validTo: toISO,
-      phone: formatPhoneNumber(enrichedRecord.phone || ""),
-      email: (enrichedRecord.email || "").toLowerCase(),
-      voucherCodesText: enrichedRecord.voucherCode || "-",
-      startTime: enrichedRecord.startTime,
-      createdAt: enrichedRecord.createdAt,
-      isResend: isRecordDispatched ? prev.isResend : false,
-      emailType: isRecordDispatched ? prev.emailType : "SEND_CONCESSION",
-      emailTemplate: isRecordDispatched ? prev.emailTemplate : "new"
-    }));
+    setFormData((prev) => {
+      const sameAsCurrent =
+        (enrichedRecord.id != null && prev.id != null && String(enrichedRecord.id) === String(prev.id)) ||
+        (enrichedRecord.formId != null && prev.formId != null && String(enrichedRecord.formId) === String(prev.formId));
+      const replacementPending = sameAsCurrent &&
+        (prev.emailType === "RESEND_CONCESSION" || prev.isResend === true || prev.emailTemplate === "replacement");
+
+      return {
+        ...prev,
+        id: enrichedRecord.id,
+        formId: enrichedRecord.formId || enrichedRecord.id,
+        site: enrichedRecord.hospital,
+        name: enrichedRecord.driverName ? toTitleCase(enrichedRecord.driverName) : "",
+        vrm: enrichedRecord.vrm ? enrichedRecord.vrm.toUpperCase() : "",
+        ward: enrichedRecord.ward ? toTitleCase(enrichedRecord.ward) : "",
+        validFrom: fromISO,
+        validTo: toISO,
+        phone: formatPhoneNumber(enrichedRecord.phone || ""),
+        email: (enrichedRecord.email || "").toLowerCase(),
+        voucherCodesText: enrichedRecord.voucherCode || "-",
+        startTime: enrichedRecord.startTime,
+        createdAt: enrichedRecord.createdAt,
+        isResend: replacementPending ? true : (isRecordDispatched ? prev.isResend : false),
+        emailType: replacementPending ? "RESEND_CONCESSION" : (isRecordDispatched ? prev.emailType : "SEND_CONCESSION"),
+        emailTemplate: replacementPending ? "replacement" : (isRecordDispatched ? prev.emailTemplate : "new")
+      };
+    });
   };
 
   const handleDatabaseChange = async (incomingDb: CsvPermitRecord[]) => {
@@ -1721,6 +1751,7 @@ export default function App() {
             dispatchedKeys={dispatchedKeys}
             unsentKeys={unsentKeys}
             dispatchDates={dispatchDates}
+            customVouchers={customVouchers}
             processingDate={formData.todayDate || getTodayISO()}
             formData={formData}
             totalRecordsCount={totalRecordsCount > 0 ? totalRecordsCount : enrichedDatabase.length}

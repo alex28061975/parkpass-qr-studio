@@ -31,7 +31,8 @@ import {
   isDateRequiredOutsideValidWindow,
   getSpreadsheetMatchingAllocationsMap,
   extractRecordVoucherCode,
-  isRecordCancelled
+  isRecordCancelled,
+  getRequestedPermitDateISO
 } from "../utils/csvParser";
 import { checkIsRecordDispatched } from "../utils/dispatchUtils";
 import { isSupabaseConfigured } from "../lib/supabase";
@@ -416,7 +417,7 @@ export function TableView({
                   const cleanFormIdStr = formatFormId(r.formId !== undefined ? r.formId : r.id);
                   const recordKey = String(r.formId ?? r.id ?? idx);
                   const isDispatched = checkIsRecordDispatched(r, r.vrm, r.driverName, r.dateRequired, dispatchedKeys, unsentKeys);
-                  const effectiveProcessingDate = processingDate || getTodayISO();
+                  const effectiveProcessingDate = getRequestedPermitDateISO(r, processingDate) || processingDate || getTodayISO();
                   const isRecCancelled = isRecordCancelled(r, effectiveProcessingDate, database);
 
                   const allocatedCode = tableRecordCodeMap.get(recordKey);
@@ -427,7 +428,7 @@ export function TableView({
                     displayCode = "CANCELLED";
                   } else if (allocatedCode && allocatedCode !== "-") {
                     displayCode = allocatedCode;
-                  } else if (rawVoucherCode && rawVoucherCode.trim() !== "") {
+                  } else if (rawVoucherCode && rawVoucherCode.trim() !== "" && rawVoucherCode.trim().toUpperCase() !== "CANCELLED") {
                     displayCode = rawVoucherCode.trim();
                   }
 

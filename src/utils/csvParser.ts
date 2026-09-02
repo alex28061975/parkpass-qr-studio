@@ -632,7 +632,7 @@ export function parsePastedText(rawText: string): CsvPermitRecord[] {
         email: rawEmail ? String(rawEmail).trim() : "",
         voucherCode: cleanVoucherCodeValue(rawVoucher),
         startTime: rawStartTime || undefined,
-        createdAt: rawStartTime || new Date().toISOString()
+        createdAt: rawStartTime || undefined
       });
     }
   } else {
@@ -679,7 +679,7 @@ export function parsePastedText(rawText: string): CsvPermitRecord[] {
           email: rawEmail,
           voucherCode: cleanVoucherCodeValue(rawVoucher),
           startTime: rawStartTime || undefined,
-          createdAt: rawStartTime || new Date().toISOString()
+          createdAt: rawStartTime || undefined
         });
         continue;
       }
@@ -762,7 +762,7 @@ export function parsePastedText(rawText: string): CsvPermitRecord[] {
         email: rawEmail,
         voucherCode: cleanVoucherCodeValue(rawVoucher),
         startTime: rawStartTime || undefined,
-        createdAt: rawStartTime || new Date().toISOString()
+        createdAt: rawStartTime || undefined
       });
     }
   }
@@ -911,7 +911,7 @@ export function parsePermitCsv(rawText: string): CsvPermitRecord[] {
       email: cleanEmail,
       voucherCode: cleanVoucherCodeValue(rawVoucher),
       startTime: rawStartTime ? String(rawStartTime).trim() : undefined,
-      createdAt: rawStartTime || new Date().toISOString()
+      createdAt: rawStartTime ? String(rawStartTime).trim() : undefined
     });
   }
 
@@ -1126,7 +1126,7 @@ export function parsePermitExcel(arrayBuffer: ArrayBuffer): CsvPermitRecord[] {
         email: cleanEmail,
         voucherCode: cleanVoucherCodeValue(rawVoucher),
         startTime: rawStartTime || undefined,
-        createdAt: rawStartTime || new Date().toISOString()
+        createdAt: rawStartTime ? String(rawStartTime).trim() : undefined
       });
     }
 
@@ -1879,14 +1879,16 @@ export function isVoucherExactPeriodEligible(
 export function isRecordCancelledCanonical(record: any, todayDateOrReference?: string, database?: CsvPermitRecord[]): boolean {
   if (!record) return false;
   if (record.isCancelled === true) return true;
-  const referenceDate = todayDateOrReference || record.todayDate || record.processingDate || "";
+  const submissionDate = record.submissionDate || record.startTime || record.completionTime || record.createdAt;
+  const referenceDate = submissionDate 
+    ? (parseDateToISO(String(submissionDate)) || "") 
+    : (getRequestedPermitDateISO(record, todayDateOrReference) || parseDateToISO(String(todayDateOrReference || record.todayDate || record.processingDate || "")) || "");
   const dateRequired = record.dateRequired || record.validFrom || "";
   if (isDateRequiredOutsideValidWindow(dateRequired, referenceDate)) return true;
   if (database && database.length > 0) {
-    if (checkIsBlockedDuplicate(record, database, referenceDate)) return true;
+    const dupRefDate = getRequestedPermitDateISO(record, todayDateOrReference) || referenceDate;
+    if (checkIsBlockedDuplicate(record, database, dupRefDate)) return true;
   }
-  const rawCode = record.voucherCode || record.prePaidCode || record.qrCode || record.voucherCodesText || record.qrOverride;
-  if (typeof rawCode === "string" && rawCode.trim().toUpperCase() === "CANCELLED") return true;
   return false;
 }
 
@@ -1925,10 +1927,6 @@ export function getSpreadsheetMatchingAllocationsMap(
 
     const rawCode = extractRecordVoucherCode(r);
     const rawCodeUpper = rawCode ? String(rawCode).trim().toUpperCase() : "";
-    if (rawCodeUpper === "CANCELLED") {
-      map.set(recordKey, "CANCELLED");
-      return;
-    }
     if (rawCode && rawCode !== "-" && rawCodeUpper !== "CANCELLED") {
       const clean = cleanVoucherCodeValue(String(rawCode)).toUpperCase();
       if (clean && clean !== "-" && clean !== "CANCELLED") {
@@ -1942,10 +1940,16 @@ export function getSpreadsheetMatchingAllocationsMap(
       const rVrm = (r.vrm || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
       const rDateIso = reqDate;
       const keyWithDate = rDateIso ? `${rVrm}_${rDateIso}` : rVrm;
-      const customOverride = customVouchersMap[keyWithDate] ||
-                             customVouchersMap[rVrm] ||
-                             (r.id ? customVouchersMap[r.id] : undefined) ||
-                             (r.formId ? customVouchersMap[String(r.formId)] : undefined);
+
+      // Stable record identity ALWAYS wins. A VRM/date override is only a
+      // fallback for legacy records that genuinely have no id/formId.
+      const hasStableId = Boolean(
+        (r.formId !== undefined && r.formId !== null && String(r.formId).trim() !== "") ||
+        (r.id !== undefined && r.id !== null && String(r.id).trim() !== "")
+      );
+      const customOverride = (r.formId ? customVouchersMap[String(r.formId)] : undefined) ||
+                             (r.id ? customVouchersMap[String(r.id)] : undefined) ||
+                             (!hasStableId ? (customVouchersMap[keyWithDate] || customVouchersMap[rVrm]) : undefined);
 
       if (customOverride && customOverride !== "-" && customOverride.toUpperCase() !== "CANCELLED") {
         const clean = String(customOverride).trim().split(/[\n,;\s]+/)[0]?.trim().toUpperCase();
@@ -1964,13 +1968,6 @@ export function getSpreadsheetMatchingAllocationsMap(
 
     const reqDateD = getRequestedPermitDateISO(r, processingDate);
     if (isRecordCancelledCanonical(r, reqDateD || processingDate, effectiveDatabase)) {
-      map.set(recordKey, "CANCELLED");
-      return;
-    }
-
-    const rawCode = extractRecordVoucherCode(r);
-    const rawCodeUpper = rawCode ? String(rawCode).trim().toUpperCase() : "";
-    if (rawCodeUpper === "CANCELLED") {
       map.set(recordKey, "CANCELLED");
       return;
     }
@@ -2096,15 +2093,10 @@ export function getUnusedVouchersForDate(
 
   const considerAssignedRecord = (permit: any) => {
     if (!permit) return;
-    const explicitCode = extractRecordVoucherCode(permit);
-    const explicitUpper = explicitCode ? String(explicitCode).trim().toUpperCase() : "";
-    if (
-      permit.isCancelled === true ||
-      explicitUpper === "CANCELLED" ||
-      (typeof permit.voucherCode === "string" && permit.voucherCode.trim().toUpperCase() === "CANCELLED")
-    ) {
+    if (permit.isCancelled === true || isRecordCancelledCanonical(permit, targetDateISO, database)) {
       return;
     }
+    const explicitCode = extractRecordVoucherCode(permit);
     consumeAssignedCode(explicitCode);
     consumeAssignedCode(permit.voucherCodesText);
     consumeAssignedCode(permit.qrOverride);
@@ -2468,9 +2460,9 @@ export function getRecordDatasetIndex(
  * Determines whether candidate is STRICTLY EARLIER in submission order than target.
  *
  * Precedence hierarchy:
- * 1. Both have valid timestamps and they differ -> earlier timestamp wins.
- * 2. Both have valid numeric Form IDs and they differ -> lower Form ID integer wins.
- * 3. Fallback to appearance order in database -> lower index wins.
+ * 1. Both have valid numeric Form IDs and they differ -> lower Form ID integer wins (earliest submission).
+ * 2. If Form IDs tie/missing, compare valid submission timestamps -> earlier timestamp wins.
+ * 3. Fallback to appearance order in database -> in descending datasets, higher index is earlier.
  */
 export function isRecordStrictlyEarlier(
   candidate: any,
@@ -2493,15 +2485,7 @@ export function isRecordStrictlyEarlier(
     if (matchedTarg) targ = { ...matchedTarg, ...target };
   }
 
-  // Priority 1: Compare Timestamps (Highest Priority)
-  const timeCandidate = extractRecordSubmissionTimeMs(cand);
-  const timeTarget = extractRecordSubmissionTimeMs(targ);
-
-  if (timeCandidate > 0 && timeTarget > 0 && timeCandidate !== timeTarget) {
-    return timeCandidate < timeTarget;
-  }
-
-  // Priority 2: Compare Form IDs (Numerically)
+  // Priority 1: Compare Form IDs (Numerically) - Primary ground truth submission sequence
   const formIdCandidate = extractRecordNumericFormId(cand);
   const formIdTarget = extractRecordNumericFormId(targ);
 
@@ -2509,12 +2493,28 @@ export function isRecordStrictlyEarlier(
     return formIdCandidate < formIdTarget;
   }
 
-  // If one has timestamp and they have distinct form IDs
-  if (timeCandidate > 0 && timeTarget === 0 && formIdCandidate > 0 && formIdTarget > 0) {
-    return formIdCandidate < formIdTarget;
+  // Priority 2: Compare Timestamps if Form IDs tie or are missing
+  const timeCandidate = extractRecordSubmissionTimeMs(cand);
+  const timeTarget = extractRecordSubmissionTimeMs(targ);
+
+  if (timeCandidate > 0 && timeTarget > 0 && timeCandidate !== timeTarget) {
+    return timeCandidate < timeTarget;
   }
-  if (timeTarget > 0 && timeCandidate === 0 && formIdCandidate > 0 && formIdTarget > 0) {
-    return formIdCandidate < formIdTarget;
+
+  // If one has numeric Form ID and the other does not
+  if (formIdCandidate > 0 && formIdTarget === 0) {
+    return true;
+  }
+  if (formIdTarget > 0 && formIdCandidate === 0) {
+    return false;
+  }
+
+  // If one has timestamp and the other does not
+  if (timeCandidate > 0 && timeTarget === 0) {
+    return true;
+  }
+  if (timeTarget > 0 && timeCandidate === 0) {
+    return false;
   }
 
   // Priority 3: Fallback to Dataset Index (Array Position)
@@ -2525,7 +2525,7 @@ export function isRecordStrictlyEarlier(
     if (idxCandidate !== -1 && idxTarget !== -1 && idxCandidate !== idxTarget) {
       const isDesc = database.length >= 2 && extractRecordNumericFormId(database[0]) > extractRecordNumericFormId(database[database.length - 1]);
       if (isDesc) {
-        return idxCandidate > idxTarget; // in descending sorted arrays, higher index is earlier
+        return idxCandidate > idxTarget; // in descending sorted arrays, higher index is earlier (e.g. index 2 is 1562 vs index 0 is 1565)
       }
       return idxCandidate < idxTarget;
     }
@@ -2548,17 +2548,12 @@ export function compareRecordsBySubmissionOrder(a: any, b: any, fallbackDateStr?
 /**
  * Determines whether a given permit application record is a blocked duplicate.
  * STRICT CHRONOLOGICAL SUBMISSION ORDER RULES:
- * 1. A record can ONLY be blocked by records that are STRICTLY EARLIER than it.
- * 2. Strict Precedence Order (PRIORITIZES TIMESTAMP OVER FORM ID):
- *    a. Compare timestamps (createdAt/submissionTime) - HIGHEST PRIORITY
- *    b. If timestamps tie/missing, compare Form IDs numerically
- *    c. If Form IDs tie/missing, compare array position
- * 3. Self-matching is EXCLUDED (record cannot block itself).
- * 4. Records with the SAME VRM within 0-6 days are evaluated.
- * 5. If ANY strictly earlier valid record exists within 0-6 days, record is BLOCKED.
+ * 1. For each VRM on a given date, only the EARLIEST submission should be active.
+ * 2. ALL subsequent records with the same VRM within 0-6 days are marked as CANCELLED duplicates.
+ * 3. The earliest record is preserved as active (receives QR code and is sendable).
  */
 export function checkIsBlockedDuplicate(
-  record: { vrm?: string; validFrom?: string; dateRequired?: string; id?: string | number; formId?: string | number; voucherCode?: string; createdAt?: string; startTime?: string; driverName?: string },
+  record: { vrm?: string; validFrom?: string; dateRequired?: string; id?: string | number; formId?: string | number; voucherCode?: string; createdAt?: string; startTime?: string; driverName?: string; isCancelled?: boolean },
   database: CsvPermitRecord[],
   refDateISO?: string
 ): boolean {
@@ -2592,12 +2587,13 @@ export function checkIsBlockedDuplicate(
   const strictlyEarlierRecords: CsvPermitRecord[] = [];
 
   for (const other of vrmRecords) {
+    if (isSamePermitRecord(other, fullRecord)) continue;
     if (isRecordStrictlyEarlier(other, fullRecord, database)) {
       strictlyEarlierRecords.push(other);
     }
   }
 
-  // If no strictly earlier records, this is the original submission → NOT BLOCKED
+  // If no strictly earlier records, this is the original/earliest submission → NOT BLOCKED
   if (strictlyEarlierRecords.length === 0) {
     return false;
   }
@@ -2610,14 +2606,13 @@ export function checkIsBlockedDuplicate(
 
   // Check each strictly earlier record: is it within the 0-6 day block window?
   for (const earlier of strictlyEarlierRecords) {
-    // Skip records that are cancelled for their OWN reason (date-invalid, or an
-    // explicit manual override) - a cancelled original shouldn't block a later
-    // resubmission. This is recomputed dynamically from the record's actual
-    // required date rather than trusting a stored "CANCELLED" marker, since that
-    // marker may itself simply mean "this record was blocked as a duplicate" -
-    // which should NOT disqualify it from blocking a still-later duplicate.
+    // Skip records that are cancelled for their OWN reason (date-invalid, or an explicit manual override)
     const earlierDateRequired = earlier.dateRequired || earlier.validFrom || "";
-    const earlierIsDateCancelled = isDateRequiredOutsideValidWindow(earlierDateRequired, refDateISO) ||
+    const earlierSubmissionDate = earlier.submissionDate || earlier.startTime || earlier.completionTime || earlier.createdAt;
+    const earlierRefDate = earlierSubmissionDate 
+      ? (parseDateToISO(String(earlierSubmissionDate)) || "") 
+      : (getRequestedPermitDateISO(earlier, refDateISO) || parseDateToISO(earlierDateRequired) || refDateISO || "");
+    const earlierIsDateCancelled = isDateRequiredOutsideValidWindow(earlierDateRequired, earlierRefDate) ||
                                     earlier.isCancelled === true;
     if (earlierIsDateCancelled) continue;
 
@@ -2656,7 +2651,7 @@ function simpleStringHash(str: string): number {
  * 1. Explicit cancellation flags (record.isCancelled === true)
  * 2. Date window validity (isDateRequiredOutsideValidWindow)
  * 3. Duplicate blocking within 0-6 days window (checkIsBlockedDuplicate)
- * 4. Stored or explicit voucher "CANCELLED" string values
+ * 4. Stored voucher "CANCELLED" string values when no database is provided
  */
 export function isRecordCancelled(
   record: any,
@@ -2669,7 +2664,10 @@ export function isRecordCancelled(
   if (record.isCancelled === true) return true;
 
   // 2. Date window validity
-  const referenceDate = todayDateOrReference || record.todayDate || record.processingDate || "";
+  const submissionDate = record.submissionDate || record.startTime || record.completionTime || record.createdAt;
+  const referenceDate = submissionDate 
+    ? (parseDateToISO(String(submissionDate)) || "") 
+    : (getRequestedPermitDateISO(record, todayDateOrReference) || parseDateToISO(String(todayDateOrReference || record.todayDate || record.processingDate || "")) || "");
   const dateRequired = record.dateRequired || record.validFrom || "";
   if (isDateRequiredOutsideValidWindow(dateRequired, referenceDate)) {
     return true;
@@ -2677,15 +2675,10 @@ export function isRecordCancelled(
 
   // 3. Duplicate blocking check if database context is available
   if (database && database.length > 0) {
-    if (checkIsBlockedDuplicate(record, database, referenceDate)) {
+    const dupRefDate = getRequestedPermitDateISO(record, todayDateOrReference) || referenceDate;
+    if (checkIsBlockedDuplicate(record, database, dupRefDate)) {
       return true;
     }
-  }
-
-  // 4. Stored/assigned voucher code cancellation
-  const rawCode = record.voucherCode || record.prePaidCode || record.qrCode || record.voucherCodesText || record.qrOverride;
-  if (typeof rawCode === "string" && rawCode.trim().toUpperCase() === "CANCELLED") {
-    return true;
   }
 
   return false;

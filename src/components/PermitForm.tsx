@@ -12,6 +12,7 @@ import {
   resolvePermitDate,
   getRequestedPermitDateISO,
   getVoucherDateISO,
+  getTodayISO,
   isRecordCancelledCanonical as isCancelled
 } from "../utils/csvParser";
 import { 
@@ -77,14 +78,14 @@ export function PermitForm({
     return Array.from(set);
   }, [database]);
 
-  // Target ISO for the permit being viewed/edited
+  // Target ISO for the permit being viewed/edited (Processing Date / data.todayDate)
   const targetIso = useMemo(() => {
     const processingIso = data.todayDate ? parseDateToISO(String(data.todayDate)) : "";
     if (processingIso && /^\d{4}-\d{2}-\d{2}$/.test(processingIso)) {
       return processingIso;
     }
-    return getRequestedPermitDateISO(data);
-  }, [data.validFrom, data.dateRequired, data.startTime, data.createdAt, data.todayDate]);
+    return getRequestedPermitDateISO(data) || getTodayISO();
+  }, [data.todayDate, data.validFrom, data.dateRequired, data.startTime, data.createdAt]);
 
   // Matching permits for the active date
   const matchingPermits = useMemo(() => {

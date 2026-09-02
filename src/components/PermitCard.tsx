@@ -191,10 +191,14 @@ function PermitCardInner({
     };
   }, [data.vrm]);
 
-  // Target ISO for the permit being viewed
+  // Target ISO for the permit being viewed (Processing Date / data.todayDate)
   const targetIso = useMemo(() => {
-    return getRequestedPermitDateISO(data);
-  }, [data.validFrom, data.dateRequired, data.startTime, data.createdAt, data.todayDate]);
+    const processingIso = data.todayDate ? parseDateToISO(String(data.todayDate)) : "";
+    if (processingIso && /^\d{4}-\d{2}-\d{2}$/.test(processingIso)) {
+      return processingIso;
+    }
+    return getRequestedPermitDateISO(data) || getTodayISO();
+  }, [data.todayDate, data.validFrom, data.dateRequired, data.startTime, data.createdAt]);
 
   // Use the requested permit date for matching permits
   const matchingPermits = useMemo(() => {
@@ -224,11 +228,10 @@ function PermitCardInner({
     });
 
     // Exclude codes already assigned via the Spreadsheet Permits Matching Helper
-    const processingDate = resolvePermitDate(data);
     const spreadsheetAssignedCodes = getSpreadsheetMatchingAssignedCodes(
       matchingPermits,
       database,
-      processingDate,
+      targetIso,
       vouchersDatabase
     );
     const finalFiltered = dateFiltered.filter(v => {
@@ -377,14 +380,17 @@ function PermitCardInner({
   }, [activeIndex, matchingPermits, database, data.formId, lastDispatchedCodeMap, recordKeyStr]);
 
   // Determine whether the QR code / voucher code has actually changed from the original code
+  // Compare against the code that was actually dispatched. This deliberately
+  // does not depend on isCurrentDispatched because selecting a replacement
+  // moves the record into the local Pending/unsent state before resending.
   const qrCodeChanged = useMemo(() => {
-    if (!currentSelectedCode || currentSelectedCode === "-" || currentSelectedCode === "CANCELLED") {
-      return false;
-    }
-    if (!originalVoucherCode) {
-      return false;
-    }
-    return currentSelectedCode !== originalVoucherCode;
+    const current = (currentSelectedCode || "").trim().toUpperCase();
+    const original = (originalVoucherCode || "").trim().toUpperCase();
+
+    if (!current || current === "-" || current === "CANCELLED") return false;
+    if (!original || original === "-" || original === "CANCELLED") return false;
+
+    return current !== original;
   }, [currentSelectedCode, originalVoucherCode]);
 
   const isVoucherChangedOnSent = qrCodeChanged;
@@ -478,8 +484,19 @@ function PermitCardInner({
       prevRecordIdentityRef.current = currentIdentity;
       prevVoucherCodeRef.current = data.voucherCodesText;
       
+      // A replacement selection deliberately moves the record to Pending/unsent
+      // while it is being prepared. Explicit replacement markers must therefore
+      // take precedence over the generic Pending check.
+      const hasExplicitReplacementMarker =
+        data.isResend === true ||
+        data.emailType === "RESEND_CONCESSION" ||
+        data.emailTemplate === "replacement";
+
       const isPending = !isCurrentDispatched || data.status === "Pending" || !data.isDispatched;
-      if (isPending) {
+
+      if (hasExplicitReplacementMarker) {
+        setEmailTemplate("replacement");
+      } else if (isPending) {
         setEmailTemplate("new");
         if (data.isResend || data.emailType === "RESEND_CONCESSION" || data.emailTemplate === "replacement") {
           onChange?.({
@@ -605,6 +622,12 @@ function PermitCardInner({
     return false;
   }, [data.emailType, data.isResend, data.emailTemplate, emailTemplate, isCurrentDispatched, isVoucherChangedOnSent, currentSelectedCode, lastDispatchedCodeMap, recordKeyStr, activeIndex, matchingPermits, database, data.formId]);
 
+  // Single source of truth for the send action. A replacement can be locally
+  // Pending even though it must use the resend/replacement flow.
+  const shouldResendConcession = useMemo(() => {
+    return qrCodeChanged || isReplacement;
+  }, [qrCodeChanged, isReplacement]);
+
   const getEmailContent = useCallback((template: "new" | "replacement") => {
     const hasUpdatedVoucherCode = isCurrentDispatched && isVoucherChangedOnSent;
     const isResentMode = template === "replacement" || emailTemplate === "replacement" || data.emailType === "RESEND_CONCESSION" || data.isResend || data.emailTemplate === "replacement" || hasUpdatedVoucherCode || isReplacement;
@@ -640,6 +663,14 @@ function PermitCardInner({
   }, [toastMessage]);
 
   const handleResendConcessionEmail = async () => {
+    // Reinforce the replacement state immediately. The record may already have
+    // been moved to Pending by the voucher selector.
+    onChange?.({
+      isResend: true,
+      emailType: "RESEND_CONCESSION",
+      emailTemplate: "replacement"
+    });
+
     // Kick off the clipboard write synchronously, right here at the top, so the call is
     // still inside the user-activation window from the click. The awaited network calls
     // below (VRM check, Supabase dispatch write) would otherwise cause the browser to
@@ -729,6 +760,14 @@ function PermitCardInner({
     if (currentSelectedCode && currentSelectedCode !== "-" && currentSelectedCode !== "CANCELLED") {
       setLastDispatchedCodeMap(prev => ({ ...prev, [recordKeyStr]: currentSelectedCode }));
     }
+
+    // The replacement has now been dispatched successfully. Clear the transient
+    // resend marker so the next action for this SENT record is Unsend, not Resend.
+    onChange?.({
+      isResend: false,
+      emailType: "SEND_CONCESSION",
+      emailTemplate: "new"
+    });
 
     const formattedMailBody = mailBody.replace(/\r?\n/g, "\r\n");
     let url = "";
@@ -830,10 +869,12 @@ function PermitCardInner({
 
   const handleSendClick = async (targetRecord?: CsvPermitRecord) => {
     const rec = targetRecord || (activeIndex !== -1 && matchingPermits[activeIndex] ? matchingPermits[activeIndex] : null);
-    const isCancelledRec = rec ? isRecordCancelled(rec, rec.todayDate || data.todayDate, database) : isCancelled;
+    const targetTodayDate = rec?.todayDate || data.todayDate || getTodayISO();
+    const reqDate = rec ? getRequestedPermitDateISO(rec, targetTodayDate) : "";
+    const isCancelledRec = rec ? isRecordCancelled(rec, reqDate, database) : isCancelled;
     const vrm = rec?.vrm || data.vrm || "";
 
-    if (!isCancelledRec && !targetRecord && qrCodeChanged) {
+    if (!isCancelledRec && !targetRecord && shouldResendConcession) {
       const res = await handleResendConcessionEmail();
       if (res === false) {
         showToast("❌ Failed to send. Please try again.");
@@ -865,13 +906,13 @@ function PermitCardInner({
       if (targetPayloadCode && targetPayloadCode !== "-" && targetPayloadCode !== "CANCELLED") {
         setLastDispatchedCodeMap(prev => ({ ...prev, [targetRecordKeyStr]: targetPayloadCode }));
       }
-      showToast(
-        isCancelledRec
-          ? `📧 Sent cancellation notice to ${targetDriverName}.`
-          : qrCodeChanged && !targetRecord
-            ? `📧 Resent replacement permit to ${targetDriverName}.`
-            : `📧 Sent permit to ${targetDriverName}.`
-      );
+      if (isCancelledRec) {
+        showToast(`📧 Sent cancellation notice to ${targetDriverName}.`);
+      } else if (shouldResendConcession && !targetRecord) {
+        showToast(`📋 QR Code copied! Resent replacement permit to ${targetDriverName}.`);
+      } else {
+        showToast(`📋 QR Code copied! Sent permit to ${targetDriverName}.`);
+      }
     } else {
       showToast("❌ Failed to send. Please try again.");
     }
@@ -1756,26 +1797,7 @@ function PermitCardInner({
   // - Blue clickable email link
   // ============================================
   const handleSendWithOutlook = async (targetRecord?: CsvPermitRecord) => {
-    // 1. Kick off the clipboard write synchronously right at the top
-    let resolveQrBlob: ((blob: Blob) => void) | undefined;
-    let rejectQrBlob: ((err: unknown) => void) | undefined;
-    let clipboardWritePromise: Promise<void> | null = null;
-    if (navigator.clipboard && typeof navigator.clipboard.write === 'function') {
-      const qrBlobPromise = new Promise<Blob>((resolve, reject) => {
-        resolveQrBlob = resolve;
-        rejectQrBlob = reject;
-      });
-      try {
-        clipboardWritePromise = navigator.clipboard.write([
-          new ClipboardItem({ "image/png": qrBlobPromise })
-        ]);
-      } catch (err) {
-        console.warn("Clipboard write initiation error:", err);
-        clipboardWritePromise = null;
-      }
-    }
-
-    // 2. Identify the target record context strictly
+    // 1. Identify the target record context strictly
     const targetRec = targetRecord || (activeIndex !== -1 && matchingPermits[activeIndex] ? matchingPermits[activeIndex] : null) || (database && data.formId ? database.find(r => r.formId === data.formId || r.id === data.formId) : null) || {
       id: data.id,
       formId: data.formId,
@@ -1790,6 +1812,31 @@ function PermitCardInner({
       todayDate: data.todayDate
     };
 
+    const targetTodayDate = targetRec.todayDate || (targetRecord ? "" : data.todayDate) || getTodayISO();
+    const targetReqDate = getRequestedPermitDateISO(targetRec, targetTodayDate);
+    const targetIsCancelled = targetRecord 
+      ? isRecordCancelled(targetRec, targetReqDate, database) 
+      : (isRecordCancelled(targetRec, targetReqDate, database) || isCancelled);
+
+    // 2. Kick off the clipboard write synchronously ONLY if NOT cancelled
+    let resolveQrBlob: ((blob: Blob) => void) | undefined;
+    let rejectQrBlob: ((err: unknown) => void) | undefined;
+    let clipboardWritePromise: Promise<void> | null = null;
+    if (!targetIsCancelled && navigator.clipboard && typeof navigator.clipboard.write === 'function') {
+      const qrBlobPromise = new Promise<Blob>((resolve, reject) => {
+        resolveQrBlob = resolve;
+        rejectQrBlob = reject;
+      });
+      try {
+        clipboardWritePromise = navigator.clipboard.write([
+          new ClipboardItem({ "image/png": qrBlobPromise })
+        ]);
+      } catch (err) {
+        console.warn("Clipboard write initiation error:", err);
+        clipboardWritePromise = null;
+      }
+    }
+
     const targetVrm = (targetRec.vrm || (targetRecord ? "" : data.vrm) || "").toUpperCase().trim();
     const targetDriverName = (targetRec.driverName || targetRec.name || (targetRecord ? "" : data.name) || "").trim();
     const targetEmail = (targetRec.email || targetRec.driverEmail || (targetRecord ? "" : data.email) || "").toLowerCase().trim();
@@ -1797,9 +1844,7 @@ function PermitCardInner({
     const targetSite = (targetRec.site || targetRec.hospital || (targetRecord ? "" : data.site) || "").trim();
     const targetValidFrom = targetRec.validFrom || targetRec.dateRequired || (targetRecord ? "" : data.validFrom) || "";
     const targetValidTo = targetRec.validTo || (targetValidFrom ? addDays(targetValidFrom, 6) : "") || (targetRecord ? "" : data.validTo) || "";
-    const targetTodayDate = targetRec.todayDate || (targetRecord ? "" : data.todayDate) || getTodayISO();
     const targetDateRequired = targetRec.dateRequired || targetRec.validFrom || (targetRecord ? "" : data.dateRequired) || "";
-    const targetIsCancelled = targetRecord ? isRecordCancelled(targetRec, targetTodayDate, database) : isCancelled;
     const targetPayloadCode = targetRec.voucherCode || targetRec.prePaidCode || targetRec.voucherCodesText || (!targetRecord ? (data.qrOverride?.trim() || activeVoucherCode || currentSelectedCode || "") : "");
 
     // 3. Silent block check
@@ -1847,7 +1892,7 @@ function PermitCardInner({
       mailBody = cancelContent.plainText;
       htmlText = cancelContent.htmlText;
     } else {
-      const effectiveTemplate = (!targetRecord && isReplacement) ? "replacement" : emailTemplate;
+      const effectiveTemplate = (!targetRecord && shouldResendConcession) ? "replacement" : emailTemplate;
       const content = (effectiveTemplate === "replacement") ? getReplacementEmailContent(params) : getSendEmailContent(params);
       subject = content.subject;
       mailBody = content.plainText;
@@ -1874,10 +1919,23 @@ function PermitCardInner({
       return false;
     }
 
-    setShowOutlookGuide(true);
+    // Paste popup guide is only for valid permits with QR codes
+    if (!targetIsCancelled) {
+      setShowOutlookGuide(true);
+    }
     const targetRecordKeyStr = getRecordPrimaryKey(targetRec) || targetVrm;
     if (targetPayloadCode && targetPayloadCode !== "-" && targetPayloadCode !== "CANCELLED") {
       setLastDispatchedCodeMap(prev => ({ ...prev, [targetRecordKeyStr]: targetPayloadCode }));
+    }
+
+    // Replacement markers are transient: once the replacement has been dispatched,
+    // return the record to its normal SENT state so the next action is Unsend.
+    if (emailTemplate === "replacement" || data.emailType === "RESEND_CONCESSION" || data.isResend || data.emailTemplate === "replacement" || shouldResendConcession) {
+      onChange?.({
+        isResend: false,
+        emailType: "SEND_CONCESSION",
+        emailTemplate: "new"
+      });
     }
 
     // 6. Build compose link based on client type selection
@@ -1892,7 +1950,7 @@ function PermitCardInner({
       url = `mailto:${encodeURIComponent(sendRecipient)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(formattedMailBody)}`;
     }
 
-    // 7. Generate QR code data URL on demand if not cancelled
+    // 7. Generate QR code data URL on demand ONLY if not cancelled
     let activeQrDataUrl = (!targetRecord && (qrUrlSmall || qrUrl)) || "";
     if (!targetIsCancelled) {
       const payload = targetPayloadCode;
@@ -1920,11 +1978,11 @@ function PermitCardInner({
       } catch (err) {
         rejectQrBlob?.(err);
       }
-    } else {
+    } else if (resolveQrBlob || rejectQrBlob) {
       rejectQrBlob?.(new Error("No QR code available to copy"));
     }
 
-    if (clipboardWritePromise) {
+    if (!targetIsCancelled && clipboardWritePromise) {
       try {
         window.focus();
         await clipboardWritePromise;
@@ -1952,7 +2010,11 @@ function PermitCardInner({
       console.warn("Could not auto-open Outlook link:", err);
     }
 
-    showToast(`📋 QR Code copied! Outlook opened for ${targetDriverName || targetVrm || "permit"} — paste (Ctrl+V) into the email body.`);
+    if (targetIsCancelled) {
+      showToast(`📧 Outlook opened for ${targetDriverName || targetVrm || "permit"} — cancellation notice prepared.`);
+    } else {
+      showToast(`📋 QR Code copied! Outlook opened for ${targetDriverName || targetVrm || "permit"} — paste (Ctrl+V) into the email body.`);
+    }
 
     // 9. Auto-progression: only when initiated from the card interface
     if (!targetRecord) {
@@ -2383,8 +2445,8 @@ function PermitCardInner({
               <Settings className="w-4 h-4 transition-transform duration-300 hover:rotate-45" />
             </button>
 
-            {isCurrentDispatched ? (
-              // Already sent → Always show Unsend (Red outlined styling)
+            {isCurrentDispatched && !shouldResendConcession ? (
+              // Already sent with the same QR/code → Unsend. A replacement uses the resend flow.
               <button
                 type="button"
                 onClick={handleUnsendClick}
@@ -2401,7 +2463,7 @@ function PermitCardInner({
                 onClick={
                   isCancelled
                     ? handleSendClick
-                    : qrCodeChanged
+                    : shouldResendConcession
                       ? handleResendConcessionEmail
                       : handleSendClick
                 }
@@ -2423,7 +2485,7 @@ function PermitCardInner({
                 <span>
                   {isCancelled
                     ? "Send Cancellation Notice" 
-                    : qrCodeChanged 
+                    : shouldResendConcession
                       ? "Resend Concession Email" 
                       : "Send Concession Email"}
                 </span>

@@ -8,7 +8,8 @@ import {
   getTodayISO,
   getSpreadsheetMatchingAllocationsMap,
   isRecordCancelled,
-  isVoucherExactPeriodEligible
+  isVoucherExactPeriodEligible,
+  getRequestedPermitDateISO
 } from "../utils/csvParser";
 import { checkIsRecordDispatched } from "../utils/dispatchUtils";
 
@@ -148,7 +149,8 @@ export function PermitMatchingTable({
                   const daysActive = validFromISO ? Math.round((new Date(refDateISO).getTime() - new Date(validFromISO).getTime()) / (1000 * 60 * 60 * 24)) : 0;
                   
                   // Canonical isRecordCancelled check
-                  const isCancelled = isRecordCancelled(record, processingDate, effectiveDatabase);
+                  const recRequestedDate = getRequestedPermitDateISO(record, processingDate);
+                  const isCancelled = isRecordCancelled(record, recRequestedDate, effectiveDatabase);
                   const isDispatched = checkIsRecordDispatched(record, record.vrm, record.driverName, record.dateRequired, dispatchedKeys, unsentKeys);
 
                   // Get Form ID for display
@@ -162,11 +164,14 @@ export function PermitMatchingTable({
                   // Get the code from the map (which has been computed dynamically)
                   let displayCode = recordCodeMap.get(recordKey);
                   
-                  if (displayCode === undefined || displayCode === null) {
-                    displayCode = isCancelled ? "CANCELLED" : "-";
+                  if (isCancelled) {
+                    displayCode = "CANCELLED";
+                  } else if (displayCode === undefined || displayCode === null || displayCode === "CANCELLED") {
+                    const rawCode = (record.voucherCode || "").trim();
+                    displayCode = (rawCode && rawCode.toUpperCase() !== "CANCELLED") ? rawCode : "-";
                   }
                   
-                  const isInvalid = isCancelled || displayCode === "CANCELLED";
+                  const isInvalid = isCancelled;
 
                   const hasValidVoucher = Boolean(
                     displayCode &&
