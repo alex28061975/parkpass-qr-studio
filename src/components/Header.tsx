@@ -147,12 +147,12 @@ export function Header({
 
         {/* Dark Mode toggle */}
         <div className="park-dark-mode">
-          <span>Dark Mode</span>
+          <span>{darkMode ? "Dark Mode" : "Light Mode"}</span>
           <button 
             type="button" 
             className={`park-switch ${darkMode ? "is-on" : ""}`} 
             onClick={onToggleDarkMode} 
-            aria-label="Toggle dark mode"
+            aria-label={darkMode ? "Switch to light mode" : "Switch to dark mode"}
           >
             <span />
           </button>
