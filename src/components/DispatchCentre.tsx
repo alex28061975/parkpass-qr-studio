@@ -1,6 +1,8 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useEffect } from "react";
 import { 
   ChevronDown, 
+  ChevronLeft,
+  ChevronRight,
   Mail, 
   Send, 
   Archive, 
@@ -15,7 +17,8 @@ import {
   Download,
   QrCode,
   Search,
-  X
+  X,
+  Filter
 } from "lucide-react";
 import { 
   CsvPermitRecord, 
@@ -30,7 +33,8 @@ import {
   sortRecordsByFormIdDesc,
   getNumericFormId,
   extractRecordSubmissionTimeMs,
-  getRequestedPermitDateISO
+  getRequestedPermitDateISO,
+  getTodayISO
 } from "../utils/csvParser";
 import { checkIsRecordDispatched, getRecordKeys } from "../utils/dispatchUtils";
 
@@ -125,6 +129,19 @@ export function DispatchCentre({
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [sortDirection, setSortDirection] = useState<SortDirection>(null);
 
+  // Dropdown filter states
+  const [statusFilter, setStatusFilter] = useState<"ALL" | "PENDING" | "SENT" | "UNSENT">("ALL");
+  const [hospitalFilter, setHospitalFilter] = useState<string>("ALL");
+  const [wardFilter, setWardFilter] = useState<string>("ALL");
+  const [dateFilter, setDateFilter] = useState<"ALL" | "TODAY" | "THIS_WEEK" | "THIS_MONTH" | "CUSTOM">("THIS_WEEK");
+  const [customStartDate, setCustomStartDate] = useState<string>("");
+  const [customEndDate, setCustomEndDate] = useState<string>("");
+
+  // Pagination state (default: 50 rows per page)
+  const [pageSize, setPageSize] = useState<number>(50);
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [goToPageInput, setGoToPageInput] = useState<string>("");
+
   // Base records: always shows all records sorted by Form ID (#) descending (highest number first)
   const baseRecords = useMemo(() => {
     return sortRecordsByFormIdDesc(database);
@@ -191,40 +208,111 @@ export function DispatchCentre({
     isSameSelectedRecord(record) &&
     (formData?.emailType === "RESEND_CONCESSION" || formData?.isResend === true || formData?.emailTemplate === "replacement");
 
+  // Shared status, hospital, and cancellation extractors
+  const getHospital = (record: CsvPermitRecord) => {
+    const raw = (record.hospital || "").trim();
+    if (raw && !raw.toLowerCase().includes("royal london")) {
+      return raw;
+    }
+    return (record.ward && (
+      record.ward.toLowerCase().includes("acorn") || 
+      record.ward.toLowerCase().includes("acacia") || 
+      record.ward.toLowerCase().includes("mulberry")
+    ) ? "Whipps Cross Hospital" : "Newham Hospital");
+  };
+
+  const getIsCancelled = (record: CsvPermitRecord, idx: number) => {
+    const recordKey = String(record.formId ?? record.id ?? idx);
+    const displayCode = recordCodeMap.get(recordKey);
+    const reqDate = getRequestedPermitDateISO(record, processingDate);
+    return isRecordCancelled(record, reqDate, database) || displayCode === "CANCELLED";
+  };
+
+  const getStatusStr = (record: CsvPermitRecord, idx: number) => {
+    const isCanc = getIsCancelled(record, idx);
+    if (isCanc) return "CANCELLED";
+    if (isReplacementPending(record)) return "REPLACEMENT";
+    const isDispatched = checkIsRecordDispatched(record, record.vrm, record.driverName, record.dateRequired, dispatchedKeys, unsentKeys);
+    const rowKey = String(record.formId ?? record.id ?? record.vrm ?? idx);
+    const recordKeys = getRecordKeys(record);
+    const isUnsent = Boolean(unsentKeys && unsentKeys.length > 0 && (unsentKeys.includes(rowKey) || recordKeys.some(k => unsentKeys.includes(k))));
+    if (isDispatched) return "SENT";
+    if (isUnsent) return "UNSENT";
+    return "PENDING";
+  };
+
+  const todayISO = useMemo(() => getTodayISO(), []);
+
+  const dateRanges = useMemo(() => {
+    const addCalendarDays = (iso: string, delta: number): string => {
+      const [year, month, day] = iso.split("-").map(Number);
+      const ref = new Date(year, month - 1, day);
+      ref.setDate(ref.getDate() + delta);
+      const y = ref.getFullYear();
+      const m = String(ref.getMonth() + 1).padStart(2, "0");
+      const d = String(ref.getDate()).padStart(2, "0");
+      return `${y}-${m}-${d}`;
+    };
+
+    return {
+      today: todayISO,
+      last7DaysStart: addCalendarDays(todayISO, -6),
+      last30DaysStart: addCalendarDays(todayISO, -29)
+    };
+  }, [todayISO]);
+
+  // List of distinct hospitals for filter dropdown: only Newham Hospital and Whipps Cross Hospital
+  const allHospitalsList = useMemo(() => {
+    const standardHospitals = ["Newham Hospital", "Whipps Cross Hospital"];
+    const set = new Set<string>(standardHospitals);
+    database.forEach(r => {
+      const h = (r.hospital || "").trim();
+      if (h && !h.toLowerCase().includes("royal london")) {
+        set.add(h);
+      }
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [database]);
+
+  // List of distinct wards for filter dropdown
+  const allWardsList = useMemo(() => {
+    const standardWards = [
+      "Maternity",
+      "Labour Ward",
+      "Mulberry",
+      "Acorn",
+      "Acacia",
+      "ICU",
+      "Antenatal",
+      "Postnatal"
+    ];
+    const set = new Set<string>(standardWards);
+    database.forEach(r => {
+      const w = (r.ward || "").trim();
+      if (w) set.add(w);
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [database]);
+
+  // Reset page to 1 whenever filters or search change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [
+    searchQuery,
+    statusFilter,
+    hospitalFilter,
+    wardFilter,
+    dateFilter,
+    customStartDate,
+    customEndDate,
+    pageSize
+  ]);
+
   // Sorted records based on active column sort
   const sortedRecords = useMemo(() => {
     if (!sortKey || !sortDirection) {
       return baseRecords;
     }
-
-    const getHospital = (record: CsvPermitRecord) => {
-      return record.hospital || 
-        (record.ward && (
-          record.ward.toLowerCase().includes("acorn") || 
-          record.ward.toLowerCase().includes("acacia") || 
-          record.ward.toLowerCase().includes("mulberry")
-        ) ? "Whipps Cross Hospital" : "Newham Hospital");
-    };
-
-    const getIsCancelled = (record: CsvPermitRecord, idx: number) => {
-      const recordKey = String(record.formId ?? record.id ?? idx);
-      const displayCode = recordCodeMap.get(recordKey);
-      const reqDate = getRequestedPermitDateISO(record, processingDate);
-      return isRecordCancelled(record, reqDate, database) || displayCode === "CANCELLED";
-    };
-
-    const getStatusStr = (record: CsvPermitRecord, idx: number) => {
-      const isCanc = getIsCancelled(record, idx);
-      if (isCanc) return "CANCELLED";
-      if (isReplacementPending(record)) return "REPLACEMENT";
-      const isDispatched = checkIsRecordDispatched(record, record.vrm, record.driverName, record.dateRequired, dispatchedKeys, unsentKeys);
-      const rowKey = String(record.formId ?? record.id ?? record.vrm ?? idx);
-      const recordKeys = getRecordKeys(record);
-      const isUnsent = Boolean(unsentKeys && unsentKeys.length > 0 && (unsentKeys.includes(rowKey) || recordKeys.some(k => unsentKeys.includes(k))));
-      if (isDispatched) return "SENT";
-      if (isUnsent) return "UNSENT";
-      return "PENDING";
-    };
 
     const sorted = [...baseRecords].sort((a, b) => {
       let comparison = 0;
@@ -322,22 +410,89 @@ export function DispatchCentre({
     return sorted;
   }, [baseRecords, sortKey, sortDirection, database, processingDate, recordCodeMap, dispatchedKeys, unsentKeys, formData]);
 
+  // Comprehensive filtering: Search Query + Status + Hospital + Ward + Date Range
   const filteredRecords = useMemo(() => {
-    if (!searchQuery || !searchQuery.trim()) return sortedRecords;
-    const q = searchQuery.trim().toLowerCase();
-    return sortedRecords.filter(r => {
-      const cleanFormId = String(r.formId ?? r.id ?? "");
-      return (
-        cleanFormId.toLowerCase().includes(q) ||
-        (r.driverName || "").toLowerCase().includes(q) ||
-        (r.vrm || "").toLowerCase().includes(q) ||
-        (r.hospital || "").toLowerCase().includes(q) ||
-        (r.ward || "").toLowerCase().includes(q) ||
-        (r.email || "").toLowerCase().includes(q) ||
-        (r.voucherCode || "").toLowerCase().includes(q)
-      );
+    return sortedRecords.filter((record, idx) => {
+      // 1. Text Search Filter
+      if (searchQuery && searchQuery.trim()) {
+        const q = searchQuery.trim().toLowerCase();
+        const cleanFormId = String(record.formId ?? record.id ?? "");
+        const matchesSearch = (
+          cleanFormId.toLowerCase().includes(q) ||
+          (record.driverName || "").toLowerCase().includes(q) ||
+          (record.vrm || "").toLowerCase().includes(q) ||
+          (record.hospital || "").toLowerCase().includes(q) ||
+          (record.ward || "").toLowerCase().includes(q) ||
+          (record.email || "").toLowerCase().includes(q) ||
+          (record.voucherCode || "").toLowerCase().includes(q)
+        );
+        if (!matchesSearch) return false;
+      }
+
+      // 2. Status Filter: "ALL" | "PENDING" | "SENT" | "UNSENT"
+      if (statusFilter !== "ALL") {
+        const status = getStatusStr(record, idx);
+        if (statusFilter === "PENDING" && status !== "PENDING") return false;
+        if (statusFilter === "SENT" && status !== "SENT") return false;
+        if (statusFilter === "UNSENT" && status !== "UNSENT") return false;
+      }
+
+      // 3. Hospital Filter
+      if (hospitalFilter !== "ALL") {
+        const hosp = getHospital(record);
+        if (hosp.toLowerCase().trim() !== hospitalFilter.toLowerCase().trim()) {
+          return false;
+        }
+      }
+
+      // 4. Ward Filter
+      if (wardFilter !== "ALL") {
+        const w = (record.ward || "").toLowerCase();
+        const target = wardFilter.toLowerCase();
+        if (!w.includes(target) && w !== target) {
+          return false;
+        }
+      }
+
+      if (dateFilter !== "ALL") {
+        const recDate =
+          getRequestedPermitDateISO(record) ||
+          parseDateToISO(record.dateRequired || record.validFrom) ||
+          parseDateToISO(record.todayDate || record.createdAt || record.created_at || (record as any).submissionTime);
+        if (!recDate) return false;
+
+        if (dateFilter === "TODAY") {
+          if (recDate !== todayISO) return false;
+        } else if (dateFilter === "THIS_WEEK") {
+          if (recDate < dateRanges.last7DaysStart || recDate > todayISO) return false;
+        } else if (dateFilter === "THIS_MONTH") {
+          if (recDate < dateRanges.last30DaysStart || recDate > todayISO) return false;
+        } else if (dateFilter === "CUSTOM") {
+          if (customStartDate && recDate < customStartDate) return false;
+          if (customEndDate && recDate > customEndDate) return false;
+        }
+      }
+
+      return true;
     });
-  }, [sortedRecords, searchQuery]);
+  }, [
+    sortedRecords,
+    searchQuery,
+    statusFilter,
+    hospitalFilter,
+    wardFilter,
+    dateFilter,
+    customStartDate,
+    customEndDate,
+    todayISO,
+    dateRanges,
+    recordCodeMap,
+    processingDate,
+    database,
+    dispatchedKeys,
+    unsentKeys,
+    formData
+  ]);
 
   const handleSort = (key: SortKey) => {
     if (sortKey === key) {
@@ -370,6 +525,120 @@ export function DispatchCentre({
     );
   };
 
+  // Active filter chips calculation
+  const activeFilters = useMemo(() => {
+    const chips: { id: string; label: string; onRemove: () => void }[] = [];
+
+    if (searchQuery && searchQuery.trim()) {
+      chips.push({
+        id: "search",
+        label: `Search: "${searchQuery.trim()}"`,
+        onRemove: () => handleSearchChange("")
+      });
+    }
+
+    if (statusFilter !== "ALL") {
+      chips.push({
+        id: "status",
+        label: `Status: ${statusFilter}`,
+        onRemove: () => setStatusFilter("ALL")
+      });
+    }
+
+    if (hospitalFilter !== "ALL") {
+      chips.push({
+        id: "hospital",
+        label: `Hospital: ${hospitalFilter}`,
+        onRemove: () => setHospitalFilter("ALL")
+      });
+    }
+
+    if (wardFilter !== "ALL") {
+      chips.push({
+        id: "ward",
+        label: `Ward: ${wardFilter}`,
+        onRemove: () => setWardFilter("ALL")
+      });
+    }
+
+    if (dateFilter !== "ALL") {
+      let dateLabel = "Date";
+      if (dateFilter === "TODAY") dateLabel = `Date: Today (${formatDate(todayISO)})`;
+      else if (dateFilter === "THIS_WEEK") dateLabel = "Date: This Week (Last 7 Days)";
+      else if (dateFilter === "THIS_MONTH") dateLabel = "Date: This Month (Last 30 Days)";
+      else if (dateFilter === "CUSTOM") {
+        dateLabel = `Date: ${customStartDate ? formatDate(customStartDate) : "Start"} → ${customEndDate ? formatDate(customEndDate) : "End"}`;
+      }
+      chips.push({
+        id: "date",
+        label: dateLabel,
+        onRemove: () => {
+          setDateFilter("ALL");
+          setCustomStartDate("");
+          setCustomEndDate("");
+        }
+      });
+    }
+
+    return chips;
+  }, [searchQuery, statusFilter, hospitalFilter, wardFilter, dateFilter, customStartDate, customEndDate, todayISO]);
+
+  const handleClearAllFilters = () => {
+    handleSearchChange("");
+    setStatusFilter("ALL");
+    setHospitalFilter("ALL");
+    setWardFilter("ALL");
+    setDateFilter("ALL");
+    setCustomStartDate("");
+    setCustomEndDate("");
+    setCurrentPage(1);
+  };
+
+  // Counts & Metrics
+  const totalFilteredCount = filteredRecords.length;
+  const totalOriginalCount = totalRecordsCount && totalRecordsCount > 0 ? totalRecordsCount : (database.length || 0);
+  const isFiltered = activeFilters.length > 0 || totalFilteredCount !== totalOriginalCount;
+
+  // Pagination calculation
+  const effectivePageSize = pageSize === 0 ? (totalFilteredCount || 50) : pageSize;
+  const totalPages = pageSize === 0 ? 1 : Math.max(1, Math.ceil(totalFilteredCount / effectivePageSize));
+  const safePage = Math.min(Math.max(1, currentPage), totalPages);
+
+  const startIndex = totalFilteredCount === 0 ? 0 : (safePage - 1) * effectivePageSize;
+  const endIndex = Math.min(startIndex + effectivePageSize, totalFilteredCount);
+
+  // Paginated records slice to render in the table
+  const paginatedRecords = useMemo(() => {
+    if (pageSize === 0) return filteredRecords;
+    return filteredRecords.slice(startIndex, endIndex);
+  }, [filteredRecords, startIndex, endIndex, pageSize]);
+
+  // Smart page number windowing (e.g. 1 ... 4 5 6 ... 32)
+  const pageNumbers = useMemo(() => {
+    if (totalPages <= 7) {
+      return Array.from({ length: totalPages }, (_, i) => i + 1);
+    }
+    const pages: (number | string)[] = [];
+    if (safePage <= 4) {
+      for (let i = 1; i <= 5; i++) pages.push(i);
+      pages.push("...");
+      pages.push(totalPages);
+    } else if (safePage >= totalPages - 3) {
+      pages.push(1);
+      pages.push("...");
+      for (let i = totalPages - 4; i <= totalPages; i++) pages.push(i);
+    } else {
+      pages.push(1);
+      pages.push("...");
+      pages.push(safePage - 1);
+      pages.push(safePage);
+      pages.push(safePage + 1);
+      pages.push("...");
+      pages.push(totalPages);
+    }
+    return pages;
+  }, [totalPages, safePage]);
+
   const count = filteredRecords.length;
   const totalDbCount = totalRecordsCount && totalRecordsCount > 0 ? totalRecordsCount : (database.length || 889);
   const totalVouchersCount = vouchersDatabase.length > 0 ? vouchersDatabase.length : 174;
@@ -379,16 +648,7 @@ export function DispatchCentre({
   const selectedWard = formData?.ward || "Acorn Ward";
 
   // List of distinct wards in database for filter/dropdown
-  const availableWards = useMemo(() => {
-    const set = new Set<string>();
-    database.forEach(r => {
-      if (r.ward) set.add(r.ward);
-    });
-    if (set.size === 0) {
-      return ["Acorn Ward", "Mulberry Ward", "ICU", "LARCH ANTENATAL WARD", "ANTENATAL WARD", "CDS", "birth centre", "Acacia ward", "LARCH POSTNATAL WARD"];
-    }
-    return Array.from(set);
-  }, [database]);
+  const availableWards = allWardsList;
 
   const handleAction = async (record: CsvPermitRecord, sent: boolean, replacement = false) => {
     const key = String(record.formId ?? record.id ?? record.vrm);
@@ -403,7 +663,17 @@ export function DispatchCentre({
   };
 
   const handleExportZip = () => {
-    exportToExcel(sortedRecords, "Concessions_Permits_Export.xlsx");
+    exportToExcel(filteredRecords, "Concessions_Permits_Export.xlsx");
+  };
+
+  const handleGoToPage = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const pageNum = parseInt(goToPageInput, 10);
+    if (!isNaN(pageNum)) {
+      const clamped = Math.min(Math.max(1, pageNum), totalPages);
+      setCurrentPage(clamped);
+      setGoToPageInput("");
+    }
   };
 
   return (
@@ -430,33 +700,140 @@ export function DispatchCentre({
           </div>
         </div>
 
-        {/* Header Search Bar */}
-        <div className="relative w-full">
-          <div className="flex items-center w-full bg-slate-50 dark:bg-[#041222] border border-slate-300 dark:border-[#1b436c] focus-within:border-blue-500 dark:focus-within:border-[#1677FF] focus-within:ring-2 focus-within:ring-blue-500/20 dark:focus-within:ring-[#1677FF]/20 rounded-xl px-3.5 py-2 transition shadow-inner">
-            <Search className="w-4 h-4 text-blue-500 dark:text-blue-400 shrink-0 mr-2.5" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => handleSearchChange(e.target.value)}
-              placeholder="Search by driver's name, number plate (VRM), or hospital..."
-              className="w-full bg-transparent text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none font-normal"
-            />
-            {searchQuery && (
-              <button
-                type="button"
-                onClick={() => handleSearchChange("")}
-                className="text-slate-400 hover:text-slate-600 dark:hover:text-white p-1 rounded-md transition"
-                title="Clear search"
+        {/* Filter Controls Toolbar */}
+        <div className="flex flex-col gap-2.5 pt-1">
+          <div className="flex flex-wrap items-center gap-2.5">
+            {/* Search Box - grows to fill remaining space */}
+            <div className="relative flex-1 min-w-[220px]">
+              <div className="flex items-center w-full bg-slate-50 dark:bg-[#041222] border border-slate-300 dark:border-[#1b436c] focus-within:border-blue-500 dark:focus-within:border-[#1677FF] focus-within:ring-2 focus-within:ring-blue-500/20 dark:focus-within:ring-[#1677FF]/20 rounded-xl px-3 py-2 transition shadow-inner">
+                <Search className="w-4 h-4 text-blue-500 dark:text-blue-400 shrink-0 mr-2" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => handleSearchChange(e.target.value)}
+                  placeholder="Search driver, VRN, hospital, voucher..."
+                  className="w-full bg-transparent text-xs sm:text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none font-normal"
+                />
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => handleSearchChange("")}
+                    className="text-slate-400 hover:text-slate-600 dark:hover:text-white p-0.5 rounded transition cursor-pointer"
+                    title="Clear search"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Status Filter - sized to content */}
+            <div className="relative">
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value as any)}
+                className="h-9.5 pl-3 pr-8 bg-slate-50 dark:bg-[#041222] border border-slate-300 dark:border-[#1b436c] text-slate-900 dark:text-slate-200 rounded-xl text-xs font-medium focus:outline-none focus:border-blue-500 transition appearance-none cursor-pointer"
               >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            )}
+                <option value="ALL">Status: All</option>
+                <option value="PENDING">PENDING</option>
+                <option value="SENT">SENT</option>
+                <option value="UNSENT">UNSENT</option>
+              </select>
+              <ChevronDown className="w-3.5 h-3.5 text-slate-400 pointer-events-none absolute right-3 top-1/2 -translate-y-1/2" />
+            </div>
+
+            {/* Hospital Filter - sized to content */}
+            <div className="relative">
+              <select
+                value={hospitalFilter}
+                onChange={(e) => setHospitalFilter(e.target.value)}
+                className="h-9.5 pl-3 pr-8 bg-slate-50 dark:bg-[#041222] border border-slate-300 dark:border-[#1b436c] text-slate-900 dark:text-slate-200 rounded-xl text-xs font-medium focus:outline-none focus:border-blue-500 transition appearance-none cursor-pointer truncate"
+              >
+                <option value="ALL">Hospital: All</option>
+                {allHospitalsList.map(h => (
+                  <option key={h} value={h}>{h}</option>
+                ))}
+              </select>
+              <ChevronDown className="w-3.5 h-3.5 text-slate-400 pointer-events-none absolute right-3 top-1/2 -translate-y-1/2" />
+            </div>
+
+            {/* Ward Filter - sized to content */}
+            <div className="relative">
+              <select
+                value={wardFilter}
+                onChange={(e) => setWardFilter(e.target.value)}
+                className="h-9.5 pl-3 pr-8 bg-slate-50 dark:bg-[#041222] border border-slate-300 dark:border-[#1b436c] text-slate-900 dark:text-slate-200 rounded-xl text-xs font-medium focus:outline-none focus:border-blue-500 transition appearance-none cursor-pointer truncate"
+              >
+                <option value="ALL">Ward: All</option>
+                {allWardsList.map(w => (
+                  <option key={w} value={w}>{w}</option>
+                ))}
+              </select>
+              <ChevronDown className="w-3.5 h-3.5 text-slate-400 pointer-events-none absolute right-3 top-1/2 -translate-y-1/2" />
+            </div>
+
+            {/* Date Filter - sized to content */}
+            <div className="relative">
+              <select
+                id="date-filter-dropdown"
+                value={dateFilter}
+                onChange={(e) => {
+                  const next = e.target.value as "ALL" | "TODAY" | "THIS_WEEK" | "THIS_MONTH" | "CUSTOM";
+                  setDateFilter(next);
+                  if (next === "ALL") {
+                    setCustomStartDate("");
+                    setCustomEndDate("");
+                  }
+                }}
+                className="h-9.5 pl-3 pr-8 bg-slate-50 dark:bg-[#041222] border border-slate-300 dark:border-[#1b436c] text-slate-900 dark:text-slate-200 rounded-xl text-xs font-medium focus:outline-none focus:border-blue-500 transition appearance-none cursor-pointer"
+              >
+                <option value="ALL">Date: All Time</option>
+                <option value="TODAY">Today</option>
+                <option value="THIS_WEEK">This Week</option>
+                <option value="THIS_MONTH">This Month</option>
+                <option value="CUSTOM">Custom Range</option>
+              </select>
+              <ChevronDown className="w-3.5 h-3.5 text-slate-400 pointer-events-none absolute right-3 top-1/2 -translate-y-1/2" />
+            </div>
           </div>
-          {searchQuery && (
-            <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-[11px] text-slate-600 dark:text-slate-400 bg-slate-200/80 dark:bg-[#081f38] px-2 py-0.5 rounded border border-slate-300 dark:border-[#194068] hidden md:block">
-              {filteredRecords.length} {filteredRecords.length === 1 ? 'match' : 'matches'}
+
+          {/* Custom Date Range Picker Sub-Bar */}
+          {dateFilter === "CUSTOM" && (
+            <div className="flex flex-wrap items-center gap-3 p-2.5 bg-blue-50/70 dark:bg-[#0b2138] border border-blue-200 dark:border-[#183d63] rounded-xl text-xs animate-in fade-in">
+              <div className="flex items-center gap-1.5 font-semibold text-slate-700 dark:text-slate-300">
+                <Calendar className="w-3.5 h-3.5 text-blue-600 dark:text-[#38bdf8]" />
+                <span>Custom Date Range:</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">From:</label>
+                <input
+                  type="date"
+                  value={customStartDate}
+                  onChange={(e) => setCustomStartDate(e.target.value)}
+                  className="px-2.5 py-1 bg-white dark:bg-[#041222] border border-slate-300 dark:border-[#1b436c] rounded-lg text-slate-900 dark:text-white font-mono text-xs focus:outline-none focus:border-blue-500"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">To:</label>
+                <input
+                  type="date"
+                  value={customEndDate}
+                  onChange={(e) => setCustomEndDate(e.target.value)}
+                  className="px-2.5 py-1 bg-white dark:bg-[#041222] border border-slate-300 dark:border-[#1b436c] rounded-lg text-slate-900 dark:text-white font-mono text-xs focus:outline-none focus:border-blue-500"
+                />
+              </div>
+              {(customStartDate || customEndDate) && (
+                <button
+                  type="button"
+                  onClick={() => { setCustomStartDate(""); setCustomEndDate(""); }}
+                  className="text-[11px] text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-200 underline font-semibold cursor-pointer ml-1"
+                >
+                  Reset Dates
+                </button>
+              )}
             </div>
           )}
+
         </div>
       </div>
 
@@ -633,7 +1010,8 @@ export function DispatchCentre({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-[#102947]">
-              {filteredRecords.map((record, index) => {
+              {paginatedRecords.map((record, pIdx) => {
+                const index = startIndex + pIdx;
                 const recordIso = parseDateToISO(record.dateRequired || record.validFrom);
                 const expiresIso = recordIso ? addDays(recordIso, 6) : "";
 
@@ -671,12 +1049,7 @@ export function DispatchCentre({
                 })();
 
                 // Derive hospital site cleanly
-                const hospitalDisplay = record.hospital || 
-                  (record.ward && (
-                    record.ward.toLowerCase().includes("acorn") || 
-                    record.ward.toLowerCase().includes("acacia") || 
-                    record.ward.toLowerCase().includes("mulberry")
-                  ) ? "Whipps Cross Hospital" : "Newham Hospital");
+                const hospitalDisplay = getHospital(record);
 
                 return (
                   <tr 
@@ -814,16 +1187,145 @@ export function DispatchCentre({
                   </tr>
                 );
               })}
-              {sortedRecords.length === 0 && (
+              {filteredRecords.length === 0 && (
                 <tr>
-                  <td colSpan={11} className="py-8 text-center text-slate-400 dark:text-slate-500 text-xs">
-                    No matching records found for active date {formatDate(processingDate)}.
+                  <td colSpan={11} className="py-12 text-center text-slate-500 dark:text-slate-400 text-xs">
+                    <div className="flex flex-col items-center justify-center gap-2">
+                      <Filter className="w-6 h-6 text-slate-400 stroke-1" />
+                      <p className="font-semibold text-sm text-slate-700 dark:text-slate-300">No matching permits found</p>
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
+                        {isFiltered ? "Try adjusting or clearing your active filters." : `No records found for date ${formatDate(processingDate)}.`}
+                      </p>
+                      {isFiltered && (
+                        <button
+                          type="button"
+                          onClick={handleClearAllFilters}
+                          className="mt-2 px-3 py-1.5 text-xs bg-blue-50 dark:bg-[#0c2847] text-blue-600 dark:text-[#38bdf8] hover:bg-blue-100 rounded-lg font-medium border border-blue-200 dark:border-[#1e436c] transition cursor-pointer"
+                        >
+                          Clear all filters
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
         </div>
+      </div>
+
+      {/* Pagination Controls Bar */}
+      <div className="flex flex-col sm:flex-row items-center justify-between gap-3.5 mt-3 px-1 text-xs text-slate-600 dark:text-slate-300">
+        {/* Left: Row counts + Page size selector */}
+        <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto justify-between sm:justify-start">
+          <div className="font-medium text-slate-700 dark:text-slate-300">
+            Showing <span className="font-bold text-slate-900 dark:text-white">{totalFilteredCount === 0 ? 0 : (startIndex + 1).toLocaleString()}</span>
+            {" – "}
+            <span className="font-bold text-slate-900 dark:text-white">{endIndex.toLocaleString()}</span> of{" "}
+            <span className="font-bold text-slate-900 dark:text-white">{totalFilteredCount.toLocaleString()}</span> permits
+          </div>
+
+          <div className="flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400">
+            <span>Rows per page:</span>
+            <select
+              value={pageSize}
+              onChange={(e) => {
+                setPageSize(Number(e.target.value));
+                setCurrentPage(1);
+              }}
+              className="px-2 py-1 bg-white dark:bg-[#071b30] border border-slate-300 dark:border-[#1d436e] rounded-md text-slate-800 dark:text-slate-200 font-medium focus:outline-none focus:border-blue-500 cursor-pointer"
+            >
+              <option value={50}>50</option>
+              <option value={100}>100</option>
+              <option value={0}>All ({totalFilteredCount})</option>
+            </select>
+          </div>
+        </div>
+
+        {/* Right: Page navigation controls */}
+        {totalPages > 1 && (
+          <div className="flex flex-wrap items-center gap-1.5 w-full sm:w-auto justify-center sm:justify-end">
+            {/* Previous Page Button */}
+            <button
+              type="button"
+              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+              disabled={safePage <= 1}
+              className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border font-medium text-xs transition cursor-pointer ${
+                safePage <= 1
+                  ? "opacity-40 cursor-not-allowed bg-slate-100 dark:bg-[#061424] border-slate-200 dark:border-[#122b47] text-slate-400"
+                  : "bg-white dark:bg-[#071b30] hover:bg-slate-100 dark:hover:bg-[#0c2847] border-slate-300 dark:border-[#1e436c] text-slate-700 dark:text-slate-200 shadow-2xs"
+              }`}
+              title="Previous Page"
+            >
+              <ChevronLeft className="w-3.5 h-3.5" />
+              <span>Prev</span>
+            </button>
+
+            {/* Page number buttons */}
+            <div className="inline-flex items-center gap-1">
+              {pageNumbers.map((p, idx) => {
+                if (typeof p === "string") {
+                  return (
+                    <span key={`ellipsis-${idx}`} className="px-1 text-slate-400 font-bold select-none">
+                      ...
+                    </span>
+                  );
+                }
+                const isActive = p === safePage;
+                return (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => setCurrentPage(p)}
+                    className={`min-w-[32px] h-8 px-2 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                      isActive
+                        ? "bg-blue-600 text-white shadow-sm shadow-blue-500/30"
+                        : "bg-white dark:bg-[#071b30] hover:bg-slate-100 dark:hover:bg-[#0c2847] border border-slate-300 dark:border-[#1e436c] text-slate-700 dark:text-slate-200"
+                    }`}
+                  >
+                    {p}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Next Page Button */}
+            <button
+              type="button"
+              onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+              disabled={safePage >= totalPages}
+              className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border font-medium text-xs transition cursor-pointer ${
+                safePage >= totalPages
+                  ? "opacity-40 cursor-not-allowed bg-slate-100 dark:bg-[#061424] border-slate-200 dark:border-[#122b47] text-slate-400"
+                  : "bg-white dark:bg-[#071b30] hover:bg-slate-100 dark:hover:bg-[#0c2847] border-slate-300 dark:border-[#1e436c] text-slate-700 dark:text-slate-200 shadow-2xs"
+              }`}
+              title="Next Page"
+            >
+              <span>Next</span>
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+
+            {/* Go to page form */}
+            <form onSubmit={handleGoToPage} className="flex items-center gap-1 ml-1 sm:ml-2">
+              <span className="text-[11px] text-slate-500 dark:text-slate-400">Go to:</span>
+              <input
+                type="number"
+                min={1}
+                max={totalPages}
+                value={goToPageInput}
+                onChange={(e) => setGoToPageInput(e.target.value)}
+                placeholder={`${safePage}`}
+                className="w-12 h-8 px-1.5 text-center bg-white dark:bg-[#071b30] border border-slate-300 dark:border-[#1e436c] rounded-lg text-xs text-slate-900 dark:text-white font-mono focus:outline-none focus:border-blue-500"
+              />
+              <button
+                type="submit"
+                className="h-8 px-2 bg-slate-100 hover:bg-slate-200 dark:bg-[#0c2847] dark:hover:bg-[#12365e] border border-slate-300 dark:border-[#1e436c] text-slate-700 dark:text-slate-200 rounded-lg text-xs font-medium transition cursor-pointer"
+              >
+                Go
+              </button>
+            </form>
+          </div>
+        )}
       </div>
 
       {/* Footer Controls Bar Inside Card */}

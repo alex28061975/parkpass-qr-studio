@@ -13,7 +13,6 @@ import {
   Car,
   User,
   Ticket,
-  Clock,
   ShieldAlert,
   RotateCcw
 } from "lucide-react";
@@ -31,11 +30,9 @@ import {
   isDateRequiredOutsideValidWindow,
   getSpreadsheetMatchingAllocationsMap,
   extractRecordVoucherCode,
-  isRecordCancelled,
-  getRequestedPermitDateISO
+  isRecordCancelled
 } from "../utils/csvParser";
 import { checkIsRecordDispatched } from "../utils/dispatchUtils";
-import { isSupabaseConfigured } from "../lib/supabase";
 import { BlocklistPanel } from "./BlocklistPanel";
 
 interface TableViewProps {
@@ -80,6 +77,29 @@ export function TableView({
   const [feedback, setFeedback] = useState<string | null>(null);
   const [showBlocklist, setShowBlocklist] = useState<boolean>(false);
   const [isCleaning, setIsCleaning] = useState<boolean>(false);
+  const [tableDateFilter, setTableDateFilter] = useState<"ALL" | "TODAY" | "THIS_WEEK" | "THIS_MONTH" | "CUSTOM">("ALL");
+  const [tableCustomStartDate, setTableCustomStartDate] = useState("");
+  const [tableCustomEndDate, setTableCustomEndDate] = useState("");
+
+  const todayISO = useMemo(() => getTodayISO(), []);
+
+  const dateRanges = useMemo(() => {
+    const addCalendarDays = (iso: string, delta: number): string => {
+      const [year, month, day] = iso.split("-").map(Number);
+      const ref = new Date(year, month - 1, day);
+      ref.setDate(ref.getDate() + delta);
+      const y = ref.getFullYear();
+      const m = String(ref.getMonth() + 1).padStart(2, "0");
+      const d = String(ref.getDate()).padStart(2, "0");
+      return `${y}-${m}-${d}`;
+    };
+
+    return {
+      today: todayISO,
+      last7DaysStart: addCalendarDays(todayISO, -6),
+      last30DaysStart: addCalendarDays(todayISO, -29)
+    };
+  }, [todayISO]);
 
   const handleCleanDatabase = async () => {
     if (isCleaning) return;
@@ -123,28 +143,23 @@ export function TableView({
     return Array.from(sites);
   }, [database]);
 
-  // Filter records based on date range, search query, and hospital filter
   const filteredRecords = useMemo(() => {
     return sortedDatabase.filter(r => {
-      // Secondary in-memory Date Range Filter only when Supabase is not active
-      if (!isSupabaseConfigured() && dateRangeFilter && dateRangeFilter !== 'all') {
-        const days = dateRangeFilter === '7days' ? 7 : 30;
-        const rawDate = r.dateRequired || r.todayDate || r.createdAt || r.created_at;
-        if (rawDate) {
-          const iso = parseDateToISO(rawDate);
-          if (iso) {
-            const dateObj = new Date(iso + 'T00:00:00');
-            if (!isNaN(dateObj.getTime())) {
-              const now = new Date();
-              now.setHours(23, 59, 59, 999);
-              const cutoff = new Date(now);
-              cutoff.setDate(cutoff.getDate() - days);
-              cutoff.setHours(0, 0, 0, 0);
-              if (dateObj < cutoff) {
-                return false;
-              }
-            }
-          }
+      if (tableDateFilter !== "ALL") {
+        const recDate =
+          parseDateToISO(r.dateRequired || r.validFrom) ||
+          parseDateToISO(r.todayDate || r.createdAt || r.created_at);
+        if (!recDate) return false;
+
+        if (tableDateFilter === "TODAY") {
+          if (recDate !== todayISO) return false;
+        } else if (tableDateFilter === "THIS_WEEK") {
+          if (recDate < dateRanges.last7DaysStart || recDate > todayISO) return false;
+        } else if (tableDateFilter === "THIS_MONTH") {
+          if (recDate < dateRanges.last30DaysStart || recDate > todayISO) return false;
+        } else if (tableDateFilter === "CUSTOM") {
+          if (tableCustomStartDate && recDate < tableCustomStartDate) return false;
+          if (tableCustomEndDate && recDate > tableCustomEndDate) return false;
         }
       }
 
@@ -170,11 +185,11 @@ export function TableView({
         (r.voucherCode && r.voucherCode.toLowerCase().includes(query))
       );
     });
-  }, [sortedDatabase, searchQuery, selectedHospital, dateRangeFilter]);
+  }, [sortedDatabase, searchQuery, selectedHospital, tableDateFilter, tableCustomStartDate, tableCustomEndDate, todayISO, dateRanges]);
 
   const effectiveTotalCount = totalRecordsCount && totalRecordsCount > 0 ? totalRecordsCount : database.length;
-  const isFiltered = Boolean(searchQuery.trim() || selectedHospital !== "ALL");
-  const tableDisplayCount = (dateRangeFilter === 'all' && !isFiltered)
+  const isFiltered = Boolean(searchQuery.trim() || selectedHospital !== "ALL" || tableDateFilter !== "ALL");
+  const tableDisplayCount = (tableDateFilter === "ALL" && !isFiltered)
     ? effectiveTotalCount
     : filteredRecords.length;
 
@@ -248,20 +263,20 @@ export function TableView({
             type="button"
             onClick={handleCleanDatabase}
             disabled={isCleaning}
-            className="flex items-center gap-1.5 px-3 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-700 text-xs font-bold rounded-lg transition-all cursor-pointer shadow-xs active:scale-95 disabled:opacity-50"
+            className="flex items-center gap-1.5 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-bold rounded-lg transition-all cursor-pointer shadow-xs active:scale-95 disabled:opacity-50"
             title="Clean Database"
           >
-            <RotateCcw className={`w-3.5 h-3.5 text-blue-500 dark:text-blue-400 ${isCleaning ? "animate-spin" : ""}`} />
+            <RotateCcw className={`w-3.5 h-3.5 text-blue-400 ${isCleaning ? "animate-spin" : ""}`} />
             <span>{isCleaning ? "Cleaning..." : "Clean Database"}</span>
           </button>
 
           <button
             type="button"
             onClick={() => setShowBlocklist(true)}
-            className="flex items-center gap-1.5 px-3 py-2 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900/50 text-rose-700 dark:text-rose-300 border border-rose-300 dark:border-rose-800/60 text-xs font-bold rounded-lg transition-all cursor-pointer shadow-xs active:scale-95"
+            className="flex items-center gap-1.5 px-3 py-2 bg-rose-950/40 hover:bg-rose-900/50 text-rose-300 border border-rose-800/60 text-xs font-bold rounded-lg transition-all cursor-pointer shadow-xs active:scale-95"
             title="Manage Concessions Blocklist"
           >
-            <ShieldAlert className="w-3.5 h-3.5 text-rose-500 dark:text-rose-400" />
+            <ShieldAlert className="w-3.5 h-3.5 text-rose-400" />
             <span>Manage Blocklist</span>
           </button>
 
@@ -285,60 +300,87 @@ export function TableView({
         </div>
       )}
 
-      {/* Data Range Filter Bar */}
-      <div className="border border-gray-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 rounded-lg p-3 flex flex-wrap items-center justify-between gap-3">
-        {/* Data Range Selector (Left Side) */}
+      <div className="border border-slate-800 bg-slate-900/50 rounded-lg p-3 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2 text-xs">
-          <Clock className="w-4 h-4 text-[#005EB8] dark:text-blue-400 shrink-0" />
-          <span className="font-bold text-slate-700 dark:text-slate-300">Data Range:</span>
-          <div className="flex items-center gap-1 bg-white dark:bg-slate-950 p-1 rounded-md border border-gray-200 dark:border-slate-800 text-xs font-semibold">
-            <button
-              type="button"
-              onClick={() => onDateRangeFilterChange?.('7days')}
-              className={`px-3 py-1 rounded-md transition-all cursor-pointer text-xs ${
-                dateRangeFilter === '7days'
-                  ? "bg-[#005EB8] text-white font-bold shadow-xs"
-                  : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
-              }`}
+          <Calendar className="w-4 h-4 text-[#005EB8] dark:text-blue-400 shrink-0" />
+          <span className="font-bold text-slate-300">Date Filter</span>
+          <div className="relative">
+            <select
+              id="table-date-filter-dropdown"
+              value={tableDateFilter}
+              onChange={(e) => {
+                const next = e.target.value as "ALL" | "TODAY" | "THIS_WEEK" | "THIS_MONTH" | "CUSTOM";
+                setTableDateFilter(next);
+                if (next === "THIS_WEEK") {
+                  onDateRangeFilterChange?.("7days");
+                } else if (next === "THIS_MONTH") {
+                  onDateRangeFilterChange?.("30days");
+                } else {
+                  onDateRangeFilterChange?.("all");
+                }
+                if (next === "ALL") {
+                  setTableCustomStartDate("");
+                  setTableCustomEndDate("");
+                }
+              }}
+              className="h-8 min-w-[160px] px-3 pr-8 bg-slate-950 border border-slate-800 text-slate-200 rounded-md text-xs font-semibold focus:outline-none focus:border-[#005EB8] transition appearance-none cursor-pointer"
             >
-              Last 7 Days
-            </button>
-            <button
-              type="button"
-              onClick={() => onDateRangeFilterChange?.('30days')}
-              className={`px-3 py-1 rounded-md transition-all cursor-pointer text-xs ${
-                dateRangeFilter === '30days'
-                  ? "bg-[#005EB8] text-white font-bold shadow-xs"
-                  : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
-              }`}
-            >
-              Last 30 Days
-            </button>
-            <button
-              type="button"
-              onClick={() => onDateRangeFilterChange?.('all')}
-              className={`px-3 py-1 rounded-md transition-all cursor-pointer text-xs ${
-                dateRangeFilter === 'all'
-                  ? "bg-[#005EB8] text-white font-bold shadow-xs"
-                  : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
-              }`}
-            >
-              {isLoadingHistory ? "Loading..." : "All Time"}
-            </button>
+              <option value="TODAY">Today</option>
+              <option value="THIS_WEEK">This Week</option>
+              <option value="THIS_MONTH">This Month</option>
+              <option value="CUSTOM">Custom Range</option>
+              <option value="ALL">{isLoadingHistory ? "Loading..." : "All Time"}</option>
+            </select>
           </div>
         </div>
 
         {/* System Status & Metrics Badges (Right Side) */}
         <div className="flex items-center gap-2.5 text-xs font-mono">
-          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold text-[#005EB8] dark:text-blue-300 bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800/80">
+          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold text-[#005EB8] dark:text-blue-300 bg-blue-950/60 border border-blue-800/80">
             {tableDisplayCount.toLocaleString()} Records Loaded
           </span>
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 font-sans">
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold text-emerald-400 bg-emerald-950/40 border border-emerald-800/60 font-sans">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
             Sub-200ms
           </span>
         </div>
       </div>
+
+      {tableDateFilter === "CUSTOM" && (
+        <div className="flex flex-wrap items-center gap-3 p-2.5 bg-blue-50/70 dark:bg-[#0b2138] border border-blue-200 dark:border-[#183d63] rounded-xl text-xs animate-in fade-in">
+          <div className="flex items-center gap-1.5 font-semibold text-slate-700 dark:text-slate-300">
+            <Calendar className="w-3.5 h-3.5 text-[#005EB8] dark:text-[#38bdf8]" />
+            <span>Custom Date Range:</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">From:</label>
+            <input
+              type="date"
+              value={tableCustomStartDate}
+              onChange={(e) => setTableCustomStartDate(e.target.value)}
+              className="px-2.5 py-1 bg-white dark:bg-[#041222] border border-slate-300 dark:border-[#1b436c] rounded-lg text-slate-900 dark:text-white font-mono text-xs focus:outline-none focus:border-blue-500"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">To:</label>
+            <input
+              type="date"
+              value={tableCustomEndDate}
+              onChange={(e) => setTableCustomEndDate(e.target.value)}
+              className="px-2.5 py-1 bg-white dark:bg-[#041222] border border-slate-300 dark:border-[#1b436c] rounded-lg text-slate-900 dark:text-white font-mono text-xs focus:outline-none focus:border-blue-500"
+            />
+          </div>
+          {(tableCustomStartDate || tableCustomEndDate) && (
+            <button
+              type="button"
+              onClick={() => { setTableCustomStartDate(""); setTableCustomEndDate(""); }}
+              className="text-[11px] text-[#005EB8] hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-200 underline font-semibold cursor-pointer ml-1"
+            >
+              Reset Dates
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Filter and Search Bar */}
       <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-xl p-3 shadow-xs flex flex-col md:flex-row items-center justify-between gap-3">
@@ -417,7 +459,7 @@ export function TableView({
                   const cleanFormIdStr = formatFormId(r.formId !== undefined ? r.formId : r.id);
                   const recordKey = String(r.formId ?? r.id ?? idx);
                   const isDispatched = checkIsRecordDispatched(r, r.vrm, r.driverName, r.dateRequired, dispatchedKeys, unsentKeys);
-                  const effectiveProcessingDate = getRequestedPermitDateISO(r, processingDate) || processingDate || getTodayISO();
+                  const effectiveProcessingDate = processingDate || getTodayISO();
                   const isRecCancelled = isRecordCancelled(r, effectiveProcessingDate, database);
 
                   const allocatedCode = tableRecordCodeMap.get(recordKey);
@@ -428,7 +470,7 @@ export function TableView({
                     displayCode = "CANCELLED";
                   } else if (allocatedCode && allocatedCode !== "-") {
                     displayCode = allocatedCode;
-                  } else if (rawVoucherCode && rawVoucherCode.trim() !== "" && rawVoucherCode.trim().toUpperCase() !== "CANCELLED") {
+                  } else if (rawVoucherCode && rawVoucherCode.trim() !== "") {
                     displayCode = rawVoucherCode.trim();
                   }
 

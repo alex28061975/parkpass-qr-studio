@@ -42,9 +42,6 @@ export interface PermitData {
 }
 
 export const HOSPITAL_SITES = [
-  "Royal London Hospital",
   "Newham Hospital",
-  "Whipps Cross Hospital",
-  "Mile End Hospital",
-  "St Bartholomew's Hospital"
+  "Whipps Cross Hospital"
 ] as const;

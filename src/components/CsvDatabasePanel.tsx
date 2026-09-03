@@ -29,10 +29,7 @@ function toTitleCase(str: string): string {
 
 const HOSPITAL_SITES = [
   "Whipps Cross Hospital",
-  "Newham Hospital",
-  "Royal London Hospital",
-  "Mile End Hospital",
-  "St Bartholomew's Hospital"
+  "Newham Hospital"
 ];
 
 import { INITIAL_DEMO_CSV } from "../data/defaultCsv";
