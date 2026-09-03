@@ -1732,6 +1732,9 @@ export default function App() {
             onBulkEmail={handleBulkEmail}
             onClear={handleClear}
             onChangeFormData={handleUpdate}
+            dateRangeFilter={dateRangeFilter}
+            onDateRangeFilterChange={handleDateRangeFilterChange}
+            isLoadingHistory={isLoadingHistory}
           />
 
           <div id="print-card-wrapper" className="permit-card-engine" aria-hidden="true">

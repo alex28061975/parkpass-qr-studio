@@ -63,6 +63,9 @@ interface DispatchCentreProps {
   onBulkEmail?: () => void;
   onClear?: () => void;
   onChangeFormData?: (updates: any) => void;
+  dateRangeFilter?: '7days' | '30days' | 'all';
+  onDateRangeFilterChange?: (filter: '7days' | '30days' | 'all') => void;
+  isLoadingHistory?: boolean;
 }
 
 const formatDate = (dateStr?: string) => {
@@ -108,7 +111,9 @@ export function DispatchCentre({
   onUnsendRecord, 
   onBulkEmail,
   onClear,
-  onChangeFormData
+  onChangeFormData,
+  onDateRangeFilterChange,
+  isLoadingHistory
 }: DispatchCentreProps) {
   const [internalSearchQuery, setInternalSearchQuery] = useState("");
   const isControlled = searchQueryProp !== undefined;
@@ -780,6 +785,13 @@ export function DispatchCentre({
                 onChange={(e) => {
                   const next = e.target.value as "ALL" | "TODAY" | "THIS_WEEK" | "THIS_MONTH" | "CUSTOM";
                   setDateFilter(next);
+                  if (next === "THIS_WEEK") {
+                    onDateRangeFilterChange?.("7days");
+                  } else if (next === "THIS_MONTH") {
+                    onDateRangeFilterChange?.("30days");
+                  } else {
+                    onDateRangeFilterChange?.("all");
+                  }
                   if (next === "ALL") {
                     setCustomStartDate("");
                     setCustomEndDate("");
@@ -787,7 +799,7 @@ export function DispatchCentre({
                 }}
                 className="h-9.5 pl-3 pr-8 bg-slate-50 dark:bg-[#041222] border border-slate-300 dark:border-[#1b436c] text-slate-900 dark:text-slate-200 rounded-xl text-xs font-medium focus:outline-none focus:border-blue-500 transition appearance-none cursor-pointer"
               >
-                <option value="ALL">Date: All Time</option>
+                <option value="ALL">{isLoadingHistory ? "Loading..." : "Date: All Time"}</option>
                 <option value="TODAY">Today</option>
                 <option value="THIS_WEEK">This Week</option>
                 <option value="THIS_MONTH">This Month</option>
