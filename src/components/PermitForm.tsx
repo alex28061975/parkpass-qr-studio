@@ -172,11 +172,11 @@ export function PermitForm({
   const formattedValidTo = data.validTo ? formatDate(data.validTo) : (data.todayDate ? formatDate(addDays(data.todayDate, 6)) : "13/07/2026");
 
   // Common class strings for inputs and selects: 12px, font-weight: 400 (regular, not bold), compact styling
-  const inputClass = "w-full h-8 bg-[#041320] border border-[rgba(113,163,255,0.18)] text-white text-[12px] font-normal rounded-md px-2.5 py-1 focus:outline-none focus:border-[#1677FF] focus:ring-1 focus:ring-[#1677FF]/30 transition placeholder:text-[12px] placeholder:font-normal placeholder:text-[#B7D4FF]/40";
-  const selectClass = "w-full h-8 bg-[#041320] border border-[rgba(113,163,255,0.18)] text-white text-[12px] font-normal rounded-md px-2.5 py-1 appearance-none pr-7 focus:outline-none focus:border-[#1677FF] focus:ring-1 focus:ring-[#1677FF]/30 transition cursor-pointer";
+  const inputClass = "permit-form-input w-full h-8 text-[12px] font-normal rounded-md px-2.5 py-1 focus:outline-none transition placeholder:text-[12px] placeholder:font-normal";
+  const selectClass = "permit-form-select w-full h-8 text-[12px] font-normal rounded-md px-2.5 py-1 appearance-none pr-7 focus:outline-none transition cursor-pointer";
 
   return (
-    <section className="w-full h-full bg-gradient-to-b from-[#061524] to-[#081B31] border border-[rgba(133,189,255,0.15)] rounded-xl p-3 md:p-3.5 shadow-xl text-white flex flex-col gap-2.5">
+    <section className="permit-form-shell w-full h-full rounded-xl p-3 md:p-3.5 flex flex-col gap-2.5">
       
       {/* 1. Section Header */}
       <div className="flex items-center justify-between pb-2 border-b border-[rgba(113,163,255,0.15)]">

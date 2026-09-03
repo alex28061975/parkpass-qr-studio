@@ -766,6 +766,61 @@ button { -webkit-tap-highlight-color: transparent; }
   .voucher-controls { grid-template-columns:1fr; }
 }
 
+
+/* Light-mode correction for the permit form. The form previously used hard-coded
+   dark Tailwind colours, which made it remain dark when the app was in light mode. */
+.permit-form-shell {
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+  border: 1px solid #dbe4ef;
+  color: #0f172a;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08);
+  transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.permit-form-input,
+.permit-form-select {
+  background: #ffffff !important;
+  border: 1px solid #cbd5e1 !important;
+  color: #0f172a !important;
+  box-shadow: none;
+}
+.permit-form-input::placeholder { color: #94a3b8 !important; }
+.permit-form-input:focus,
+.permit-form-select:focus {
+  border-color: #1677ff !important;
+  box-shadow: 0 0 0 2px rgba(22, 119, 255, 0.12);
+}
+.permit-form-select option {
+  background: #ffffff;
+  color: #0f172a;
+}
+
+/* The component still contains a few legacy dark utility classes; neutralise
+   only those utilities inside this form while preserving their dark-mode look. */
+:root:not(.dark) .permit-form-shell .text-white { color: #0f172a !important; }
+:root:not(.dark) .permit-form-shell .text-\[\#B7D4FF\] { color: #005eb8 !important; }
+:root:not(.dark) .permit-form-shell .bg-\[\#041320\] { background: #ffffff !important; }
+:root:not(.dark) .permit-form-shell .border-\[rgba\(113\,163\,255\,0.18\)\] { border-color: #cbd5e1 !important; }
+:root:not(.dark) .permit-form-shell .border-\[rgba\(113\,163\,255\,0.15\)\] { border-color: #e2e8f0 !important; }
+:root:not(.dark) .permit-form-shell .text-emerald-900 { color: #047857 !important; }
+:root:not(.dark) .permit-form-shell .text-gray-800 { color: #1f2937 !important; }
+:root:not(.dark) .permit-form-shell .bg-emerald-50\/80 { background: rgba(236, 253, 245, 0.9) !important; }
+
+.dark .permit-form-shell {
+  background: linear-gradient(180deg, #061524 0%, #081b31 100%);
+  border-color: rgba(133, 189, 255, 0.15);
+  color: #ffffff;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.28);
+}
+.dark .permit-form-input,
+.dark .permit-form-select {
+  background: #041320 !important;
+  border-color: rgba(113, 163, 255, 0.18) !important;
+  color: #ffffff !important;
+}
+.dark .permit-form-input::placeholder { color: rgba(183, 212, 255, 0.4) !important; }
+.dark .permit-form-select option { background: #041320; color: #ffffff; }
+
 /* Pixel-match refinement for Designer.png (1536px desktop reference) */
 .park-app { padding: 20px 20px 28px; }
 
