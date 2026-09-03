@@ -225,9 +225,15 @@ export interface CsvPermitRecord {
 
 export function getNumericFormId(record: CsvPermitRecord): number {
   const val = record.formId !== undefined && record.formId !== null && record.formId !== "" ? record.formId : record.id;
+  if (typeof val === "number" && !isNaN(val)) return Math.floor(val);
   const formatted = formatFormId(val);
-  const num = parseInt(formatted.replace(/\D/g, ""), 10);
-  return isNaN(num) ? 0 : num;
+  if (!formatted || formatted === "-") return 0;
+  const match = String(formatted).match(/\d+/);
+  if (match) {
+    const num = parseInt(match[0], 10);
+    return isNaN(num) ? 0 : num;
+  }
+  return 0;
 }
 
 export function sortRecordsBySubmissionTimeDesc(records: CsvPermitRecord[]): CsvPermitRecord[] {
@@ -252,7 +258,31 @@ export function sortRecordsBySubmissionTimeDesc(records: CsvPermitRecord[]): Csv
 }
 
 export function sortRecordsByFormIdDesc(records: CsvPermitRecord[]): CsvPermitRecord[] {
-  return sortRecordsBySubmissionTimeDesc(records);
+  return [...records].sort((a, b) => {
+    const idA = getNumericFormId(a);
+    const idB = getNumericFormId(b);
+    if (idA !== idB) {
+      return idB - idA; // Highest number first
+    }
+
+    // Tie-breaker: submission time ms descending
+    const timeA = extractRecordSubmissionTimeMs(a);
+    const timeB = extractRecordSubmissionTimeMs(b);
+    if (timeA > 0 && timeB > 0 && timeA !== timeB) {
+      return timeB - timeA;
+    }
+    if (timeA > 0 && (!timeB || timeB === 0)) return -1;
+    if (timeB > 0 && (!timeA || timeA === 0)) return 1;
+
+    // Secondary fallback: date required descending
+    const dateA = parseDateToISO(a.dateRequired || a.validFrom || "");
+    const dateB = parseDateToISO(b.dateRequired || b.validFrom || "");
+    if (dateA && dateB && dateA !== dateB) {
+      return dateB.localeCompare(dateA);
+    }
+
+    return 0;
+  });
 }
 
 export function sortRecordsByFormIdAsc(records: CsvPermitRecord[]): CsvPermitRecord[] {

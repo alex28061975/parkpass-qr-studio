@@ -248,20 +248,20 @@ export function TableView({
             type="button"
             onClick={handleCleanDatabase}
             disabled={isCleaning}
-            className="flex items-center gap-1.5 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-bold rounded-lg transition-all cursor-pointer shadow-xs active:scale-95 disabled:opacity-50"
+            className="flex items-center gap-1.5 px-3 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-700 text-xs font-bold rounded-lg transition-all cursor-pointer shadow-xs active:scale-95 disabled:opacity-50"
             title="Clean Database"
           >
-            <RotateCcw className={`w-3.5 h-3.5 text-blue-400 ${isCleaning ? "animate-spin" : ""}`} />
+            <RotateCcw className={`w-3.5 h-3.5 text-blue-500 dark:text-blue-400 ${isCleaning ? "animate-spin" : ""}`} />
             <span>{isCleaning ? "Cleaning..." : "Clean Database"}</span>
           </button>
 
           <button
             type="button"
             onClick={() => setShowBlocklist(true)}
-            className="flex items-center gap-1.5 px-3 py-2 bg-rose-950/40 hover:bg-rose-900/50 text-rose-300 border border-rose-800/60 text-xs font-bold rounded-lg transition-all cursor-pointer shadow-xs active:scale-95"
+            className="flex items-center gap-1.5 px-3 py-2 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900/50 text-rose-700 dark:text-rose-300 border border-rose-300 dark:border-rose-800/60 text-xs font-bold rounded-lg transition-all cursor-pointer shadow-xs active:scale-95"
             title="Manage Concessions Blocklist"
           >
-            <ShieldAlert className="w-3.5 h-3.5 text-rose-400" />
+            <ShieldAlert className="w-3.5 h-3.5 text-rose-500 dark:text-rose-400" />
             <span>Manage Blocklist</span>
           </button>
 
@@ -286,19 +286,19 @@ export function TableView({
       )}
 
       {/* Data Range Filter Bar */}
-      <div className="border border-slate-800 bg-slate-900/50 rounded-lg p-3 flex flex-wrap items-center justify-between gap-3">
+      <div className="border border-gray-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 rounded-lg p-3 flex flex-wrap items-center justify-between gap-3">
         {/* Data Range Selector (Left Side) */}
         <div className="flex items-center gap-2 text-xs">
           <Clock className="w-4 h-4 text-[#005EB8] dark:text-blue-400 shrink-0" />
-          <span className="font-bold text-slate-300">Data Range:</span>
-          <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-md border border-slate-800 text-xs font-semibold">
+          <span className="font-bold text-slate-700 dark:text-slate-300">Data Range:</span>
+          <div className="flex items-center gap-1 bg-white dark:bg-slate-950 p-1 rounded-md border border-gray-200 dark:border-slate-800 text-xs font-semibold">
             <button
               type="button"
               onClick={() => onDateRangeFilterChange?.('7days')}
               className={`px-3 py-1 rounded-md transition-all cursor-pointer text-xs ${
                 dateRangeFilter === '7days'
                   ? "bg-[#005EB8] text-white font-bold shadow-xs"
-                  : "text-slate-400 hover:text-white"
+                  : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
               }`}
             >
               Last 7 Days
@@ -309,7 +309,7 @@ export function TableView({
               className={`px-3 py-1 rounded-md transition-all cursor-pointer text-xs ${
                 dateRangeFilter === '30days'
                   ? "bg-[#005EB8] text-white font-bold shadow-xs"
-                  : "text-slate-400 hover:text-white"
+                  : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
               }`}
             >
               Last 30 Days
@@ -320,7 +320,7 @@ export function TableView({
               className={`px-3 py-1 rounded-md transition-all cursor-pointer text-xs ${
                 dateRangeFilter === 'all'
                   ? "bg-[#005EB8] text-white font-bold shadow-xs"
-                  : "text-slate-400 hover:text-white"
+                  : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
               }`}
             >
               {isLoadingHistory ? "Loading..." : "All Time"}
@@ -330,10 +330,10 @@ export function TableView({
 
         {/* System Status & Metrics Badges (Right Side) */}
         <div className="flex items-center gap-2.5 text-xs font-mono">
-          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold text-[#005EB8] dark:text-blue-300 bg-blue-950/60 border border-blue-800/80">
+          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold text-[#005EB8] dark:text-blue-300 bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800/80">
             {tableDisplayCount.toLocaleString()} Records Loaded
           </span>
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold text-emerald-400 bg-emerald-950/40 border border-emerald-800/60 font-sans">
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 font-sans">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
             Sub-200ms
           </span>

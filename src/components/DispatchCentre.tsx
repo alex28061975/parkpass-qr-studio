@@ -27,7 +27,9 @@ import {
   checkIsBlockedDuplicate,
   exportToExcel,
   isRecordCancelled,
-  sortRecordsBySubmissionTimeDesc,
+  sortRecordsByFormIdDesc,
+  getNumericFormId,
+  extractRecordSubmissionTimeMs,
   getRequestedPermitDateISO
 } from "../utils/csvParser";
 import { checkIsRecordDispatched, getRecordKeys } from "../utils/dispatchUtils";
@@ -123,9 +125,9 @@ export function DispatchCentre({
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [sortDirection, setSortDirection] = useState<SortDirection>(null);
 
-  // Base records: always shows all records (sorted by newest submission time / createdAt descending)
+  // Base records: always shows all records sorted by Form ID (#) descending (highest number first)
   const baseRecords = useMemo(() => {
-    return sortRecordsBySubmissionTimeDesc(database);
+    return sortRecordsByFormIdDesc(database);
   }, [database]);
 
   // Compute dynamic voucher allocations map matching Matching Helper exactly
@@ -231,9 +233,15 @@ export function DispatchCentre({
 
       switch (sortKey) {
         case "id": {
-          const aId = Number(String(a.formId ?? a.id ?? aIdx + 1).replace(/[^0-9]/g, "")) || (aIdx + 1);
-          const bId = Number(String(b.formId ?? b.id ?? bIdx + 1).replace(/[^0-9]/g, "")) || (bIdx + 1);
-          comparison = aId - bId;
+          const aId = getNumericFormId(a) || (aIdx + 1);
+          const bId = getNumericFormId(b) || (bIdx + 1);
+          if (aId !== bId) {
+            comparison = aId - bId;
+          } else {
+            const timeA = extractRecordSubmissionTimeMs(a);
+            const timeB = extractRecordSubmissionTimeMs(b);
+            comparison = timeA - timeB;
+          }
           break;
         }
         case "qr": {
@@ -333,17 +341,17 @@ export function DispatchCentre({
 
   const handleSort = (key: SortKey) => {
     if (sortKey === key) {
-      if (sortDirection === "asc") {
-        setSortDirection("desc");
-      } else if (sortDirection === "desc") {
+      if (sortDirection === "desc") {
+        setSortDirection("asc");
+      } else if (sortDirection === "asc") {
         setSortKey(null);
         setSortDirection(null);
       } else {
-        setSortDirection("asc");
+        setSortDirection("desc");
       }
     } else {
       setSortKey(key);
-      setSortDirection("asc");
+      setSortDirection(key === "id" ? "desc" : "asc");
     }
   };
 
@@ -399,24 +407,24 @@ export function DispatchCentre({
   };
 
   return (
-    <section className="w-full bg-[#07172b] border border-[#183a5e] rounded-2xl p-4 md:p-6 shadow-2xl text-slate-200">
+    <section className="w-full bg-white dark:bg-[#07172b] border border-slate-200 dark:border-[#183a5e] rounded-2xl p-4 md:p-6 shadow-sm dark:shadow-2xl text-slate-800 dark:text-slate-200 transition-colors">
       {/* Top Header Section */}
-      <div className="flex flex-col gap-3 pb-4 border-b border-[#143252]">
+      <div className="flex flex-col gap-3 pb-4 border-b border-slate-200 dark:border-[#143252]">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-full bg-blue-600 flex items-center justify-center shadow-lg shadow-blue-500/20 text-white shrink-0">
               <Send className="w-5 h-5 -rotate-45" />
             </div>
             <div>
-              <h2 className="text-xl font-bold text-white tracking-tight">Permit Dispatch Centre</h2>
-              <p className="text-xs text-slate-400 font-normal mt-0.5">Select recipients and dispatch emails via Outlook</p>
+              <h2 className="text-xl font-bold text-slate-900 dark:text-white tracking-tight">Permit Dispatch Centre</h2>
+              <p className="text-xs text-slate-500 dark:text-slate-400 font-normal mt-0.5">Select recipients and dispatch emails via Outlook</p>
             </div>
           </div>
 
           <div className="flex items-center gap-2 self-start sm:self-auto">
             {/* Outlook info badge */}
-            <div className="flex items-center gap-1.5 bg-[#0b2138] border border-[#1b436c] text-[#93c5fd] text-xs px-3 py-1.5 rounded-lg select-none">
-              <Mail className="w-3.5 h-3.5 text-blue-400" />
+            <div className="flex items-center gap-1.5 bg-blue-50 dark:bg-[#0b2138] border border-blue-200 dark:border-[#1b436c] text-blue-700 dark:text-[#93c5fd] text-xs px-3 py-1.5 rounded-lg select-none">
+              <Mail className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
               <span>Select recipients and dispatch emails via Outlook</span>
             </div>
           </div>
@@ -424,20 +432,20 @@ export function DispatchCentre({
 
         {/* Header Search Bar */}
         <div className="relative w-full">
-          <div className="flex items-center w-full bg-[#041222] border border-[#1b436c] focus-within:border-[#1677FF] focus-within:ring-2 focus-within:ring-[#1677FF]/20 rounded-xl px-3.5 py-2 transition shadow-inner">
-            <Search className="w-4 h-4 text-blue-400 shrink-0 mr-2.5" />
+          <div className="flex items-center w-full bg-slate-50 dark:bg-[#041222] border border-slate-300 dark:border-[#1b436c] focus-within:border-blue-500 dark:focus-within:border-[#1677FF] focus-within:ring-2 focus-within:ring-blue-500/20 dark:focus-within:ring-[#1677FF]/20 rounded-xl px-3.5 py-2 transition shadow-inner">
+            <Search className="w-4 h-4 text-blue-500 dark:text-blue-400 shrink-0 mr-2.5" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => handleSearchChange(e.target.value)}
               placeholder="Search by driver's name, number plate (VRM), or hospital..."
-              className="w-full bg-transparent text-sm text-white placeholder-slate-400 focus:outline-none font-normal"
+              className="w-full bg-transparent text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none font-normal"
             />
             {searchQuery && (
               <button
                 type="button"
                 onClick={() => handleSearchChange("")}
-                className="text-slate-400 hover:text-white p-1 rounded-md transition"
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-white p-1 rounded-md transition"
                 title="Clear search"
               >
                 <X className="w-3.5 h-3.5" />
@@ -445,7 +453,7 @@ export function DispatchCentre({
             )}
           </div>
           {searchQuery && (
-            <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-[11px] text-slate-400 bg-[#081f38] px-2 py-0.5 rounded border border-[#194068] hidden md:block">
+            <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-[11px] text-slate-600 dark:text-slate-400 bg-slate-200/80 dark:bg-[#081f38] px-2 py-0.5 rounded border border-slate-300 dark:border-[#194068] hidden md:block">
               {filteredRecords.length} {filteredRecords.length === 1 ? 'match' : 'matches'}
             </div>
           )}
@@ -453,17 +461,17 @@ export function DispatchCentre({
       </div>
 
       {/* Main Table Section */}
-      <div className="w-full mt-4 border border-[#163657] rounded-xl bg-[#061424] overflow-hidden shadow-inner">
+      <div className="w-full mt-4 border border-slate-200 dark:border-[#163657] rounded-xl bg-white dark:bg-[#061424] overflow-hidden shadow-xs dark:shadow-inner">
         <div className="overflow-x-auto w-full">
           <table className="min-w-[1180px] w-full text-xs text-left border-collapse table-auto">
-            <thead className="bg-[#081b30] border-b border-[#163657] text-slate-300 font-bold uppercase tracking-wider text-[11px] sticky top-0 z-10 select-none">
+            <thead className="bg-slate-50 dark:bg-[#081b30] border-b border-slate-200 dark:border-[#163657] text-slate-600 dark:text-slate-300 font-bold uppercase tracking-wider text-[11px] sticky top-0 z-10 select-none">
               <tr>
                 {/* # Column */}
                 <th 
                   scope="col" 
                   onClick={() => handleSort("id")}
-                  className={`py-3 px-3 text-center w-12 border-r border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none ${
-                    sortKey === "id" ? "bg-[#0c2847] text-[#38bdf8] font-black" : "hover:bg-[#0b2440] hover:text-white"
+                  className={`py-3 px-3 text-center w-12 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none ${
+                    sortKey === "id" ? "bg-blue-50 text-blue-700 dark:bg-[#0c2847] dark:text-[#38bdf8] font-black" : "hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-[#0b2440] dark:hover:text-white"
                   }`}
                   title="Click to sort by Number"
                 >
@@ -477,8 +485,8 @@ export function DispatchCentre({
                 <th 
                   scope="col" 
                   onClick={() => handleSort("qr")}
-                  className={`py-3 px-3 border-r border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none ${
-                    sortKey === "qr" ? "bg-[#0c2847] text-[#38bdf8] font-black" : "hover:bg-[#0b2440] hover:text-white"
+                  className={`py-3 px-3 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none ${
+                    sortKey === "qr" ? "bg-blue-50 text-blue-700 dark:bg-[#0c2847] dark:text-[#38bdf8] font-black" : "hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-[#0b2440] dark:hover:text-white"
                   }`}
                   title="Click to sort by QR Code status"
                 >
@@ -492,8 +500,8 @@ export function DispatchCentre({
                 <th 
                   scope="col" 
                   onClick={() => handleSort("driverName")}
-                  className={`py-3 px-3 border-r border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none ${
-                    sortKey === "driverName" ? "bg-[#0c2847] text-[#38bdf8] font-black" : "hover:bg-[#0b2440] hover:text-white"
+                  className={`py-3 px-3 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none ${
+                    sortKey === "driverName" ? "bg-blue-50 text-blue-700 dark:bg-[#0c2847] dark:text-[#38bdf8] font-black" : "hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-[#0b2440] dark:hover:text-white"
                   }`}
                   title="Click to sort by Driver's Name"
                 >
@@ -507,8 +515,8 @@ export function DispatchCentre({
                 <th 
                   scope="col" 
                   onClick={() => handleSort("vrm")}
-                  className={`py-3 px-3 border-r border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none ${
-                    sortKey === "vrm" ? "bg-[#0c2847] text-[#38bdf8] font-black" : "hover:bg-[#0b2440] hover:text-white"
+                  className={`py-3 px-3 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none ${
+                    sortKey === "vrm" ? "bg-blue-50 text-blue-700 dark:bg-[#0c2847] dark:text-[#38bdf8] font-black" : "hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-[#0b2440] dark:hover:text-white"
                   }`}
                   title="Click to sort by VRN / Vehicle Reg"
                 >
@@ -522,8 +530,8 @@ export function DispatchCentre({
                 <th 
                   scope="col" 
                   onClick={() => handleSort("voucherCode")}
-                  className={`py-3 px-3 border-r border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none ${
-                    sortKey === "voucherCode" ? "bg-[#0c2847] text-[#38bdf8] font-black" : "hover:bg-[#0b2440] hover:text-white"
+                  className={`py-3 px-3 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none ${
+                    sortKey === "voucherCode" ? "bg-blue-50 text-blue-700 dark:bg-[#0c2847] dark:text-[#38bdf8] font-black" : "hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-[#0b2440] dark:hover:text-white"
                   }`}
                   title="Click to sort by Voucher Code"
                 >
@@ -537,8 +545,8 @@ export function DispatchCentre({
                 <th 
                   scope="col" 
                   onClick={() => handleSort("validFrom")}
-                  className={`py-3 px-3 border-r border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none ${
-                    sortKey === "validFrom" ? "bg-[#0c2847] text-[#38bdf8] font-black" : "hover:bg-[#0b2440] hover:text-white"
+                  className={`py-3 px-3 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none ${
+                    sortKey === "validFrom" ? "bg-blue-50 text-blue-700 dark:bg-[#0c2847] dark:text-[#38bdf8] font-black" : "hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-[#0b2440] dark:hover:text-white"
                   }`}
                   title="Click to sort by Valid From date"
                 >
@@ -552,8 +560,8 @@ export function DispatchCentre({
                 <th 
                   scope="col" 
                   onClick={() => handleSort("validTo")}
-                  className={`py-3 px-3 border-r border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none ${
-                    sortKey === "validTo" ? "bg-[#0c2847] text-[#38bdf8] font-black" : "hover:bg-[#0b2440] hover:text-white"
+                  className={`py-3 px-3 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none ${
+                    sortKey === "validTo" ? "bg-blue-50 text-blue-700 dark:bg-[#0c2847] dark:text-[#38bdf8] font-black" : "hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-[#0b2440] dark:hover:text-white"
                   }`}
                   title="Click to sort by Valid To date"
                 >
@@ -567,8 +575,8 @@ export function DispatchCentre({
                 <th 
                   scope="col" 
                   onClick={() => handleSort("ward")}
-                  className={`py-3 px-3 border-r border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none ${
-                    sortKey === "ward" ? "bg-[#0c2847] text-[#38bdf8] font-black" : "hover:bg-[#0b2440] hover:text-white"
+                  className={`py-3 px-3 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none ${
+                    sortKey === "ward" ? "bg-blue-50 text-blue-700 dark:bg-[#0c2847] dark:text-[#38bdf8] font-black" : "hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-[#0b2440] dark:hover:text-white"
                   }`}
                   title="Click to sort by Ward"
                 >
@@ -582,8 +590,8 @@ export function DispatchCentre({
                 <th 
                   scope="col" 
                   onClick={() => handleSort("hospital")}
-                  className={`py-3 px-3.5 border-r border-[#143252]/50 whitespace-nowrap min-w-[185px] cursor-pointer transition-colors group select-none ${
-                    sortKey === "hospital" ? "bg-[#0c2847] text-[#38bdf8] font-black" : "hover:bg-[#0b2440] hover:text-white"
+                  className={`py-3 px-3.5 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap min-w-[185px] cursor-pointer transition-colors group select-none ${
+                    sortKey === "hospital" ? "bg-blue-50 text-blue-700 dark:bg-[#0c2847] dark:text-[#38bdf8] font-black" : "hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-[#0b2440] dark:hover:text-white"
                   }`}
                   title="Click to sort by Hospital Site"
                 >
@@ -597,8 +605,8 @@ export function DispatchCentre({
                 <th 
                   scope="col" 
                   onClick={() => handleSort("status")}
-                  className={`py-3 px-3 text-center border-r border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none ${
-                    sortKey === "status" ? "bg-[#0c2847] text-[#38bdf8] font-black" : "hover:bg-[#0b2440] hover:text-white"
+                  className={`py-3 px-3 text-center border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none ${
+                    sortKey === "status" ? "bg-blue-50 text-blue-700 dark:bg-[#0c2847] dark:text-[#38bdf8] font-black" : "hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-[#0b2440] dark:hover:text-white"
                   }`}
                   title="Click to sort by Status"
                 >
@@ -613,7 +621,7 @@ export function DispatchCentre({
                   scope="col" 
                   onClick={() => handleSort("actions")}
                   className={`py-3 px-3 text-center whitespace-nowrap cursor-pointer transition-colors group select-none ${
-                    sortKey === "actions" ? "bg-[#0c2847] text-[#38bdf8] font-black" : "hover:bg-[#0b2440] hover:text-white"
+                    sortKey === "actions" ? "bg-blue-50 text-blue-700 dark:bg-[#0c2847] dark:text-[#38bdf8] font-black" : "hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-[#0b2440] dark:hover:text-white"
                   }`}
                   title="Click to sort by Action state"
                 >
@@ -624,7 +632,7 @@ export function DispatchCentre({
                 </th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-[#102947]">
+            <tbody className="divide-y divide-slate-100 dark:divide-[#102947]">
               {filteredRecords.map((record, index) => {
                 const recordIso = parseDateToISO(record.dateRequired || record.validFrom);
                 const expiresIso = recordIso ? addDays(recordIso, 6) : "";
@@ -674,92 +682,92 @@ export function DispatchCentre({
                   <tr 
                     key={`dispatch_${rowKey}_${index}`}
                     onClick={() => onSelectRecord(record)}
-                    className="hover:bg-[#0c233d]/70 transition-colors cursor-pointer text-slate-200"
+                    className="hover:bg-blue-50/50 dark:hover:bg-[#0c233d]/70 transition-colors cursor-pointer text-slate-800 dark:text-slate-200"
                   >
                     {/* 1. # Column */}
-                    <td className="py-3 px-3 text-center text-slate-400 font-mono font-medium border-r border-[#102947]/60 whitespace-nowrap">
+                    <td className="py-3 px-3 text-center text-slate-500 dark:text-slate-400 font-mono font-medium border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap">
                       {excelId}
                     </td>
 
                     {/* 2. QR Code Column */}
-                    <td className="py-3 px-3 border-r border-[#102947]/60 whitespace-nowrap">
+                    <td className="py-3 px-3 border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap">
                       {isCancelled ? (
-                        <span className="text-[#FF453A] font-semibold text-xs tracking-wider">
+                        <span className="text-red-600 dark:text-[#FF453A] font-semibold text-xs tracking-wider">
                           CANCELLED
                         </span>
                       ) : (
                         <button 
                           type="button" 
                           onClick={(e) => { e.stopPropagation(); onSelectRecord(record); }} 
-                          className="inline-flex items-center gap-1.5 text-xs text-[#38bdf8] hover:text-[#7dd3fc] font-medium transition-colors cursor-pointer"
+                          className="inline-flex items-center gap-1.5 text-xs text-blue-600 dark:text-[#38bdf8] hover:text-blue-800 dark:hover:text-[#7dd3fc] font-medium transition-colors cursor-pointer"
                           title="Open QR Permit"
                         >
-                          <QrCode className="w-3.5 h-3.5 text-[#38bdf8]" />
+                          <QrCode className="w-3.5 h-3.5 text-blue-600 dark:text-[#38bdf8]" />
                           <span>QR Code</span>
                         </button>
                       )}
                     </td>
 
                     {/* 3. Driver's Name Column */}
-                    <td className="py-3 px-3 font-medium text-white border-r border-[#102947]/60 whitespace-nowrap">
+                    <td className="py-3 px-3 font-medium text-slate-900 dark:text-white border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap">
                       {record.driverName || "-"}
                     </td>
 
                     {/* 4. VRN Column */}
-                    <td className="py-3 px-3 font-mono font-medium text-white uppercase tracking-wider border-r border-[#102947]/60 whitespace-nowrap">
+                    <td className="py-3 px-3 font-mono font-medium text-slate-900 dark:text-white uppercase tracking-wider border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap">
                       {record.vrm ? record.vrm.toUpperCase() : "-"}
                     </td>
 
                     {/* 5. VOUCHERCODE Column */}
-                    <td className="py-3 px-3 font-mono border-r border-[#102947]/60 whitespace-nowrap">
+                    <td className="py-3 px-3 font-mono border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap">
                       {isCancelled ? (
-                        <span className="text-[#FF453A] font-semibold tracking-wider">
+                        <span className="text-red-600 dark:text-[#FF453A] font-semibold tracking-wider">
                           CANCELLED
                         </span>
                       ) : (
-                        <span className="text-slate-200">
+                        <span className="text-slate-800 dark:text-slate-200">
                           {displayCode || "-"}
                         </span>
                       )}
                     </td>
 
                     {/* 6. VALID FROM Column */}
-                    <td className="py-3 px-3 font-mono text-slate-200 border-r border-[#102947]/60 whitespace-nowrap">
+                    <td className="py-3 px-3 font-mono text-slate-700 dark:text-slate-200 border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap">
                       {formatDate(record.dateRequired || record.validFrom)}
                     </td>
 
                     {/* 7. VALID TO Column */}
-                    <td className="py-3 px-3 font-mono text-slate-200 border-r border-[#102947]/60 whitespace-nowrap">
+                    <td className="py-3 px-3 font-mono text-slate-700 dark:text-slate-200 border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap">
                       {formatDate(expiresIso)}
                     </td>
 
                     {/* 8. WARD Column */}
-                    <td className="py-3 px-3 text-slate-200 border-r border-[#102947]/60 whitespace-nowrap">
+                    <td className="py-3 px-3 text-slate-700 dark:text-slate-200 border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap">
                       {record.ward || "-"}
                     </td>
 
                     {/* 9. HOSPITAL Column */}
-                    <td className="py-3 px-3.5 text-slate-200 border-r border-[#102947]/60 whitespace-nowrap min-w-[185px]">
+                    <td className="py-3 px-3.5 text-slate-700 dark:text-slate-200 border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap min-w-[185px]">
                       {hospitalDisplay}
                     </td>
 
                     {/* 10. STATUS Column (Never displays CANCELLED - only SENT, UNSENT, or PENDING) */}
-                    <td className="py-3 px-3 text-center border-r border-[#102947]/60 select-none whitespace-nowrap">
+                    <td className="py-3 px-3 text-center border-r border-slate-100 dark:border-[#102947]/60 select-none whitespace-nowrap">
                       {replacementPending ? (
-                        <span className="border border-[#a855f7]/40 bg-[#a855f7]/15 text-[#c084fc] font-bold px-2.5 py-0.5 rounded text-[10px] tracking-wider uppercase inline-flex items-center justify-center whitespace-nowrap">
+                        <span className="border border-purple-300 dark:border-[#a855f7]/40 bg-purple-50 dark:bg-[#a855f7]/15 text-purple-700 dark:text-[#c084fc] font-bold px-2.5 py-0.5 rounded text-[10px] tracking-wider uppercase inline-flex items-center justify-center whitespace-nowrap">
                           REPLACEMENT
                         </span>
                       ) : isDispatched ? (
-                        <span className="border border-[#32D74B]/40 bg-[#32D74B]/15 text-[#32D74B] font-bold px-2.5 py-0.5 rounded text-[10px] tracking-wider uppercase inline-flex items-center justify-center gap-1 whitespace-nowrap">
+                        <span className="border border-emerald-300 dark:border-[#32D74B]/40 bg-emerald-50 dark:bg-[#32D74B]/15 text-emerald-700 dark:text-[#32D74B] font-bold px-2.5 py-0.5 rounded text-[10px] tracking-wider uppercase inline-flex items-center justify-center gap-1 whitespace-nowrap">
                           <span>✅</span>
                           <span>SENT</span>
                         </span>
                       ) : isUnsent ? (
-                        <span className="border border-[#42A5F5]/40 bg-[#42A5F5]/15 text-[#42A5F5] font-bold px-2.5 py-0.5 rounded text-[10px] tracking-wider uppercase inline-flex items-center justify-center whitespace-nowrap">
+                        <span className="border border-sky-300 dark:border-[#42A5F5]/40 bg-sky-50 dark:bg-[#42A5F5]/15 text-sky-700 dark:text-[#42A5F5] font-bold px-2.5 py-0.5 rounded text-[10px] tracking-wider uppercase inline-flex items-center justify-center whitespace-nowrap">
                           UNSENT
                         </span>
                       ) : (
-                        <span className="border border-[#FF9F0A]/40 bg-[#FF9F0A]/15 text-[#FF9F0A] font-bold px-2.5 py-0.5 rounded text-[10px] tracking-wider uppercase inline-flex items-center justify-center whitespace-nowrap">
+                        <span className="border border-amber-300 dark:border-[#FF9F0A]/40 bg-amber-50 dark:bg-[#FF9F0A]/15 text-amber-700 dark:text-[#FF9F0A] font-bold px-2.5 py-0.5 rounded text-[10px] tracking-wider uppercase inline-flex items-center justify-center whitespace-nowrap">
                           PENDING
                         </span>
                       )}
@@ -791,9 +799,11 @@ export function DispatchCentre({
                           type="button" 
                           onClick={() => onSelectRecord(record)} 
                           className={`px-1.5 py-1 text-white transition-colors cursor-pointer ${
-                            isDispatched
-                              ? "bg-[#b91c1c] hover:bg-[#991b1b] border-l border-[#991b1b]"
-                              : "bg-[#1565d8] hover:bg-[#0f4eb0] border-l border-[#0f4eb0]"
+                            replacementPending
+                              ? "bg-[#6d28d9] hover:bg-[#5b21b6] border-l border-[#5b21b6]"
+                              : isDispatched
+                                ? "bg-[#b91c1c] hover:bg-[#991b1b] border-l border-[#991b1b]"
+                                : "bg-[#1565d8] hover:bg-[#0f4eb0] border-l border-[#0f4eb0]"
                           }`}
                           title="Select permit record"
                         >
@@ -806,7 +816,7 @@ export function DispatchCentre({
               })}
               {sortedRecords.length === 0 && (
                 <tr>
-                  <td colSpan={11} className="py-8 text-center text-slate-500 text-xs">
+                  <td colSpan={11} className="py-8 text-center text-slate-400 dark:text-slate-500 text-xs">
                     No matching records found for active date {formatDate(processingDate)}.
                   </td>
                 </tr>
@@ -817,34 +827,34 @@ export function DispatchCentre({
       </div>
 
       {/* Footer Controls Bar Inside Card */}
-      <div className="bg-[#051322] border border-[#143252] rounded-xl px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 mt-4 text-xs text-slate-300">
+      <div className="bg-slate-50 dark:bg-[#051322] border border-slate-200 dark:border-[#143252] rounded-xl px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 mt-4 text-xs text-slate-700 dark:text-slate-300">
         <div className="flex flex-wrap items-center gap-3">
           {/* Actions Button */}
           <div className="relative">
             <button 
               type="button"
               onClick={() => setActionsOpen(v => !v)}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-[#071b30] hover:bg-[#0d2745] border border-[#1e436c] rounded-md text-white font-medium text-xs transition-colors shadow-xs cursor-pointer"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-slate-100 dark:bg-[#071b30] dark:hover:bg-[#0d2745] border border-slate-300 dark:border-[#1e436c] rounded-md text-slate-800 dark:text-white font-medium text-xs transition-colors shadow-xs cursor-pointer"
             >
-              <Zap className="w-3.5 h-3.5 text-[#38bdf8]" />
+              <Zap className="w-3.5 h-3.5 text-blue-600 dark:text-[#38bdf8]" />
               <span>Actions</span>
               <ChevronDown className="w-3 h-3 text-slate-400" />
             </button>
             {actionsOpen && (
-              <div className="absolute left-0 bottom-full mb-1 w-48 bg-[#091e34] border border-[#1d436e] rounded-lg shadow-xl py-1 z-30 text-xs">
+              <div className="absolute left-0 bottom-full mb-1 w-48 bg-white dark:bg-[#091e34] border border-slate-200 dark:border-[#1d436e] rounded-lg shadow-xl py-1 z-30 text-xs">
                 <button 
                   type="button" 
                   onClick={() => { setActionsOpen(false); handleExportZip(); }} 
-                  className="w-full text-left px-3 py-2 text-slate-200 hover:bg-[#132e4d] flex items-center gap-2 cursor-pointer"
+                  className="w-full text-left px-3 py-2 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-[#132e4d] flex items-center gap-2 cursor-pointer"
                 >
-                  <Download className="w-3.5 h-3.5 text-emerald-400" /> Export Excel
+                  <Download className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" /> Export Excel
                 </button>
                 <button 
                   type="button" 
                   onClick={() => { setActionsOpen(false); handleExportZip(); }} 
-                  className="w-full text-left px-3 py-2 text-slate-200 hover:bg-[#132e4d] flex items-center gap-2 cursor-pointer"
+                  className="w-full text-left px-3 py-2 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-[#132e4d] flex items-center gap-2 cursor-pointer"
                 >
-                  <Archive className="w-3.5 h-3.5 text-amber-400" /> Export All ZIP
+                  <Archive className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" /> Export All ZIP
                 </button>
               </div>
             )}
@@ -854,7 +864,7 @@ export function DispatchCentre({
           <button 
             type="button"
             onClick={onClear}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-[#071b30] hover:bg-[#0d2745] border border-[#1e436c] rounded-md text-white font-medium text-xs transition-colors shadow-xs cursor-pointer"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-slate-100 dark:bg-[#071b30] dark:hover:bg-[#0d2745] border border-slate-300 dark:border-[#1e436c] rounded-md text-slate-800 dark:text-white font-medium text-xs transition-colors shadow-xs cursor-pointer"
           >
             <XSquare className="w-3.5 h-3.5 text-slate-400" />
             <span>Clear Form</span>
@@ -862,9 +872,9 @@ export function DispatchCentre({
 
           {/* Valid From */}
           <div className="flex items-center gap-1.5">
-            <Calendar className="w-3.5 h-3.5 text-[#38bdf8]" />
-            <span className="text-slate-300 font-medium">Valid From</span>
-            <span className="bg-[#071b30] border border-[#1e436c] px-2.5 py-1 rounded text-white font-mono text-xs flex items-center gap-1.5">
+            <Calendar className="w-3.5 h-3.5 text-blue-600 dark:text-[#38bdf8]" />
+            <span className="text-slate-700 dark:text-slate-300 font-medium">Valid From</span>
+            <span className="bg-white dark:bg-[#071b30] border border-slate-300 dark:border-[#1e436c] px-2.5 py-1 rounded text-slate-900 dark:text-white font-mono text-xs flex items-center gap-1.5 shadow-2xs">
               <Calendar className="w-3 h-3 text-slate-400" />
               {formatDate(validFromDisplay)}
             </span>
@@ -872,9 +882,9 @@ export function DispatchCentre({
 
           {/* Valid To */}
           <div className="flex items-center gap-1.5">
-            <Calendar className="w-3.5 h-3.5 text-[#38bdf8]" />
-            <span className="text-slate-300 font-medium">Valid To</span>
-            <span className="bg-[#071b30] border border-[#1e436c] px-2.5 py-1 rounded text-white font-mono text-xs flex items-center gap-1.5">
+            <Calendar className="w-3.5 h-3.5 text-blue-600 dark:text-[#38bdf8]" />
+            <span className="text-slate-700 dark:text-slate-300 font-medium">Valid To</span>
+            <span className="bg-white dark:bg-[#071b30] border border-slate-300 dark:border-[#1e436c] px-2.5 py-1 rounded text-slate-900 dark:text-white font-mono text-xs flex items-center gap-1.5 shadow-2xs">
               <Calendar className="w-3 h-3 text-slate-400" />
               {formatDate(validToDisplay)}
             </span>
@@ -882,25 +892,25 @@ export function DispatchCentre({
 
           {/* Ward / Department */}
           <div className="flex items-center gap-1.5">
-            <span className="text-slate-300 font-medium">Ward / Department</span>
+            <span className="text-slate-700 dark:text-slate-300 font-medium">Ward / Department</span>
             <div className="relative">
               <button 
-                type="button"
+                type="button" 
                 onClick={() => setWardDropdownOpen(v => !v)}
-                className="bg-[#071b30] hover:bg-[#0d2745] border border-[#1e436c] px-2.5 py-1 rounded text-white text-xs flex items-center gap-1.5 font-medium transition-colors cursor-pointer"
+                className="bg-white hover:bg-slate-100 dark:bg-[#071b30] dark:hover:bg-[#0d2745] border border-slate-300 dark:border-[#1e436c] px-2.5 py-1 rounded text-slate-800 dark:text-white text-xs flex items-center gap-1.5 font-medium transition-colors shadow-2xs cursor-pointer"
               >
                 <Building2 className="w-3 h-3 text-slate-400" />
                 <span>{selectedWard}</span>
                 <ChevronDown className="w-3 h-3 text-slate-400" />
               </button>
               {wardDropdownOpen && (
-                <div className="absolute left-0 bottom-full mb-1 w-52 max-h-48 overflow-y-auto bg-[#091e34] border border-[#1d436e] rounded-lg shadow-xl py-1 z-30 text-xs">
+                <div className="absolute left-0 bottom-full mb-1 w-52 max-h-48 overflow-y-auto bg-white dark:bg-[#091e34] border border-slate-200 dark:border-[#1d436e] rounded-lg shadow-xl py-1 z-30 text-xs">
                   {availableWards.map(w => (
                     <button 
                       key={w} 
                       type="button" 
                       onClick={() => { setWardDropdownOpen(false); onChangeFormData?.({ ward: w }); }} 
-                      className="w-full text-left px-3 py-1.5 text-slate-200 hover:bg-[#132e4d] cursor-pointer"
+                      className="w-full text-left px-3 py-1.5 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-[#132e4d] cursor-pointer"
                     >
                       {w}
                     </button>
@@ -913,17 +923,17 @@ export function DispatchCentre({
       </div>
 
       {/* Bottom Metadata Info Strip */}
-      <div className="flex flex-wrap items-center gap-6 px-2 py-3 text-xs text-slate-400 font-medium select-none">
+      <div className="flex flex-wrap items-center gap-6 px-2 py-3 text-xs text-slate-500 dark:text-slate-400 font-medium select-none">
         <span className="flex items-center gap-1.5">
-          <Database className="w-3.5 h-3.5 text-[#38bdf8]" />
+          <Database className="w-3.5 h-3.5 text-blue-600 dark:text-[#38bdf8]" />
           <span>{totalDbCount} records · {totalVouchersCount} vouchers</span>
         </span>
         <span className="flex items-center gap-1.5">
-          <CheckCircle2 className="w-3.5 h-3.5 text-[#38bdf8]" />
+          <CheckCircle2 className="w-3.5 h-3.5 text-blue-600 dark:text-[#38bdf8]" />
           <span>v3.4 Elite · {formatDate(processingDate || "07/07/2026")}</span>
         </span>
         <span className="flex items-center gap-1.5">
-          <Lock className="w-3.5 h-3.5 text-[#38bdf8]" />
+          <Lock className="w-3.5 h-3.5 text-blue-600 dark:text-[#38bdf8]" />
           <span>Secure QR</span>
         </span>
       </div>

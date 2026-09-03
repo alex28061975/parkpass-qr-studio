@@ -173,20 +173,20 @@ export function PermitForm({
   const formattedValidTo = data.validTo ? formatDate(data.validTo) : (data.todayDate ? formatDate(addDays(data.todayDate, 6)) : "13/07/2026");
 
   // Common class strings for inputs and selects: 12px, font-weight: 400 (regular, not bold), compact styling
-  const inputClass = "w-full h-8 bg-[#041320] border border-[rgba(113,163,255,0.18)] text-white text-[12px] font-normal rounded-md px-2.5 py-1 focus:outline-none focus:border-[#1677FF] focus:ring-1 focus:ring-[#1677FF]/30 transition placeholder:text-[12px] placeholder:font-normal placeholder:text-[#B7D4FF]/40";
-  const selectClass = "w-full h-8 bg-[#041320] border border-[rgba(113,163,255,0.18)] text-white text-[12px] font-normal rounded-md px-2.5 py-1 appearance-none pr-7 focus:outline-none focus:border-[#1677FF] focus:ring-1 focus:ring-[#1677FF]/30 transition cursor-pointer";
+  const inputClass = "w-full h-8 bg-slate-50 dark:bg-[#041320] border border-slate-300 dark:border-[rgba(113,163,255,0.18)] text-slate-900 dark:text-white text-[12px] font-normal rounded-md px-2.5 py-1 focus:outline-none focus:border-[#1677FF] focus:ring-1 focus:ring-[#1677FF]/30 transition placeholder:text-[12px] placeholder:font-normal placeholder:text-slate-400 dark:placeholder:text-[#B7D4FF]/40";
+  const selectClass = "w-full h-8 bg-slate-50 dark:bg-[#041320] border border-slate-300 dark:border-[rgba(113,163,255,0.18)] text-slate-900 dark:text-white text-[12px] font-normal rounded-md px-2.5 py-1 appearance-none pr-7 focus:outline-none focus:border-[#1677FF] focus:ring-1 focus:ring-[#1677FF]/30 transition cursor-pointer";
 
   return (
-    <section className="w-full h-full bg-gradient-to-b from-[#061524] to-[#081B31] border border-[rgba(133,189,255,0.15)] rounded-xl p-3 md:p-3.5 shadow-xl text-white flex flex-col gap-2.5">
+    <section className="w-full h-full bg-white dark:bg-gradient-to-b dark:from-[#061524] dark:to-[#081B31] border border-slate-200 dark:border-[rgba(133,189,255,0.15)] rounded-xl p-3 md:p-3.5 shadow-sm dark:shadow-xl text-slate-900 dark:text-white flex flex-col gap-2.5 transition-colors">
       
       {/* 1. Section Header */}
-      <div className="flex items-center justify-between pb-2 border-b border-[rgba(113,163,255,0.15)]">
+      <div className="flex items-center justify-between pb-2 border-b border-slate-200 dark:border-[rgba(113,163,255,0.15)]">
         <div className="flex items-center gap-2">
-          <div className="w-6 h-6 rounded-md bg-[#1677FF]/15 border border-[#1677FF]/30 flex items-center justify-center text-[#1677FF] shadow-sm">
+          <div className="w-6 h-6 rounded-md bg-blue-50 dark:bg-[#1677FF]/15 border border-blue-200 dark:border-[#1677FF]/30 flex items-center justify-center text-blue-600 dark:text-[#1677FF] shadow-xs">
             <User className="w-3.5 h-3.5" />
           </div>
           <div>
-            <h2 className="text-[14px] font-medium text-white tracking-tight leading-none">
+            <h2 className="text-[14px] font-medium text-slate-900 dark:text-white tracking-tight leading-none">
               Configure Permit &amp; Driver Details
             </h2>
           </div>
@@ -197,8 +197,8 @@ export function PermitForm({
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
         {/* Card Main Title */}
         <div className="flex flex-col">
-          <label htmlFor="cardTitle" className="text-[10px] font-medium uppercase tracking-[0.5px] text-[#B7D4FF] flex items-center gap-1.5 mb-1">
-            <CreditCard className="w-3 h-3 text-[#1677FF]" />
+          <label htmlFor="cardTitle" className="text-[10px] font-medium uppercase tracking-[0.5px] text-slate-600 dark:text-[#B7D4FF] flex items-center gap-1.5 mb-1">
+            <CreditCard className="w-3 h-3 text-blue-600 dark:text-[#1677FF]" />
             <span>Card Main Title</span>
           </label>
           <input
@@ -213,8 +213,8 @@ export function PermitForm({
 
         {/* Processing Date */}
         <div className="flex flex-col">
-          <label htmlFor="processingDate" className="text-[10px] font-medium uppercase tracking-[0.5px] text-[#B7D4FF] flex items-center gap-1.5 mb-1">
-            <Calendar className="w-3 h-3 text-[#1677FF]" />
+          <label htmlFor="processingDate" className="text-[10px] font-medium uppercase tracking-[0.5px] text-slate-600 dark:text-[#B7D4FF] flex items-center gap-1.5 mb-1">
+            <Calendar className="w-3 h-3 text-blue-600 dark:text-[#1677FF]" />
             <span>Processing Date</span>
           </label>
           <div className="relative">
@@ -231,8 +231,8 @@ export function PermitForm({
 
         {/* Valid From */}
         <div className="flex flex-col">
-          <label htmlFor="validFrom" className="text-[10px] font-medium uppercase tracking-[0.5px] text-[#B7D4FF] flex items-center gap-1.5 mb-1">
-            <Calendar className="w-3 h-3 text-[#1677FF]" />
+          <label htmlFor="validFrom" className="text-[10px] font-medium uppercase tracking-[0.5px] text-slate-600 dark:text-[#B7D4FF] flex items-center gap-1.5 mb-1">
+            <Calendar className="w-3 h-3 text-blue-600 dark:text-[#1677FF]" />
             <span>Valid From</span>
           </label>
           <input
@@ -246,8 +246,8 @@ export function PermitForm({
 
         {/* Valid To */}
         <div className="flex flex-col">
-          <label htmlFor="validTo" className="text-[10px] font-medium uppercase tracking-[0.5px] text-[#B7D4FF] flex items-center gap-1.5 mb-1">
-            <Calendar className="w-3 h-3 text-[#1677FF]" />
+          <label htmlFor="validTo" className="text-[10px] font-medium uppercase tracking-[0.5px] text-slate-600 dark:text-[#B7D4FF] flex items-center gap-1.5 mb-1">
+            <Calendar className="w-3 h-3 text-blue-600 dark:text-[#1677FF]" />
             <span>Valid To</span>
           </label>
           <input
@@ -256,14 +256,14 @@ export function PermitForm({
             readOnly
             value={formattedValidTo}
             className={`${inputClass} opacity-90 focus:outline-none ${
-              dateWarning ? "border-rose-500 text-rose-300" : ""
+              dateWarning ? "border-rose-500 text-rose-500 dark:text-rose-300" : ""
             }`}
           />
         </div>
       </div>
 
       {dateWarning && (
-        <div className="p-2 rounded-lg bg-rose-950/40 border border-rose-500/50 text-rose-300 text-[11px] flex items-center gap-2">
+        <div className="p-2 rounded-lg bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-500/50 text-rose-700 dark:text-rose-300 text-[11px] flex items-center gap-2">
           <span>⚠ Warning: Expiry date is set before the valid start date.</span>
         </div>
       )}
@@ -272,8 +272,8 @@ export function PermitForm({
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
         {/* Hospital Site */}
         <div className="flex flex-col">
-          <label htmlFor="hospitalSelect" className="text-[10px] font-medium uppercase tracking-[0.5px] text-[#B7D4FF] flex items-center gap-1.5 mb-1">
-            <Building2 className="w-3 h-3 text-[#1677FF]" />
+          <label htmlFor="hospitalSelect" className="text-[10px] font-medium uppercase tracking-[0.5px] text-slate-600 dark:text-[#B7D4FF] flex items-center gap-1.5 mb-1">
+            <Building2 className="w-3 h-3 text-blue-600 dark:text-[#1677FF]" />
             <span>Hospital Site</span>
           </label>
           <div className="relative">
@@ -283,19 +283,19 @@ export function PermitForm({
               onChange={e => onChange({ site: e.target.value })}
               className={selectClass}
             >
-              <option value="" className="bg-[#041320] text-white text-[12px] font-normal">— Select Site —</option>
+              <option value="" className="bg-white dark:bg-[#041320] text-slate-900 dark:text-white text-[12px] font-normal">— Select Site —</option>
               {HOSPITAL_SITES.map(site => (
-                <option key={site} value={site} className="bg-[#041320] text-white text-[12px] font-normal">{site}</option>
+                <option key={site} value={site} className="bg-white dark:bg-[#041320] text-slate-900 dark:text-white text-[12px] font-normal">{site}</option>
               ))}
             </select>
-            <ChevronDown className="w-3 h-3 text-[#B7D4FF] absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <ChevronDown className="w-3 h-3 text-slate-400 dark:text-[#B7D4FF] absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
           </div>
         </div>
 
         {/* Ward / Department */}
         <div className="flex flex-col">
-          <label htmlFor="wardSelect" className="text-[10px] font-medium uppercase tracking-[0.5px] text-[#B7D4FF] flex items-center gap-1.5 mb-1">
-            <Network className="w-3 h-3 text-[#1677FF]" />
+          <label htmlFor="wardSelect" className="text-[10px] font-medium uppercase tracking-[0.5px] text-slate-600 dark:text-[#B7D4FF] flex items-center gap-1.5 mb-1">
+            <Network className="w-3 h-3 text-blue-600 dark:text-[#1677FF]" />
             <span>Ward / Department</span>
           </label>
           <div className="relative">
@@ -305,22 +305,22 @@ export function PermitForm({
               onChange={e => onChange({ ward: e.target.value })}
               className={selectClass}
             >
-              <option value="" className="bg-[#041320] text-white text-[12px] font-normal">— Select Ward —</option>
+              <option value="" className="bg-white dark:bg-[#041320] text-slate-900 dark:text-white text-[12px] font-normal">— Select Ward —</option>
               {availableWards.map(w => (
-                <option key={w} value={w} className="bg-[#041320] text-white text-[12px] font-normal">{w}</option>
+                <option key={w} value={w} className="bg-white dark:bg-[#041320] text-slate-900 dark:text-white text-[12px] font-normal">{w}</option>
               ))}
               {data.ward && !availableWards.includes(data.ward) && (
-                <option value={data.ward} className="bg-[#041320] text-white text-[12px] font-normal">{data.ward}</option>
+                <option value={data.ward} className="bg-white dark:bg-[#041320] text-slate-900 dark:text-white text-[12px] font-normal">{data.ward}</option>
               )}
             </select>
-            <ChevronDown className="w-3 h-3 text-[#B7D4FF] absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <ChevronDown className="w-3 h-3 text-slate-400 dark:text-[#B7D4FF] absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
           </div>
         </div>
 
         {/* Driver's Name */}
         <div className="flex flex-col">
-          <label htmlFor="driverName" className="text-[10px] font-medium uppercase tracking-[0.5px] text-[#B7D4FF] flex items-center gap-1.5 mb-1">
-            <User className="w-3 h-3 text-[#1677FF]" />
+          <label htmlFor="driverName" className="text-[10px] font-medium uppercase tracking-[0.5px] text-slate-600 dark:text-[#B7D4FF] flex items-center gap-1.5 mb-1">
+            <User className="w-3 h-3 text-blue-600 dark:text-[#1677FF]" />
             <span>Driver's Name</span>
           </label>
           <input
@@ -335,8 +335,8 @@ export function PermitForm({
 
         {/* VRM / Number Plate */}
         <div className="flex flex-col">
-          <label htmlFor="vrm" className="text-[10px] font-medium uppercase tracking-[0.5px] text-[#B7D4FF] flex items-center gap-1.5 mb-1">
-            <Car className="w-3 h-3 text-[#1677FF]" />
+          <label htmlFor="vrm" className="text-[10px] font-medium uppercase tracking-[0.5px] text-slate-600 dark:text-[#B7D4FF] flex items-center gap-1.5 mb-1">
+            <Car className="w-3 h-3 text-blue-600 dark:text-[#1677FF]" />
             <span>VRM / Number Plate</span>
           </label>
           <input
@@ -348,7 +348,7 @@ export function PermitForm({
             className={`${inputClass} uppercase`}
           />
           {(!data.vrm || data.vrm.trim() === "") && (
-            <span className="text-amber-400/90 text-[10px] mt-0.5 font-normal select-none">
+            <span className="text-amber-600 dark:text-amber-400/90 text-[10px] mt-0.5 font-normal select-none">
               Awaiting plate number input
             </span>
           )}
@@ -359,8 +359,8 @@ export function PermitForm({
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
         {/* Phone Number */}
         <div className="flex flex-col">
-          <label htmlFor="phoneNumber" className="text-[10px] font-medium uppercase tracking-[0.5px] text-[#B7D4FF] flex items-center gap-1.5 mb-1">
-            <Phone className="w-3 h-3 text-[#1677FF]" />
+          <label htmlFor="phoneNumber" className="text-[10px] font-medium uppercase tracking-[0.5px] text-slate-600 dark:text-[#B7D4FF] flex items-center gap-1.5 mb-1">
+            <Phone className="w-3 h-3 text-blue-600 dark:text-[#1677FF]" />
             <span>Phone Number</span>
           </label>
           <input
@@ -375,8 +375,8 @@ export function PermitForm({
 
         {/* Email Address */}
         <div className="flex flex-col">
-          <label htmlFor="emailAddress" className="text-[10px] font-medium uppercase tracking-[0.5px] text-[#B7D4FF] flex items-center gap-1.5 mb-1">
-            <Mail className="w-3 h-3 text-[#1677FF]" />
+          <label htmlFor="emailAddress" className="text-[10px] font-medium uppercase tracking-[0.5px] text-slate-600 dark:text-[#B7D4FF] flex items-center gap-1.5 mb-1">
+            <Mail className="w-3 h-3 text-blue-600 dark:text-[#1677FF]" />
             <span>Email Address</span>
           </label>
           <input
