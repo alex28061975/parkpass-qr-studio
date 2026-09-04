@@ -235,7 +235,7 @@ export function DispatchCentre({
 
   const getStatusStr = (record: CsvPermitRecord, idx: number) => {
     const isCanc = getIsCancelled(record, idx);
-    if (isCanc) return "CANCELLED";
+    if (isCanc) return "BLOCKED";
     if (isReplacementPending(record)) return "REPLACEMENT";
     const isDispatched = checkIsRecordDispatched(record, record.vrm, record.driverName, record.dateRequired, dispatchedKeys, unsentKeys);
     const rowKey = String(record.formId ?? record.id ?? record.vrm ?? idx);
@@ -398,10 +398,12 @@ export function DispatchCentre({
           break;
         }
         case "actions": {
+          const aCanc = getIsCancelled(a, aIdx);
+          const bCanc = getIsCancelled(b, bIdx);
           const aDisp = checkIsRecordDispatched(a, a.vrm, a.driverName, a.dateRequired, dispatchedKeys, unsentKeys);
           const bDisp = checkIsRecordDispatched(b, b.vrm, b.driverName, b.dateRequired, dispatchedKeys, unsentKeys);
-          const aAct = isReplacementPending(a) ? "Resend" : (aDisp ? "Unsend" : "Send");
-          const bAct = isReplacementPending(b) ? "Resend" : (bDisp ? "Unsend" : "Send");
+          const aAct = aCanc ? "Unsend" : (isReplacementPending(a) ? "Resend" : (aDisp ? "Unsend" : "Send"));
+          const bAct = bCanc ? "Unsend" : (isReplacementPending(b) ? "Resend" : (bDisp ? "Unsend" : "Send"));
           comparison = aAct.localeCompare(bAct);
           break;
         }
@@ -1136,9 +1138,13 @@ export function DispatchCentre({
                       {hospitalDisplay}
                     </td>
 
-                    {/* 10. STATUS Column (Never displays CANCELLED - only SENT, UNSENT, or PENDING) */}
+                    {/* 10. STATUS Column */}
                     <td className="py-3 px-3 text-center border-r border-slate-100 dark:border-[#102947]/60 select-none whitespace-nowrap">
-                      {replacementPending ? (
+                      {isCancelled ? (
+                        <span className="border border-rose-300 dark:border-rose-800/60 bg-rose-50 dark:bg-rose-950/30 text-rose-700 dark:text-rose-300 font-bold px-2.5 py-0.5 rounded text-[10px] tracking-wider uppercase inline-flex items-center justify-center whitespace-nowrap">
+                          BLOCKED
+                        </span>
+                      ) : replacementPending ? (
                         <span className="border border-purple-300 dark:border-[#a855f7]/40 bg-purple-50 dark:bg-[#a855f7]/15 text-purple-700 dark:text-[#c084fc] font-bold px-2.5 py-0.5 rounded text-[10px] tracking-wider uppercase inline-flex items-center justify-center whitespace-nowrap">
                           REPLACEMENT
                         </span>
@@ -1163,14 +1169,17 @@ export function DispatchCentre({
                       <div className="inline-flex items-center justify-center rounded-md overflow-hidden shadow-xs">
                         <button 
                           type="button" 
-                          disabled={busyKey === rowKey} 
-                          onClick={() => handleAction(record, isDispatched, replacementPending)} 
-                          className={`flex items-center gap-1 px-3 py-1 text-white text-xs font-semibold transition-colors disabled:opacity-50 cursor-pointer whitespace-nowrap ${
-                            replacementPending
-                              ? "bg-[#7c3aed] hover:bg-[#6d28d9]"
-                              : isDispatched
-                                ? "bg-[#dc2626] hover:bg-[#b91c1c]"
-                                : "bg-[#1d75f2] hover:bg-[#1565d8]"
+                          disabled={busyKey === rowKey || isCancelled} 
+                          onClick={() => { if (!isCancelled) handleAction(record, isDispatched, replacementPending); }} 
+                          title={isCancelled ? "This VRM is blocked — dispatch disabled" : undefined}
+                          className={`flex items-center gap-1 px-3 py-1 text-white text-xs font-semibold transition-colors disabled:opacity-50 whitespace-nowrap ${
+                            isCancelled
+                              ? "bg-slate-400 dark:bg-slate-700 cursor-not-allowed"
+                              : "cursor-pointer " + (replacementPending
+                                  ? "bg-[#7c3aed] hover:bg-[#6d28d9]"
+                                  : isDispatched
+                                    ? "bg-[#dc2626] hover:bg-[#b91c1c]"
+                                    : "bg-[#1d75f2] hover:bg-[#1565d8]")
                           }`}
                         >
                           {busyKey === rowKey ? (
@@ -1178,17 +1187,19 @@ export function DispatchCentre({
                           ) : (
                             <Mail className="w-3 h-3" />
                           )}
-                          <span>{replacementPending ? "Resend" : (isDispatched ? "Unsend" : "Send")}</span>
+                          <span>{isCancelled ? "Unsend" : (replacementPending ? "Resend" : (isDispatched ? "Unsend" : "Send"))}</span>
                         </button>
                         <button 
                           type="button" 
                           onClick={() => onSelectRecord(record)} 
                           className={`px-1.5 py-1 text-white transition-colors cursor-pointer ${
-                            replacementPending
-                              ? "bg-[#6d28d9] hover:bg-[#5b21b6] border-l border-[#5b21b6]"
-                              : isDispatched
-                                ? "bg-[#b91c1c] hover:bg-[#991b1b] border-l border-[#991b1b]"
-                                : "bg-[#1565d8] hover:bg-[#0f4eb0] border-l border-[#0f4eb0]"
+                            isCancelled
+                              ? "bg-slate-500 hover:bg-slate-600 border-l border-slate-600"
+                              : replacementPending
+                                ? "bg-[#6d28d9] hover:bg-[#5b21b6] border-l border-[#5b21b6]"
+                                : isDispatched
+                                  ? "bg-[#b91c1c] hover:bg-[#991b1b] border-l border-[#991b1b]"
+                                  : "bg-[#1565d8] hover:bg-[#0f4eb0] border-l border-[#0f4eb0]"
                           }`}
                           title="Select permit record"
                         >

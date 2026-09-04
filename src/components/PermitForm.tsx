@@ -12,6 +12,8 @@ import {
   resolvePermitDate,
   getRequestedPermitDateISO,
   getVoucherDateISO,
+  extractRecordNumericFormId,
+  isSamePermitRecord,
   isRecordCancelledCanonical as isCancelled
 } from "../utils/csvParser";
 import { 
@@ -128,9 +130,24 @@ export function PermitForm({
     return finalFiltered;
   }, [vouchersDatabase, database, matchingPermits, targetIso, data]);
 
+  // The form only ever holds ONE mutable, shared editable state (`data`), which can
+  // carry stale fields (e.g. dateRequired) left over from a previously-loaded record.
+  // The Permit Table never has this problem because it reads each row's own record
+  // straight from the database. To keep both views in agreement, resolve the actual
+  // database record for whatever permit is currently loaded and use ITS fields for
+  // cancellation/duplicate checks — not the form's own editable state.
+  const canonicalRecord = useMemo(() => {
+    if (!database || database.length === 0) return data;
+    const numId = extractRecordNumericFormId(data);
+    const matched = database.find(
+      r => isSamePermitRecord(r, data) || (numId > 0 && extractRecordNumericFormId(r) === numId)
+    );
+    return matched || data;
+  }, [data, database]);
+
   const isBlockedDuplicate = useMemo(() => {
-    return checkIsBlockedDuplicate(data, database || [], data.todayDate);
-  }, [data, database, data.todayDate]);
+    return checkIsBlockedDuplicate(canonicalRecord, database || [], data.todayDate);
+  }, [canonicalRecord, database, data.todayDate]);
 
   const dateWarning = useMemo(() => {
     if (data.validFrom && data.validTo) {
@@ -403,7 +420,7 @@ export function PermitForm({
               })
             }
             className={`w-full h-9 px-3 py-1.5 border rounded-md text-xs font-extrabold focus:outline-none transition-all ${
-              isBlockedDuplicate || isCancelled(data, data.todayDate) ||
+              isBlockedDuplicate || isCancelled(canonicalRecord, data.todayDate) ||
               data.voucherCodesText === "-" || data.voucherCodesText === "CANCELLED" || data.voucherCodesText === "Cancelled"
                 ? "border-rose-200 dark:border-rose-900/60 bg-rose-50 dark:bg-rose-950/30 text-rose-700 dark:text-rose-300 font-mono"
                 : "border-gray-300 dark:border-slate-800 bg-white dark:bg-slate-950 text-gray-800 dark:text-slate-100 focus:border-[#005EB8] dark:focus:border-blue-500 font-mono"

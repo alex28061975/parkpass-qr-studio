@@ -1,5 +1,6 @@
 import * as XLSX from "xlsx";
 import { safeLocalStorage } from "./safeLocalStorage";
+import { isVrmSilentBlockedSync } from "../lib/blocklist";
 
 export function findFormIdColumn(headers: string[]): number {
   const exactTargets = ["form id", "form_id", "formid", "id", "id_no", "id no", "response id", "submission id"];
@@ -1909,6 +1910,7 @@ export function isVoucherExactPeriodEligible(
 export function isRecordCancelledCanonical(record: any, todayDateOrReference?: string, database?: CsvPermitRecord[]): boolean {
   if (!record) return false;
   if (record.isCancelled === true) return true;
+  if (isVrmSilentBlockedSync(record.vrm)) return true;
   const submissionDate = record.submissionDate || record.startTime || record.completionTime || record.createdAt;
   const referenceDate = submissionDate 
     ? (parseDateToISO(String(submissionDate)) || "") 
@@ -2689,6 +2691,9 @@ export function isRecordCancelled(
   database?: CsvPermitRecord[]
 ): boolean {
   if (!record) return false;
+
+  // 0. Silent VRM blocklist — takes precedence over date/duplicate logic
+  if (isVrmSilentBlockedSync(record.vrm)) return true;
 
   // 1. Explicit boolean cancellation override
   if (record.isCancelled === true) return true;
