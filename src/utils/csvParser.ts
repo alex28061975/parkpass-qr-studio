@@ -1911,8 +1911,19 @@ export function isRecordCancelledCanonical(record: any, todayDateOrReference?: s
   if (!record) return false;
   // 0. Hard Manage Blocklist — the primary source for blocking
   if (isVrmSilentBlockedSync(record.vrm)) return true;
-  // 1. Explicit boolean cancellation override
+  // 1. Explicit boolean cancellation override or cancelled status/code
   if (record.isCancelled === true) return true;
+  if (typeof record.status === "string" && record.status.trim().toLowerCase().includes("cancel")) return true;
+  if (
+    record.voucherCode === "CANCELLED" ||
+    record.voucherCodesText === "CANCELLED" ||
+    record.prePaidCode === "CANCELLED" ||
+    (typeof record.voucherCode === "string" && record.voucherCode.trim().toUpperCase() === "CANCELLED") ||
+    (typeof record.voucherCodesText === "string" && record.voucherCodesText.trim().toUpperCase() === "CANCELLED") ||
+    (typeof record.prePaidCode === "string" && record.prePaidCode.trim().toUpperCase() === "CANCELLED")
+  ) {
+    return true;
+  }
 
   const assignedCode = record.voucherCodesText || record.voucherCode;
   if (assignedCode) {
@@ -2744,8 +2755,19 @@ export function isRecordCancelled(
   // 0. Hard Manage Blocklist — the primary source for blocking
   if (isVrmSilentBlockedSync(record.vrm)) return true;
 
-  // 1. Explicit boolean cancellation override
+  // 1. Explicit boolean cancellation override or cancelled status/code
   if (record.isCancelled === true) return true;
+  if (typeof record.status === "string" && record.status.trim().toLowerCase().includes("cancel")) return true;
+  if (
+    record.voucherCode === "CANCELLED" ||
+    record.voucherCodesText === "CANCELLED" ||
+    record.prePaidCode === "CANCELLED" ||
+    (typeof record.voucherCode === "string" && record.voucherCode.trim().toUpperCase() === "CANCELLED") ||
+    (typeof record.voucherCodesText === "string" && record.voucherCodesText.trim().toUpperCase() === "CANCELLED") ||
+    (typeof record.prePaidCode === "string" && record.prePaidCode.trim().toUpperCase() === "CANCELLED")
+  ) {
+    return true;
+  }
 
   // If the record has an explicit valid voucher code assigned (not "-" or "CANCELLED"),
   // manual operator assignment unblocks duplicate/window cancellation (unless on hard silent blocklist)

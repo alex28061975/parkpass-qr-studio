@@ -539,8 +539,20 @@ function PermitCardInner({
   }, [data.voucherCodesText, data.vrm, data.name, data.validFrom, data.id, data.formId, isCurrentDispatched, data.emailTemplate, data.emailType, data.isResend, data.status, data.isDispatched]);
 
   const isCancelled = useMemo(() => {
+    if (data.isCancelled === true) return true;
+    if (typeof data.status === "string" && data.status.trim().toLowerCase().includes("cancel")) return true;
+    if (
+      data.voucherCode === "CANCELLED" ||
+      data.voucherCodesText === "CANCELLED" ||
+      data.prePaidCode === "CANCELLED" ||
+      (typeof data.voucherCode === "string" && data.voucherCode.trim().toUpperCase() === "CANCELLED") ||
+      (typeof data.voucherCodesText === "string" && data.voucherCodesText.trim().toUpperCase() === "CANCELLED") ||
+      (typeof data.prePaidCode === "string" && data.prePaidCode.trim().toUpperCase() === "CANCELLED")
+    ) {
+      return true;
+    }
     return isRecordCancelled(data, data.todayDate, database);
-  }, [data.todayDate, data.validFrom, data.dateRequired, data, database]);
+  }, [data.todayDate, data.validFrom, data.dateRequired, data.isCancelled, data.status, data.voucherCodesText, data.voucherCode, data.prePaidCode, data, database]);
 
   // isDateRequiredOutsideValidWindow covers both "too far in the future" and
   // "too far in the past" in one boolean - this distinguishes which, purely
@@ -646,6 +658,9 @@ function PermitCardInner({
   }, [toastMessage]);
 
   const handleResendConcessionEmail = async () => {
+    if (isCancelled) {
+      return handleSendClick();
+    }
     // Kick off the clipboard write synchronously, right here at the top, so the call is
     // still inside the user-activation window from the click. The awaited network calls
     // below (VRM check, Supabase dispatch write) would otherwise cause the browser to
@@ -834,9 +849,27 @@ function PermitCardInner({
     return true;
   };
 
-  const handleSendClick = async (targetRecord?: CsvPermitRecord) => {
+  const handleSendClick = async (targetRecordArg?: CsvPermitRecord | any) => {
+    const isRealRecord = (r: any): r is CsvPermitRecord => {
+      return Boolean(r && typeof r === 'object' && !('nativeEvent' in r) && !('isTrusted' in r) && !('preventDefault' in r) && (r.vrm || r.formId || r.id || r.driverName || r.email));
+    };
+    const targetRecord = isRealRecord(targetRecordArg) ? targetRecordArg : undefined;
     const rec = targetRecord || (activeIndex !== -1 && matchingPermits[activeIndex] ? matchingPermits[activeIndex] : null);
-    const isCancelledRec = rec ? isRecordCancelled(rec, rec.todayDate || data.todayDate, database) : isCancelled;
+    const recTodayDate = rec?.todayDate || data.todayDate || getTodayISO();
+    const isCancelledRec = Boolean(
+      (rec ? isRecordCancelled(rec, recTodayDate, database) : isCancelled) ||
+      (rec && (
+        rec.isCancelled === true ||
+        (typeof rec.status === 'string' && rec.status.toLowerCase().includes('cancel')) ||
+        rec.voucherCode === 'CANCELLED' ||
+        rec.voucherCodesText === 'CANCELLED' ||
+        rec.prePaidCode === 'CANCELLED' ||
+        (typeof rec.voucherCode === 'string' && rec.voucherCode.toUpperCase() === 'CANCELLED') ||
+        (typeof rec.voucherCodesText === 'string' && rec.voucherCodesText.toUpperCase() === 'CANCELLED') ||
+        (typeof rec.prePaidCode === 'string' && rec.prePaidCode.toUpperCase() === 'CANCELLED')
+      )) ||
+      (!targetRecord && isCancelled)
+    );
     const vrm = rec?.vrm || data.vrm || "";
 
     if (!isCancelledRec && !targetRecord && qrCodeChanged) {
@@ -1757,7 +1790,13 @@ function PermitCardInner({
   // - Red text for non-refundable
   // - Blue clickable email link
   // ============================================
-  const handleSendWithOutlook = async (targetRecord?: CsvPermitRecord) => {
+  const handleSendWithOutlook = async (targetRecordArg?: CsvPermitRecord | any) => {
+    // Sanitize targetRecord: ensure it's not a React SyntheticEvent or other non-record object
+    const isRealRecord = (r: any): r is CsvPermitRecord => {
+      return Boolean(r && typeof r === 'object' && !('nativeEvent' in r) && !('isTrusted' in r) && !('preventDefault' in r) && (r.vrm || r.formId || r.id || r.driverName || r.email));
+    };
+    const targetRecord = isRealRecord(targetRecordArg) ? targetRecordArg : undefined;
+
     // 1. Identify the target record context strictly first
     const targetRec = targetRecord || (activeIndex !== -1 && matchingPermits[activeIndex] ? matchingPermits[activeIndex] : null) || (database && data.formId ? database.find(r => r.formId === data.formId || r.id === data.formId) : null) || {
       id: data.id,
@@ -1770,7 +1809,12 @@ function PermitCardInner({
       site: data.site,
       validFrom: data.validFrom,
       validTo: data.validTo,
-      todayDate: data.todayDate
+      todayDate: data.todayDate,
+      isCancelled: data.isCancelled,
+      status: data.status,
+      voucherCode: data.voucherCode,
+      voucherCodesText: data.voucherCodesText,
+      prePaidCode: data.prePaidCode,
     };
 
     const targetVrm = (targetRec.vrm || (targetRecord ? "" : data.vrm) || "").toUpperCase().trim();
@@ -1783,9 +1827,17 @@ function PermitCardInner({
     const targetTodayDate = targetRec.todayDate || (targetRecord ? "" : data.todayDate) || getTodayISO();
     const targetDateRequired = targetRec.dateRequired || targetRec.validFrom || (targetRecord ? "" : data.dateRequired) || "";
     const targetIsCancelled = Boolean(
-      targetRecord
-        ? isRecordCancelled(targetRec, targetTodayDate, database)
-        : (isCancelled || isRecordCancelled(targetRec, targetTodayDate, database))
+      (targetRecord ? isRecordCancelled(targetRec, targetTodayDate, database) : isCancelled) ||
+      isRecordCancelled(targetRec, targetTodayDate, database) ||
+      targetRec.isCancelled === true ||
+      (typeof targetRec.status === 'string' && targetRec.status.toLowerCase().includes('cancel')) ||
+      targetRec.voucherCode === 'CANCELLED' ||
+      targetRec.voucherCodesText === 'CANCELLED' ||
+      targetRec.prePaidCode === 'CANCELLED' ||
+      (typeof targetRec.voucherCode === 'string' && targetRec.voucherCode.toUpperCase() === 'CANCELLED') ||
+      (typeof targetRec.voucherCodesText === 'string' && targetRec.voucherCodesText.toUpperCase() === 'CANCELLED') ||
+      (typeof targetRec.prePaidCode === 'string' && targetRec.prePaidCode.toUpperCase() === 'CANCELLED') ||
+      (!targetRecord && isCancelled)
     );
     const targetPayloadCode = targetRec.voucherCode || targetRec.prePaidCode || targetRec.voucherCodesText || (!targetRecord ? (data.qrOverride?.trim() || activeVoucherCode || currentSelectedCode || "") : "");
 
@@ -1930,13 +1982,13 @@ function PermitCardInner({
         }
       }
 
-      if (activeQrDataUrl && resolveQrBlob) {
+      if (!targetIsCancelled && activeQrDataUrl && resolveQrBlob) {
         try {
           resolveQrBlob(dataURLtoBlob(activeQrDataUrl));
         } catch (err) {
           rejectQrBlob?.(err);
         }
-      } else {
+      } else if (!targetIsCancelled && resolveQrBlob) {
         rejectQrBlob?.(new Error("No QR code available to copy"));
       }
 
@@ -2420,13 +2472,15 @@ function PermitCardInner({
               // Not sent → Show appropriate send button
               <button
                 type="button"
-                onClick={
-                  isCancelled
-                    ? handleSendClick
-                    : qrCodeChanged
-                      ? handleResendConcessionEmail
-                      : handleSendClick
-                }
+                onClick={() => {
+                  if (isCancelled) {
+                    handleSendClick();
+                  } else if (qrCodeChanged) {
+                    handleResendConcessionEmail();
+                  } else {
+                    handleSendClick();
+                  }
+                }}
                 disabled={!isCancelled && !qrUrl}
                 className={`flex-1 h-9 flex items-center justify-center gap-1.5 rounded-xl transition-all duration-250 ease-in-out font-bold text-xs shadow-xs hover:shadow-md hover:scale-[1.01] active:scale-[0.98] ${
                   !isCancelled && !qrUrl
