@@ -3,6 +3,7 @@ import { PermitData, HOSPITAL_SITES } from "../types";
 import { 
   CsvPermitRecord, 
   parseDateToISO, 
+  getTodayISO,
   addDays, 
   ParsedVoucherData, 
   getMatchingPermits, 
@@ -83,18 +84,24 @@ export function PermitForm({
 
   // Target ISO for the permit being viewed/edited
   const targetIso = useMemo(() => {
+    // 1. Highest priority: The selected permit record's requested date
+    const permitIso = getRequestedPermitDateISO(data);
+    if (permitIso && /^\d{4}-\d{2}-\d{2}$/.test(permitIso)) {
+      return permitIso;
+    }
+    // 2. Fallback: form's todayDate / processing date
     const processingIso = data.todayDate ? parseDateToISO(String(data.todayDate)) : "";
     if (processingIso && /^\d{4}-\d{2}-\d{2}$/.test(processingIso)) {
       return processingIso;
     }
-    return getRequestedPermitDateISO(data);
+    return getTodayISO();
   }, [data.validFrom, data.dateRequired, data.startTime, data.createdAt, data.todayDate]);
 
   // Matching permits for the active date
   const matchingPermits = useMemo(() => {
     if (!targetIso) return [];
     return getMatchingPermits(database, targetIso);
-  }, [data, database, targetIso]);
+  }, [database, targetIso]);
 
   // Unused vouchers computation
   const unusedVouchersForDay = useMemo<ParsedVoucherData[]>(() => {
@@ -109,7 +116,11 @@ export function PermitForm({
       matchingPermits
     );
 
-    const dateFiltered = vouchers.filter(v => getVoucherDateISO(v) === targetIso);
+    // Filter to vouchers matching targetIso (or generic pool)
+    const dateFiltered = vouchers.filter(v => {
+      const vIso = getVoucherDateISO(v);
+      return !vIso || vIso === targetIso;
+    });
 
     const spreadsheetAssignedCodes = getSpreadsheetMatchingAssignedCodes(
       matchingPermits,
@@ -122,9 +133,18 @@ export function PermitForm({
       return !spreadsheetAssignedCodes.has(codeUpper);
     });
 
+    // Total vouchers for the selected target date
+    const dailyVouchers = (vouchersDatabase || []).filter(v => {
+      const vIso = getVoucherDateISO(v);
+      return vIso === targetIso;
+    });
+    const totalForDate = dailyVouchers.length > 0 ? dailyVouchers.length : (vouchersDatabase?.length || 0);
+    const assignedCount = Math.max(0, totalForDate - finalFiltered.length);
+
     console.log('🔍 Unused Codes Debug:', {
       targetISO: targetIso,
-      totalVouchers: vouchersDatabase?.length || 0,
+      totalVouchers: totalForDate,
+      assignedCount: assignedCount,
       unusedCount: finalFiltered.length,
       unusedCodes: finalFiltered.map(v => v.code)
     });
@@ -245,7 +265,15 @@ export function PermitForm({
               id="processingDate"
               type="date"
               value={data.todayDate || ""}
-              onChange={e => onChange({ todayDate: e.target.value })}
+              onChange={e => {
+                const newDate = e.target.value;
+                onChange({
+                  todayDate: newDate,
+                  validFrom: newDate,
+                  validTo: newDate ? addDays(newDate, 6) : data.validTo,
+                  dateRequired: newDate
+                });
+              }}
               onClick={e => { try { e.currentTarget.showPicker(); } catch {} }}
               className={`${inputClass} cursor-pointer`}
             />

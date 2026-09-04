@@ -2109,11 +2109,21 @@ export function getUnusedVouchersForDate(
   const targetDateISO = parseDateToISO(targetISO) || targetISO;
   const currentVrmClean = (currentVrm || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
 
-  const dailyVouchersForDate = (vouchersDatabase || []).filter(v => {
+  let dailyVouchersForDate = (vouchersDatabase || []).filter(v => {
     if (!v) return false;
     const vIso = getVoucherDateISO(v);
     return vIso === targetDateISO;
   });
+
+  // Fallback: if no vouchers explicitly match targetDateISO, use undated vouchers or the pool
+  if (dailyVouchersForDate.length === 0 && vouchersDatabase && vouchersDatabase.length > 0) {
+    const undated = vouchersDatabase.filter(v => !getVoucherDateISO(v));
+    if (undated.length > 0) {
+      dailyVouchersForDate = undated;
+    } else {
+      dailyVouchersForDate = vouchersDatabase;
+    }
+  }
 
   // Deduplicate daily vouchers by uppercase voucher code
   const dailyVouchersMap = new Map<string, ParsedVoucherData>();
@@ -2146,6 +2156,11 @@ export function getUnusedVouchersForDate(
 
   const considerAssignedRecord = (permit: any) => {
     if (!permit) return;
+    // CRITICAL: Only count assigned codes for the SELECTED target date!
+    const permitDateISO = getRequestedPermitDateISO(permit);
+    if (!permitDateISO || permitDateISO !== targetDateISO) {
+      return; // Do NOT count permits belonging to other dates
+    }
     if (permit.isCancelled === true || isRecordCancelledCanonical(permit, targetDateISO, database)) {
       return;
     }
@@ -2160,7 +2175,10 @@ export function getUnusedVouchersForDate(
     spreadsheetMatches.forEach(considerAssignedRecord);
   }
   if (currentRecord) {
-    considerAssignedRecord(currentRecord);
+    const curDateISO = getRequestedPermitDateISO(currentRecord);
+    if (!curDateISO || curDateISO === targetDateISO) {
+      considerAssignedRecord(currentRecord);
+    }
   }
 
   const spreadsheetAssigned = getSpreadsheetMatchingAssignedCodes(
@@ -2207,12 +2225,12 @@ export function getUnusedVouchersForDate(
     }
   });
 
-  // Debug log showing the breakdown
+  // Debug log showing the target date and breakdown: Total for Date - Assigned for Date = Unused
   console.log(`🔍 [Unused Codes Calculation - ${targetDateISO}]`, {
     targetDate: targetDateISO,
     totalVouchersForDate,
     assignedCodesCount: allAssignedCodesSet.size,
-    unusedCodesCount: Math.max(totalVouchersForDate - allAssignedCodesSet.size, 0),
+    unusedCodesCount: activeUnassignedCodes.length,
     assignedCodes: Array.from(allAssignedCodesSet),
     availableCodesCount: activeUnassignedCodes.length,
     availableCodes: activeUnassignedCodes.map(v => v.code)

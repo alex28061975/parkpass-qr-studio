@@ -193,11 +193,17 @@ function PermitCardInner({
 
   // Target ISO for the permit being viewed
   const targetIso = useMemo(() => {
+    // 1. Highest priority: The selected permit record's requested date
+    const permitIso = getRequestedPermitDateISO(data);
+    if (permitIso && /^\d{4}-\d{2}-\d{2}$/.test(permitIso)) {
+      return permitIso;
+    }
+    // 2. Fallback: processing date
     const processingIso = data.todayDate ? parseDateToISO(String(data.todayDate)) : "";
     if (processingIso && /^\d{4}-\d{2}-\d{2}$/.test(processingIso)) {
       return processingIso;
     }
-    return getRequestedPermitDateISO(data);
+    return getTodayISO();
   }, [data.validFrom, data.dateRequired, data.startTime, data.createdAt, data.todayDate]);
 
   // Use the requested permit date for matching permits
@@ -221,7 +227,10 @@ function PermitCardInner({
       matchingPermits
     );
 
-    const dateFiltered = vouchers.filter(v => getVoucherDateISO(v) === targetIso);
+    const dateFiltered = vouchers.filter(v => {
+      const vIso = getVoucherDateISO(v);
+      return !vIso || vIso === targetIso;
+    });
 
     const spreadsheetAssignedCodes = getSpreadsheetMatchingAssignedCodes(
       matchingPermits,
