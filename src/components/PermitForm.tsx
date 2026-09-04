@@ -14,6 +14,7 @@ import {
   getVoucherDateISO,
   extractRecordNumericFormId,
   isSamePermitRecord,
+  cleanVoucherCodeValue,
   isRecordCancelledCanonical as isCancelled
 } from "../utils/csvParser";
 import { 
@@ -29,6 +30,7 @@ import {
   Ticket,
   ChevronDown
 } from "lucide-react";
+import { isVrmSilentBlockedSync } from "../lib/blocklist";
 
 // Helper to format string to Title Case (capitalize each word)
 function toTitleCase(str: string): string {
@@ -145,9 +147,14 @@ export function PermitForm({
     return matched || data;
   }, [data, database]);
 
-  const isBlockedDuplicate = useMemo(() => {
-    return checkIsBlockedDuplicate(canonicalRecord, database || [], data.todayDate);
-  }, [canonicalRecord, database, data.todayDate]);
+  const hasValidVoucherCode = useMemo(() => {
+    const code = cleanVoucherCodeValue(String(data.voucherCodesText || "")).toUpperCase();
+    return Boolean(code && code !== "-" && code !== "CANCELLED" && code !== "PENDING" && code !== "N/A");
+  }, [data.voucherCodesText]);
+
+  const isSilentBlocked = useMemo(() => {
+    return isVrmSilentBlockedSync(data.vrm);
+  }, [data.vrm]);
 
   const dateWarning = useMemo(() => {
     if (data.validFrom && data.validTo) {
@@ -412,21 +419,20 @@ export function PermitForm({
         <div className="w-full">
           <input
             type="text"
-            value={isBlockedDuplicate ? "CANCELLED" : (data.voucherCodesText || "")}
+            value={data.voucherCodesText || (isSilentBlocked ? "BLOCKED" : "")}
             onChange={(e) =>
               onChange({
-                voucherCodesText: isBlockedDuplicate ? "CANCELLED" : e.target.value,
+                voucherCodesText: e.target.value,
                 status: "Pending"
               })
             }
             className={`w-full h-9 px-3 py-1.5 border rounded-md text-xs font-extrabold focus:outline-none transition-all ${
-              isBlockedDuplicate || isCancelled(canonicalRecord, data.todayDate) ||
-              data.voucherCodesText === "-" || data.voucherCodesText === "CANCELLED" || data.voucherCodesText === "Cancelled"
+              !hasValidVoucherCode && (isSilentBlocked || isCancelled(canonicalRecord, data.todayDate) ||
+              data.voucherCodesText === "-" || data.voucherCodesText === "CANCELLED" || data.voucherCodesText === "Cancelled" || data.voucherCodesText === "BLOCKED")
                 ? "border-rose-200 dark:border-rose-900/60 bg-rose-50 dark:bg-rose-950/30 text-rose-700 dark:text-rose-300 font-mono"
                 : "border-gray-300 dark:border-slate-800 bg-white dark:bg-slate-950 text-gray-800 dark:text-slate-100 focus:border-[#005EB8] dark:focus:border-blue-500 font-mono"
             }`}
             placeholder="e.g. CON9012JXM"
-            disabled={isBlockedDuplicate}
           />
         </div>
 
@@ -438,7 +444,7 @@ export function PermitForm({
             </label>
 
             <select
-              value=""
+              value={unusedVouchersForDay.some(v => v.code === data.voucherCodesText) ? data.voucherCodesText : ""}
               onChange={(e) => {
                 if (e.target.value) {
                   onChange({

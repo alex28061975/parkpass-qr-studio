@@ -210,16 +210,6 @@ export function enrichRecordsWithVouchers(
       return;
     }
 
-    if (record.isCancelled === true || isRecordCancelled(record, reqDateD || fallbackDateStr, recordsList)) {
-      enrichedByIndex.set(index, {
-        ...record,
-        voucherCode: "CANCELLED",
-        prePaidCode: "CANCELLED",
-        hasOriginalVoucher: false
-      });
-      return;
-    }
-
     const claimed = recordClaimedCodes.get(index);
     if (claimed) {
       enrichedByIndex.set(index, {
@@ -227,6 +217,16 @@ export function enrichRecordsWithVouchers(
         voucherCode: claimed,
         prePaidCode: claimed,
         hasOriginalVoucher: true
+      });
+      return;
+    }
+
+    if (record.isCancelled === true || isRecordCancelled(record, reqDateD || fallbackDateStr, recordsList)) {
+      enrichedByIndex.set(index, {
+        ...record,
+        voucherCode: "CANCELLED",
+        prePaidCode: "CANCELLED",
+        hasOriginalVoucher: false
       });
       return;
     }

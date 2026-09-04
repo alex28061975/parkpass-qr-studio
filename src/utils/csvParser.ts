@@ -1909,8 +1909,19 @@ export function isVoucherExactPeriodEligible(
 
 export function isRecordCancelledCanonical(record: any, todayDateOrReference?: string, database?: CsvPermitRecord[]): boolean {
   if (!record) return false;
-  if (record.isCancelled === true) return true;
+  // 0. Hard Manage Blocklist — the primary source for blocking
   if (isVrmSilentBlockedSync(record.vrm)) return true;
+  // 1. Explicit boolean cancellation override
+  if (record.isCancelled === true) return true;
+
+  const assignedCode = record.voucherCodesText || record.voucherCode;
+  if (assignedCode) {
+    const cleanAssigned = cleanVoucherCodeValue(String(assignedCode)).toUpperCase();
+    if (cleanAssigned && cleanAssigned !== "-" && cleanAssigned !== "CANCELLED" && cleanAssigned !== "PENDING" && cleanAssigned !== "N/A") {
+      return false;
+    }
+  }
+
   const submissionDate = record.submissionDate || record.startTime || record.completionTime || record.createdAt;
   const referenceDate = submissionDate 
     ? (parseDateToISO(String(submissionDate)) || "") 
@@ -1952,22 +1963,14 @@ export function getSpreadsheetMatchingAllocationsMap(
   sortedMatchingPermits.forEach((r, idx) => {
     const recordKey = String(r.formId ?? r.id ?? idx);
     const reqDate = getRequestedPermitDateISO(r, processingDate);
-    if (isRecordCancelledCanonical(r, reqDate || processingDate, effectiveDatabase)) {
+
+    // Hard silent blocklist
+    if (isVrmSilentBlockedSync(r.vrm)) {
       map.set(recordKey, "CANCELLED");
       return;
     }
 
-    const rawCode = extractRecordVoucherCode(r);
-    const rawCodeUpper = rawCode ? String(rawCode).trim().toUpperCase() : "";
-    if (rawCode && rawCode !== "-" && rawCodeUpper !== "CANCELLED") {
-      const clean = cleanVoucherCodeValue(String(rawCode)).toUpperCase();
-      if (clean && clean !== "-" && clean !== "CANCELLED") {
-        map.set(recordKey, clean);
-        internalAssignedSet.add(clean);
-        return;
-      }
-    }
-
+    // 1. Explicit operator custom override (e.g. from Active Date Codes or custom entry)
     if (customVouchersMap) {
       const rVrm = (r.vrm || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
       const rDateIso = reqDate;
@@ -1991,6 +1994,24 @@ export function getSpreadsheetMatchingAllocationsMap(
           return;
         }
       }
+    }
+
+    // 2. Existing explicit valid voucher code on record
+    const rawCode = extractRecordVoucherCode(r);
+    const rawCodeUpper = rawCode ? String(rawCode).trim().toUpperCase() : "";
+    if (rawCode && rawCode !== "-" && rawCodeUpper !== "CANCELLED") {
+      const clean = cleanVoucherCodeValue(String(rawCode)).toUpperCase();
+      if (clean && clean !== "-" && clean !== "CANCELLED") {
+        map.set(recordKey, clean);
+        internalAssignedSet.add(clean);
+        return;
+      }
+    }
+
+    // 3. Check cancellation / duplicate blocking
+    if (isRecordCancelledCanonical(r, reqDate || processingDate, effectiveDatabase)) {
+      map.set(recordKey, "CANCELLED");
+      return;
     }
   });
 
@@ -2605,6 +2626,16 @@ export function checkIsBlockedDuplicate(
   const matchedDbRecord = database.find(r => isSamePermitRecord(r, record) || (numId > 0 && extractRecordNumericFormId(r) === numId));
   const fullRecord = matchedDbRecord ? { ...matchedDbRecord, ...record } : record;
 
+  // If this record already has an explicit valid voucher code assigned (e.g. from Active Date Codes or manual entry),
+  // it is not blocked as a duplicate.
+  const assignedCode = (record as any).voucherCodesText || record.voucherCode || (fullRecord as any).voucherCodesText || fullRecord.voucherCode;
+  if (assignedCode) {
+    const cleanAssigned = cleanVoucherCodeValue(String(assignedCode)).toUpperCase();
+    if (cleanAssigned && cleanAssigned !== "-" && cleanAssigned !== "CANCELLED" && cleanAssigned !== "PENDING" && cleanAssigned !== "N/A") {
+      return false;
+    }
+  }
+
   // Find all records with matching VRM
   const vrmRecords = database.filter(r => {
     const rVrm = (r.vrm || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
@@ -2692,11 +2723,21 @@ export function isRecordCancelled(
 ): boolean {
   if (!record) return false;
 
-  // 0. Silent VRM blocklist — takes precedence over date/duplicate logic
+  // 0. Hard Manage Blocklist — the primary source for blocking
   if (isVrmSilentBlockedSync(record.vrm)) return true;
 
   // 1. Explicit boolean cancellation override
   if (record.isCancelled === true) return true;
+
+  // If the record has an explicit valid voucher code assigned (not "-" or "CANCELLED"),
+  // manual operator assignment unblocks duplicate/window cancellation (unless on hard silent blocklist)
+  const assignedCode = record.voucherCodesText || record.voucherCode;
+  if (assignedCode) {
+    const cleanAssigned = cleanVoucherCodeValue(String(assignedCode)).toUpperCase();
+    if (cleanAssigned && cleanAssigned !== "-" && cleanAssigned !== "CANCELLED" && cleanAssigned !== "PENDING" && cleanAssigned !== "N/A") {
+      return false;
+    }
+  }
 
   // 2. Date window validity
   const submissionDate = record.submissionDate || record.startTime || record.completionTime || record.createdAt;

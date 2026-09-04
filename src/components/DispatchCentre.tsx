@@ -37,6 +37,7 @@ import {
   getTodayISO
 } from "../utils/csvParser";
 import { checkIsRecordDispatched, getRecordKeys } from "../utils/dispatchUtils";
+import { isVrmSilentBlockedSync } from "../lib/blocklist";
 
 interface DispatchCentreProps {
   database: CsvPermitRecord[];
@@ -135,12 +136,21 @@ export function DispatchCentre({
   const [sortDirection, setSortDirection] = useState<SortDirection>(null);
 
   // Dropdown filter states
-  const [statusFilter, setStatusFilter] = useState<"ALL" | "PENDING" | "SENT" | "UNSENT">("ALL");
+  const [statusFilter, setStatusFilter] = useState<"ALL" | "PENDING" | "SENT" | "UNSENT" | "BLOCKED">("ALL");
   const [hospitalFilter, setHospitalFilter] = useState<string>("ALL");
   const [wardFilter, setWardFilter] = useState<string>("ALL");
   const [dateFilter, setDateFilter] = useState<"ALL" | "TODAY" | "THIS_WEEK" | "THIS_MONTH" | "CUSTOM">("THIS_WEEK");
   const [customStartDate, setCustomStartDate] = useState<string>("");
   const [customEndDate, setCustomEndDate] = useState<string>("");
+
+  const [blocklistVersion, setBlocklistVersion] = useState<number>(0);
+  useEffect(() => {
+    const handleBlocklistUpdate = () => {
+      setBlocklistVersion(v => v + 1);
+    };
+    window.addEventListener("blocklist_updated", handleBlocklistUpdate);
+    return () => window.removeEventListener("blocklist_updated", handleBlocklistUpdate);
+  }, []);
 
   // Pagination state (default: 50 rows per page)
   const [pageSize, setPageSize] = useState<number>(50);
@@ -161,7 +171,7 @@ export function DispatchCentre({
       vouchersDatabase,
       customVouchers
     );
-  }, [baseRecords, database, processingDate, vouchersDatabase, customVouchers]);
+  }, [baseRecords, database, processingDate, vouchersDatabase, customVouchers, blocklistVersion]);
 
   // A replacement is temporarily UNSENT while its new QR code is prepared.
   // Keep that state visible in the Dispatch Centre using the selected form's
@@ -227,15 +237,11 @@ export function DispatchCentre({
   };
 
   const getIsCancelled = (record: CsvPermitRecord, idx: number) => {
-    const recordKey = String(record.formId ?? record.id ?? idx);
-    const displayCode = recordCodeMap.get(recordKey);
-    const reqDate = getRequestedPermitDateISO(record, processingDate);
-    return isRecordCancelled(record, reqDate, database) || displayCode === "CANCELLED";
+    return isVrmSilentBlockedSync(record.vrm);
   };
 
   const getStatusStr = (record: CsvPermitRecord, idx: number) => {
-    const isCanc = getIsCancelled(record, idx);
-    if (isCanc) return "BLOCKED";
+    if (isVrmSilentBlockedSync(record.vrm)) return "BLOCKED";
     if (isReplacementPending(record)) return "REPLACEMENT";
     const isDispatched = checkIsRecordDispatched(record, record.vrm, record.driverName, record.dateRequired, dispatchedKeys, unsentKeys);
     const rowKey = String(record.formId ?? record.id ?? record.vrm ?? idx);
@@ -436,12 +442,13 @@ export function DispatchCentre({
         if (!matchesSearch) return false;
       }
 
-      // 2. Status Filter: "ALL" | "PENDING" | "SENT" | "UNSENT"
+      // 2. Status Filter: "ALL" | "PENDING" | "SENT" | "UNSENT" | "BLOCKED"
       if (statusFilter !== "ALL") {
         const status = getStatusStr(record, idx);
         if (statusFilter === "PENDING" && status !== "PENDING") return false;
         if (statusFilter === "SENT" && status !== "SENT") return false;
         if (statusFilter === "UNSENT" && status !== "UNSENT") return false;
+        if (statusFilter === "BLOCKED" && status !== "BLOCKED") return false;
       }
 
       // 3. Hospital Filter
@@ -745,6 +752,7 @@ export function DispatchCentre({
                 <option value="PENDING">PENDING</option>
                 <option value="SENT">SENT</option>
                 <option value="UNSENT">UNSENT</option>
+                <option value="BLOCKED">BLOCKED</option>
               </select>
               <ChevronDown className="w-3.5 h-3.5 text-slate-400 pointer-events-none absolute right-3 top-1/2 -translate-y-1/2" />
             </div>
@@ -1030,24 +1038,23 @@ export function DispatchCentre({
                 const expiresIso = recordIso ? addDays(recordIso, 6) : "";
 
                 const reqDate = getRequestedPermitDateISO(record, processingDate);
+                const isBlocked = isVrmSilentBlockedSync(record.vrm);
                 const isCancelled = isRecordCancelled(record, reqDate, database);
                 const recordKey = String(record.formId ?? record.id ?? index);
                 let displayCode = recordCodeMap.get(recordKey);
 
-                if (isCancelled) {
+                if (isBlocked || isCancelled) {
                   displayCode = "CANCELLED";
-                } else if (displayCode === undefined || displayCode === null || displayCode === "CANCELLED") {
+                } else if (displayCode === undefined || displayCode === null || displayCode === "CANCELLED" || displayCode === "BLOCKED") {
                   const rawCode = (record.voucherCode || (customVouchers && (customVouchers[recordKey] || (record.vrm && customVouchers[`${record.vrm.toUpperCase().replace(/\s+/g, "")}_${reqDate}`]))) || "").trim();
-                  displayCode = (rawCode && rawCode.toUpperCase() !== "CANCELLED") ? rawCode : "-";
+                  displayCode = (rawCode && rawCode.toUpperCase() !== "CANCELLED" && rawCode.toUpperCase() !== "BLOCKED") ? rawCode : "-";
                 }
                 const rowKey = String(record.formId ?? record.id ?? record.vrm ?? index);
 
                 const isDispatched = checkIsRecordDispatched(record, record.vrm, record.driverName, record.dateRequired, dispatchedKeys, unsentKeys);
                 const recordKeys = getRecordKeys(record);
                 const isUnsent = Boolean(unsentKeys && unsentKeys.length > 0 && (unsentKeys.includes(rowKey) || recordKeys.some(k => unsentKeys.includes(k))));
-                // CANCELLED is terminal and must never inherit the selected
-                // record's replacement state, even when VRM/date are identical.
-                const replacementPending = !isCancelled && isReplacementPending(record);
+                const replacementPending = !isBlocked && isReplacementPending(record);
 
                 // 2. # Column: Excel ID with row number fallback
                 const excelId = (() => {
@@ -1078,7 +1085,7 @@ export function DispatchCentre({
 
                     {/* 2. QR Code Column */}
                     <td className="py-3 px-3 border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap">
-                      {isCancelled ? (
+                      {(isBlocked || isCancelled || displayCode === "CANCELLED") ? (
                         <span className="text-red-600 dark:text-[#FF453A] font-semibold text-xs tracking-wider">
                           CANCELLED
                         </span>
@@ -1107,7 +1114,7 @@ export function DispatchCentre({
 
                     {/* 5. VOUCHERCODE Column */}
                     <td className="py-3 px-3 font-mono border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap">
-                      {isCancelled ? (
+                      {(isBlocked || isCancelled || displayCode === "CANCELLED") ? (
                         <span className="text-red-600 dark:text-[#FF453A] font-semibold tracking-wider">
                           CANCELLED
                         </span>
@@ -1140,7 +1147,7 @@ export function DispatchCentre({
 
                     {/* 10. STATUS Column */}
                     <td className="py-3 px-3 text-center border-r border-slate-100 dark:border-[#102947]/60 select-none whitespace-nowrap">
-                      {isCancelled ? (
+                      {isBlocked ? (
                         <span className="border border-rose-300 dark:border-rose-800/60 bg-rose-50 dark:bg-rose-950/30 text-rose-700 dark:text-rose-300 font-bold px-2.5 py-0.5 rounded text-[10px] tracking-wider uppercase inline-flex items-center justify-center whitespace-nowrap">
                           BLOCKED
                         </span>
@@ -1169,12 +1176,12 @@ export function DispatchCentre({
                       <div className="inline-flex items-center justify-center rounded-md overflow-hidden shadow-xs">
                         <button 
                           type="button" 
-                          disabled={busyKey === rowKey || isCancelled} 
-                          onClick={() => { if (!isCancelled) handleAction(record, isDispatched, replacementPending); }} 
-                          title={isCancelled ? "This VRM is blocked — dispatch disabled" : undefined}
+                          disabled={busyKey === rowKey || isBlocked} 
+                          onClick={() => { if (!isBlocked) handleAction(record, isDispatched, replacementPending); }} 
+                          title={isBlocked ? "This VRM is on the Manage Blocklist — dispatch disabled" : undefined}
                           className={`flex items-center gap-1 px-3 py-1 text-white text-xs font-semibold transition-colors disabled:opacity-50 whitespace-nowrap ${
-                            isCancelled
-                              ? "bg-slate-400 dark:bg-slate-700 cursor-not-allowed"
+                            isBlocked
+                              ? "bg-slate-400 dark:bg-slate-700 cursor-not-allowed opacity-60"
                               : "cursor-pointer " + (replacementPending
                                   ? "bg-[#7c3aed] hover:bg-[#6d28d9]"
                                   : isDispatched
@@ -1187,21 +1194,22 @@ export function DispatchCentre({
                           ) : (
                             <Mail className="w-3 h-3" />
                           )}
-                          <span>{isCancelled ? "Unsend" : (replacementPending ? "Resend" : (isDispatched ? "Unsend" : "Send"))}</span>
+                          <span>{isBlocked ? "UNSEND" : (replacementPending ? "Resend" : (isDispatched ? "Unsend" : "Send"))}</span>
                         </button>
                         <button 
                           type="button" 
-                          onClick={() => onSelectRecord(record)} 
-                          className={`px-1.5 py-1 text-white transition-colors cursor-pointer ${
-                            isCancelled
-                              ? "bg-slate-500 hover:bg-slate-600 border-l border-slate-600"
-                              : replacementPending
+                          disabled={isBlocked}
+                          onClick={() => { if (!isBlocked) onSelectRecord(record); }} 
+                          className={`px-1.5 py-1 text-white transition-colors ${
+                            isBlocked
+                              ? "bg-slate-500/80 dark:bg-slate-600/80 cursor-not-allowed opacity-60 border-l border-slate-600"
+                              : "cursor-pointer " + (replacementPending
                                 ? "bg-[#6d28d9] hover:bg-[#5b21b6] border-l border-[#5b21b6]"
                                 : isDispatched
                                   ? "bg-[#b91c1c] hover:bg-[#991b1b] border-l border-[#991b1b]"
-                                  : "bg-[#1565d8] hover:bg-[#0f4eb0] border-l border-[#0f4eb0]"
+                                  : "bg-[#1565d8] hover:bg-[#0f4eb0] border-l border-[#0f4eb0]")
                           }`}
-                          title="Select permit record"
+                          title={isBlocked ? "Disabled" : "Select Record"}
                         >
                           <ChevronDown className="w-3 h-3" />
                         </button>

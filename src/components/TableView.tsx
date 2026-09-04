@@ -34,6 +34,7 @@ import {
 } from "../utils/csvParser";
 import { checkIsRecordDispatched } from "../utils/dispatchUtils";
 import { BlocklistPanel } from "./BlocklistPanel";
+import { isVrmSilentBlockedSync } from "../lib/blocklist";
 
 interface TableViewProps {
   database: CsvPermitRecord[];
@@ -461,6 +462,7 @@ export function TableView({
                   const isDispatched = checkIsRecordDispatched(r, r.vrm, r.driverName, r.dateRequired, dispatchedKeys, unsentKeys);
                   const effectiveProcessingDate = processingDate || getTodayISO();
                   const isRecCancelled = isRecordCancelled(r, effectiveProcessingDate, database);
+                  const isBlocked = isVrmSilentBlockedSync(r.vrm);
 
                   const allocatedCode = tableRecordCodeMap.get(recordKey);
                   const rawVoucherCode = extractRecordVoucherCode(r);
@@ -494,7 +496,14 @@ export function TableView({
                         </span>
                       </td>
                       <td className="p-3 text-center whitespace-nowrap border-r border-gray-150/60 dark:border-slate-800/60 cursor-default select-none pointer-events-none">
-                        {isDispatched ? (
+                        {isBlocked ? (
+                          <span 
+                            className="inline-flex items-center gap-0.5 bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 text-[10px] font-bold px-2 py-0.5 rounded-full border border-rose-200 dark:border-rose-900/40 select-none"
+                            title="Status: Blocked (Display only)"
+                          >
+                            <span>BLOCKED</span>
+                          </span>
+                        ) : isDispatched ? (
                           <span 
                             className="inline-flex items-center gap-0.5 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 text-[10px] font-bold px-2 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-900/40 select-none"
                             title="Status: Sent (Display only)"
