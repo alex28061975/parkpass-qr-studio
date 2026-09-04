@@ -865,19 +865,11 @@ function PermitCardInner({
     
     const result = await handleSendWithOutlook(targetRecord);
     if (result !== false) {
-      const targetDriverName = rec?.driverName || data.name || "Driver";
       const targetPayloadCode = rec?.voucherCode || rec?.prePaidCode || (!targetRecord ? currentSelectedCode : "");
       const targetRecordKeyStr = rec ? (getRecordPrimaryKey(rec) || vrm) : recordKeyStr;
       if (targetPayloadCode && targetPayloadCode !== "-" && targetPayloadCode !== "CANCELLED") {
         setLastDispatchedCodeMap(prev => ({ ...prev, [targetRecordKeyStr]: targetPayloadCode }));
       }
-      showToast(
-        isCancelledRec
-          ? `📧 Sent cancellation notice to ${targetDriverName}.`
-          : qrCodeChanged && !targetRecord
-            ? `📧 Resent replacement permit to ${targetDriverName}.`
-            : `📧 Sent permit to ${targetDriverName}.`
-      );
     } else {
       showToast("❌ Failed to send. Please try again.");
     }
@@ -1582,6 +1574,10 @@ function PermitCardInner({
       window.focus();
       
       if (finalTarget === "qr") {
+        if (isCancelled) {
+          showToast("⚠️ QR code copying is disabled for cancelled permits.");
+          return;
+        }
         if (!qrUrlSmall) {
           setCopyStatus("error");
           return;
@@ -1762,26 +1758,7 @@ function PermitCardInner({
   // - Blue clickable email link
   // ============================================
   const handleSendWithOutlook = async (targetRecord?: CsvPermitRecord) => {
-    // 1. Kick off the clipboard write synchronously right at the top
-    let resolveQrBlob: ((blob: Blob) => void) | undefined;
-    let rejectQrBlob: ((err: unknown) => void) | undefined;
-    let clipboardWritePromise: Promise<void> | null = null;
-    if (navigator.clipboard && typeof navigator.clipboard.write === 'function') {
-      const qrBlobPromise = new Promise<Blob>((resolve, reject) => {
-        resolveQrBlob = resolve;
-        rejectQrBlob = reject;
-      });
-      try {
-        clipboardWritePromise = navigator.clipboard.write([
-          new ClipboardItem({ "image/png": qrBlobPromise })
-        ]);
-      } catch (err) {
-        console.warn("Clipboard write initiation error:", err);
-        clipboardWritePromise = null;
-      }
-    }
-
-    // 2. Identify the target record context strictly
+    // 1. Identify the target record context strictly first
     const targetRec = targetRecord || (activeIndex !== -1 && matchingPermits[activeIndex] ? matchingPermits[activeIndex] : null) || (database && data.formId ? database.find(r => r.formId === data.formId || r.id === data.formId) : null) || {
       id: data.id,
       formId: data.formId,
@@ -1805,8 +1782,38 @@ function PermitCardInner({
     const targetValidTo = targetRec.validTo || (targetValidFrom ? addDays(targetValidFrom, 6) : "") || (targetRecord ? "" : data.validTo) || "";
     const targetTodayDate = targetRec.todayDate || (targetRecord ? "" : data.todayDate) || getTodayISO();
     const targetDateRequired = targetRec.dateRequired || targetRec.validFrom || (targetRecord ? "" : data.dateRequired) || "";
-    const targetIsCancelled = targetRecord ? isRecordCancelled(targetRec, targetTodayDate, database) : isCancelled;
+    const targetIsCancelled = Boolean(
+      targetRecord
+        ? isRecordCancelled(targetRec, targetTodayDate, database)
+        : (isCancelled || isRecordCancelled(targetRec, targetTodayDate, database))
+    );
     const targetPayloadCode = targetRec.voucherCode || targetRec.prePaidCode || targetRec.voucherCodesText || (!targetRecord ? (data.qrOverride?.trim() || activeVoucherCode || currentSelectedCode || "") : "");
+
+    // 2. Kick off clipboard write ONLY if permit is NOT cancelled!
+    // If cancelled, skip navigator.clipboard.write() call completely and clear clipboard text
+    let resolveQrBlob: ((blob: Blob) => void) | undefined;
+    let rejectQrBlob: ((err: unknown) => void) | undefined;
+    let clipboardWritePromise: Promise<void> | null = null;
+    if (!targetIsCancelled && navigator.clipboard && typeof navigator.clipboard.write === 'function') {
+      const qrBlobPromise = new Promise<Blob>((resolve, reject) => {
+        resolveQrBlob = resolve;
+        rejectQrBlob = reject;
+      });
+      try {
+        clipboardWritePromise = navigator.clipboard.write([
+          new ClipboardItem({ "image/png": qrBlobPromise })
+        ]);
+      } catch (err) {
+        console.warn("Clipboard write initiation error:", err);
+        clipboardWritePromise = null;
+      }
+    } else if (targetIsCancelled && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      try {
+        navigator.clipboard.writeText("").catch(() => {});
+      } catch {
+        // safe ignore
+      }
+    }
 
     // 3. Silent block check
     const silentBlocked = await isVrmSilentBlocked(targetVrm || "");
@@ -1880,7 +1887,11 @@ function PermitCardInner({
       return false;
     }
 
-    setShowOutlookGuide(true);
+    if (!targetIsCancelled) {
+      setShowOutlookGuide(true);
+    } else {
+      setShowOutlookGuide(false);
+    }
     const targetRecordKeyStr = getRecordPrimaryKey(targetRec) || targetVrm;
     if (targetPayloadCode && targetPayloadCode !== "-" && targetPayloadCode !== "CANCELLED") {
       setLastDispatchedCodeMap(prev => ({ ...prev, [targetRecordKeyStr]: targetPayloadCode }));
@@ -1918,26 +1929,26 @@ function PermitCardInner({
           console.error("QR Code Generation Error in Send:", err);
         }
       }
-    }
 
-    if (!targetIsCancelled && activeQrDataUrl && resolveQrBlob) {
-      try {
-        resolveQrBlob(dataURLtoBlob(activeQrDataUrl));
-      } catch (err) {
-        rejectQrBlob?.(err);
+      if (activeQrDataUrl && resolveQrBlob) {
+        try {
+          resolveQrBlob(dataURLtoBlob(activeQrDataUrl));
+        } catch (err) {
+          rejectQrBlob?.(err);
+        }
+      } else {
+        rejectQrBlob?.(new Error("No QR code available to copy"));
       }
-    } else {
-      rejectQrBlob?.(new Error("No QR code available to copy"));
-    }
 
-    if (clipboardWritePromise) {
-      try {
-        window.focus();
-        await clipboardWritePromise;
-        setCopyStatus("success");
-        setTimeout(() => setCopyStatus("idle"), 2000);
-      } catch (err) {
-        console.warn("Clipboard copy QR code error:", err);
+      if (clipboardWritePromise) {
+        try {
+          window.focus();
+          await clipboardWritePromise;
+          setCopyStatus("success");
+          setTimeout(() => setCopyStatus("idle"), 2000);
+        } catch (err) {
+          console.warn("Clipboard copy QR code error:", err);
+        }
       }
     }
 
@@ -1958,7 +1969,12 @@ function PermitCardInner({
       console.warn("Could not auto-open Outlook link:", err);
     }
 
-    showToast(`📋 QR Code copied! Outlook opened for ${targetDriverName || targetVrm || "permit"} — paste (Ctrl+V) into the email body.`);
+    const recipientDisplay = targetDriverName || targetVrm || "permit";
+    if (targetIsCancelled) {
+      showToast(`📧 Outlook opened for ${recipientDisplay} — cancellation notice prepared.`);
+    } else {
+      showToast(`📋 QR Code copied! Outlook opened for ${recipientDisplay} — paste (Ctrl+V) into the email body.`);
+    }
 
     // 9. Auto-progression: only when initiated from the card interface
     if (!targetRecord) {
@@ -2490,9 +2506,9 @@ function PermitCardInner({
                   <button
                     type="button"
                     onClick={() => handleCopy("qr")}
-                    disabled={!qrUrl}
+                    disabled={!qrUrl || isCancelled}
                     className="flex items-center justify-center bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-850 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-800 p-1 rounded-lg transition-all active:scale-95 disabled:opacity-50 cursor-pointer h-8"
-                    title="Copy QR code image to clipboard"
+                    title={isCancelled ? "QR code copying is disabled for cancelled permits" : "Copy QR code image to clipboard"}
                   >
                     <Copy className="w-3.5 h-3.5 shrink-0" />
                   </button>
