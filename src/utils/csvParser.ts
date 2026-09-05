@@ -247,7 +247,6 @@ export function sortRecordsBySubmissionTimeDesc(records: CsvPermitRecord[]): Csv
     if (timeA > 0 && (!timeB || timeB === 0)) return -1;
     if (timeB > 0 && (!timeA || timeA === 0)) return 1;
 
-    // Fallback if timestamps are missing/equal: check dateRequired / validFrom
     const dateA = parseDateToISO(a.dateRequired || a.validFrom || "");
     const dateB = parseDateToISO(b.dateRequired || b.validFrom || "");
     if (dateA && dateB && dateA !== dateB) {
@@ -263,10 +262,9 @@ export function sortRecordsByFormIdDesc(records: CsvPermitRecord[]): CsvPermitRe
     const idA = getNumericFormId(a);
     const idB = getNumericFormId(b);
     if (idA !== idB) {
-      return idB - idA; // Highest number first
+      return idB - idA;
     }
 
-    // Tie-breaker: submission time ms descending
     const timeA = extractRecordSubmissionTimeMs(a);
     const timeB = extractRecordSubmissionTimeMs(b);
     if (timeA > 0 && timeB > 0 && timeA !== timeB) {
@@ -275,7 +273,6 @@ export function sortRecordsByFormIdDesc(records: CsvPermitRecord[]): CsvPermitRe
     if (timeA > 0 && (!timeB || timeB === 0)) return -1;
     if (timeB > 0 && (!timeA || timeA === 0)) return 1;
 
-    // Secondary fallback: date required descending
     const dateA = parseDateToISO(a.dateRequired || a.validFrom || "");
     const dateB = parseDateToISO(b.dateRequired || b.validFrom || "");
     if (dateA && dateB && dateA !== dateB) {
@@ -304,13 +301,9 @@ export function generateNextFormId(records: CsvPermitRecord[]): string {
   return String(nextNum).padStart(5, "0");
 }
 
-export function formatExportStartTime(dateRequired?: string, startTime?: string): string {
-  // The "Start Time" export column represents the actual submission timestamp,
-  // not the requested parking date (that's already its own "Date Required"
-  // column). Prioritizing dateRequired here silently discarded the real
-  // time-of-day on every export, which then caused duplicate-precedence ties
-  // if the exported file was ever re-imported.
-  const targetRaw = startTime || dateRequired || "";
+export function formatExportStartTime(dateRequired?: string, startTime?: string, completionTime?: string): string {
+  // ✅ PRIORITY: completionTime → startTime → dateRequired
+  const targetRaw = completionTime || startTime || dateRequired || "";
   if (!targetRaw) return "-";
 
   let datePart = targetRaw.trim();
@@ -345,18 +338,11 @@ export function formatExportCreatedAt(createdAt?: string, created_at?: string, s
 
 /**
  * Format the record's submitted timestamp for the table display as DD/MM/YYYY HH:MM:SS.
- * Priority:
- * 1. Primary: completionTime
- * 2. Fallback: startTime
- * 3. Last fallback: createdAt
- * Format: DD/MM/YYYY HH:MM:SS
+ * Priority: completionTime → startTime → createdAt
  */
 export function formatSubmittedDateTime(record: CsvPermitRecord): string {
   if (!record) return "-";
 
-  // 1. Primary: completionTime
-  // 2. Fallback: startTime
-  // 3. Last fallback: createdAt
   const candidate = 
     (record.completionTime && String(record.completionTime).trim() && String(record.completionTime).trim() !== "-")
       ? String(record.completionTime).trim()
@@ -374,12 +360,10 @@ export function formatSubmittedDateTime(record: CsvPermitRecord): string {
 
   const effectiveStr = String(candidate || "").trim();
 
-  // If no timestamp was found from completionTime, startTime, or createdAt, return "-"
   if (!effectiveStr || effectiveStr === "-" || effectiveStr.toLowerCase() === "null" || effectiveStr.toLowerCase() === "undefined") {
     return "-";
   }
 
-  // 1. Check for UK date format DD/MM/YYYY or D/M/YYYY or with hyphens DD-MM-YYYY
   const ukMatch = effectiveStr.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?(?:\s*([AP]M))?)?/i);
   if (ukMatch) {
     let day = parseInt(ukMatch[1], 10);
@@ -411,7 +395,6 @@ export function formatSubmittedDateTime(record: CsvPermitRecord): string {
     return `${dd}/${mm}/${yyyy} ${hh}:${min}:${ss}`;
   }
 
-  // 2. Check for ISO date format YYYY-MM-DD or YYYY/MM/DD
   const isoMatch = effectiveStr.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?(?:\s*([AP]M))?)?/i);
   if (isoMatch) {
     const year = parseInt(isoMatch[1], 10);
@@ -437,7 +420,6 @@ export function formatSubmittedDateTime(record: CsvPermitRecord): string {
     return `${dd}/${mm}/${yyyy} ${hh}:${min}:${ss}`;
   }
 
-  // 3. Fallback using native Date parsing
   const d = new Date(effectiveStr);
   if (!isNaN(d.getTime()) && d.getTime() > 0) {
     const dd = String(d.getDate()).padStart(2, "0");
@@ -452,10 +434,6 @@ export function formatSubmittedDateTime(record: CsvPermitRecord): string {
   return effectiveStr;
 }
 
-/**
- * Extract numerical epoch milliseconds for submitted time to enable accurate sorting.
- * Hierarchy: 1. completionTime, 2. startTime, 3. createdAt
- */
 export function getRecordSubmittedTimeMs(record: CsvPermitRecord): number {
   if (!record) return 0;
   const candidate = 
@@ -481,6 +459,16 @@ export function getRecordSubmittedTimeMs(record: CsvPermitRecord): number {
   const d = new Date(String(candidate));
   if (!isNaN(d.getTime()) && d.getTime() > 0) return d.getTime();
   return 0;
+}
+
+export function getRecordSubmittedDateISO(record: CsvPermitRecord): string {
+  const ms = getRecordSubmittedTimeMs(record);
+  if (!ms || ms <= 0) return "";
+  const d = new Date(ms);
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
 
 export function exportToExcel(
@@ -537,7 +525,7 @@ export function exportToExcel(
       "Driver Phone": r.phone || "-",
       "Driver Email": r.email || "-",
       "Voucher Code": finalVoucherCode,
-      "Start Time": formatExportStartTime(r.dateRequired, r.startTime),
+      "Start Time": formatExportStartTime(r.dateRequired, r.startTime, r.completionTime),
       "Created At": formatExportCreatedAt(r.createdAt, r.created_at, r.startTime)
     };
   });
@@ -641,7 +629,7 @@ export function exportToCSV(
       escapeCsvField(r.phone || "-"),
       escapeCsvField(r.email || "-"),
       escapeCsvField(finalVoucherCode),
-      escapeCsvField(formatExportStartTime(r.dateRequired, r.startTime)),
+      escapeCsvField(formatExportStartTime(r.dateRequired, r.startTime, r.completionTime)),
       escapeCsvField(formatExportCreatedAt(r.createdAt, r.created_at, r.startTime))
     ];
     csvRows.push(row.join(","));
@@ -668,7 +656,6 @@ export function parsePastedText(rawText: string): CsvPermitRecord[] {
   const lines = rawText.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
   if (lines.length === 0) return [];
 
-  // Helper to split a line by tab or CSV or multiple spaces
   const splitLine = (l: string): string[] => {
     if (l.includes("\t")) {
       return l.split("\t").map(c => c.trim());
@@ -738,8 +725,18 @@ export function parsePastedText(rawText: string): CsvPermitRecord[] {
       h === "completion time" || 
       h === "completion_time" || 
       h === "completiontime" ||
+      h === "end time" ||
+      h === "end_time" ||
+      h === "endtime" ||
+      h === "finish time" ||
+      h === "finish_time" ||
+      h === "date submitted" ||
+      h === "submitted date" ||
       h.includes("completion time") || 
-      h.includes("completed time") ||
+      h.includes("completed time") || 
+      h.includes("submission end") ||
+      h.includes("time completed") ||
+      h.includes("completed at") ||
       h.includes("completion")
     );
     if (completionTimeIdx === -1 && headers.length > 2) {
@@ -830,8 +827,6 @@ export function parsePastedText(rawText: string): CsvPermitRecord[] {
 
       if (columns.length < 2) continue;
 
-      // Check if standard 10, 11, or 12 column concessions table format:
-      // [#FormId, Hospital, Ward, DateRequired, DateExpiry, VRM, DriverName, Phone, Email, Voucher, StartTime/CreatedAt...]
       const hasStandardConcessionsCols = (
         columns.length >= 7 &&
         (columns[0].startsWith("#") || /^\d+$/.test(columns[0])) &&
@@ -1022,8 +1017,18 @@ export function parsePermitCsv(rawText: string): CsvPermitRecord[] {
     h === "completion time" || 
     h === "completion_time" || 
     h === "completiontime" ||
+    h === "end time" ||
+    h === "end_time" ||
+    h === "endtime" ||
+    h === "finish time" ||
+    h === "finish_time" ||
+    h === "date submitted" ||
+    h === "submitted date" ||
     h.includes("completion time") || 
-    h.includes("completed time") ||
+    h.includes("completed time") || 
+    h.includes("submission end") ||
+    h.includes("time completed") ||
+    h.includes("completed at") ||
     h.includes("completion")
   );
   if (completionTimeIdx === -1 && headers.length > 2) {
@@ -1199,8 +1204,18 @@ export function parsePermitExcel(arrayBuffer: ArrayBuffer): CsvPermitRecord[] {
       h === "completion time" || 
       h === "completion_time" || 
       h === "completiontime" ||
+      h === "end time" ||
+      h === "end_time" ||
+      h === "endtime" ||
+      h === "finish time" ||
+      h === "finish_time" ||
+      h === "date submitted" ||
+      h === "submitted date" ||
       h.includes("completion time") || 
-      h.includes("completed time") ||
+      h.includes("completed time") || 
+      h.includes("submission end") ||
+      h.includes("time completed") ||
+      h.includes("completed at") ||
       h.includes("completion")
     );
     if (completionTimeIdx === -1 && headers.length > 2) {
@@ -1420,26 +1435,6 @@ export function getTodayISO(): string {
   return `${year}-${month}-${day}`;
 }
 
-/**
- * Validates that a parking permit's required date falls within the allowed window:
- * 7 valid days in the past through tomorrow (inclusive), relative to a reference
- * "today" date.
- *
- * daysDiff = dateRequired - today (in whole days)
- * Valid only if: -6 <= daysDiff <= 1
- * Anything outside that window (8+ days ago, i.e. daysDiff <= -7, or 2+ days
- * ahead, i.e. daysDiff > 1) is invalid and should be cancelled.
- *
- * This is the single source of truth for cancellation-by-date. Callers should
- * use this to compute status dynamically rather than trusting a stored
- * voucherCode/status string, which may be stale (e.g. re-imported from a
- * previous export, or simply left over from an earlier day).
- *
- * @param dateRequiredStr the permit's required parking date
- * @param referenceDateStr optional reference "today" (defaults to the real
- *   current date). Pass this when the UI lets the user review data as of a
- *   simulated/processing date rather than the actual system date.
- */
 export function isDateRequiredOutsideValidWindow(dateRequiredStr?: string, referenceDateStr?: string): boolean {
   if (!dateRequiredStr) return false;
   const iso = parseDateToISO(String(dateRequiredStr));
@@ -1492,7 +1487,6 @@ export function parseDateToISO(dateStr: string): string {
 
   s = s.split(/[\sT]+/)[0].trim();
   
-  // 1. If date is already YYYY-MM-DD or YYYY/MM/DD or YYYY.MM.DD
   const ymdMatch = s.match(/^(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})/);
   if (ymdMatch) {
     const year = ymdMatch[1];
@@ -1501,7 +1495,6 @@ export function parseDateToISO(dateStr: string): string {
     return `${year}-${month}-${day}`;
   }
 
-  // 2. Excel numeric serial date support (e.g. 46255 -> 2026-08-21)
   if (!isNaN(Number(s)) && Number(s) > 30000 && Number(s) < 60000) {
     const d = new Date((Number(s) - 25569) * 86400 * 1000);
     if (!isNaN(d.getTime())) {
@@ -1525,7 +1518,6 @@ export function parseDateToISO(dateStr: string): string {
     }
   } catch (e) {}
 
-  // 3. Handle DD/MM/YYYY, MM/DD/YYYY, D/M/YY, D/M/YYYY (e.g. "8/21/2026", "21/08/2026", "8/19/26")
   const slashMatch = s.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})/);
   if (slashMatch) {
     const part1 = parseInt(slashMatch[1], 10);
@@ -1544,7 +1536,6 @@ export function parseDateToISO(dateStr: string): string {
       month = part1;
     }
     
-    // Auto-disambiguate: If one part is > 12 and the other is <= 12, part > 12 MUST be the day
     if (month > 12 && day <= 12) {
       const temp = month;
       month = day;
@@ -1556,7 +1547,6 @@ export function parseDateToISO(dateStr: string): string {
     }
   }
 
-  // 4. Fallback using native Date parsing
   const parsed = new Date(s);
   if (!isNaN(parsed.getTime())) {
     const year = parsed.getUTCFullYear();
@@ -1637,7 +1627,6 @@ export function cleanVoucherDate(val: any): string {
   const s = String(val).trim();
   if (!s || s === "-" || s === "—" || s === "N/A" || s === "NA") return "";
 
-  // If already YYYY-MM-DD
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
 
   if (!isNaN(Number(s)) && Number(s) > 30000 && Number(s) < 60000) {
@@ -1665,7 +1654,7 @@ export function cleanVoucherDate(val: any): string {
 
 export function getDefaultSampleVouchers(targetDate?: string): ParsedVoucherData[] {
   const baseDate = targetDate ? (parseDateToISO(targetDate) || getTodayISO()) : getTodayISO();
-  const validTo = addDays(baseDate, 6);
+  const validTo = addDaysSafe(baseDate, 6);
   const sampleCodes = [
     "CON9012JXM", "CON4471PLQ", "CON7783TRW", "CON2201MXK", "CON3319KLP",
     "CON5522BNM", "CON8891QWE", "CON1092ASD", "CON6634ZXC", "CON7745TYU",
@@ -1694,7 +1683,7 @@ export function normalizeVoucherData(item: any): ParsedVoucherData {
   const endRaw = item.validTo || item.valid_to || item.ValidTo || item.expires || item.expiryDate || item.endDate || item.end_date;
   
   const validFrom = cleanVoucherDate(startRaw) || undefined;
-  const validTo = cleanVoucherDate(endRaw) || (validFrom ? addDays(validFrom, 6) : undefined);
+  const validTo = cleanVoucherDate(endRaw) || (validFrom ? addDaysSafe(validFrom, 6) : undefined);
   
   return {
     ...item,
@@ -1992,9 +1981,6 @@ export function detectDateFormat(rawText: string): "US" | "UK" {
   return "UK";
 }
 
-/**
- * Get matching permits by target date prioritization using getRequestedPermitDateISO
- */
 export function getMatchingPermits(database: CsvPermitRecord[], activeDateStr: string): CsvPermitRecord[] {
   if (!database || database.length === 0 || !activeDateStr) {
     return [];
@@ -2126,9 +2112,7 @@ export function isVoucherExactPeriodEligible(
 
 export function isRecordCancelledCanonical(record: any, todayDateOrReference?: string, database?: CsvPermitRecord[]): boolean {
   if (!record) return false;
-  // 0. Hard Manage Blocklist — the primary source for blocking
   if (isVrmSilentBlockedSync(record.vrm)) return true;
-  // 1. Explicit boolean cancellation override or cancelled status/code
   if (record.isCancelled === true) return true;
   if (typeof record.status === "string" && record.status.trim().toLowerCase().includes("cancel")) return true;
   if (
@@ -2192,20 +2176,16 @@ export function getSpreadsheetMatchingAllocationsMap(
     const recordKey = String(r.formId ?? r.id ?? idx);
     const reqDate = getRequestedPermitDateISO(r, processingDate);
 
-    // Hard silent blocklist
     if (isVrmSilentBlockedSync(r.vrm)) {
       map.set(recordKey, "CANCELLED");
       return;
     }
 
-    // 1. Explicit operator custom override (e.g. from Active Date Codes or custom entry)
     if (customVouchersMap) {
       const rVrm = (r.vrm || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
       const rDateIso = reqDate;
       const keyWithDate = rDateIso ? `${rVrm}_${rDateIso}` : rVrm;
 
-      // Stable record identity ALWAYS wins. A VRM/date override is only a
-      // fallback for legacy records that genuinely have no id/formId.
       const hasStableId = Boolean(
         (r.formId !== undefined && r.formId !== null && String(r.formId).trim() !== "") ||
         (r.id !== undefined && r.id !== null && String(r.id).trim() !== "")
@@ -2224,7 +2204,6 @@ export function getSpreadsheetMatchingAllocationsMap(
       }
     }
 
-    // 2. Existing explicit valid voucher code on record
     const rawCode = extractRecordVoucherCode(r);
     const rawCodeUpper = rawCode ? String(rawCode).trim().toUpperCase() : "";
     if (rawCode && rawCode !== "-" && rawCodeUpper !== "CANCELLED") {
@@ -2236,7 +2215,6 @@ export function getSpreadsheetMatchingAllocationsMap(
       }
     }
 
-    // 3. Check cancellation / duplicate blocking
     if (isRecordCancelledCanonical(r, reqDate || processingDate, effectiveDatabase)) {
       map.set(recordKey, "CANCELLED");
       return;
@@ -2339,20 +2317,16 @@ export function getUnusedVouchersForDate(
     .toUpperCase()
     .replace(/[^A-Z0-9]/g, "");
 
-  // The voucher pool is still date-specific. Only vouchers belonging to the
-  // requested date (or an undated/general pool) are candidates for display.
   let dailyVouchersForDate = vouchersDatabase.filter((v) => {
     if (!v) return false;
     return getVoucherDateISO(v) === targetDateISO;
   });
 
-  // Fallback for undated/general voucher pools.
   if (dailyVouchersForDate.length === 0) {
     const undated = vouchersDatabase.filter((v) => !getVoucherDateISO(v));
     dailyVouchersForDate = undated.length > 0 ? undated : vouchersDatabase;
   }
 
-  // Deduplicate the voucher pool by normalised code.
   const dailyVouchersMap = new Map<string, ParsedVoucherData>();
   dailyVouchersForDate.forEach((v) => {
     if (!v) return;
@@ -2379,25 +2353,11 @@ export function getUnusedVouchersForDate(
     }
   });
 
-  /*
-   * CRITICAL DUPLICATE-PREVENTION RULE
-   * ----------------------------------
-   * A voucher is consumed globally once it appears on ANY permit record.
-   *
-   * Do NOT filter these records by:
-   *   - target date
-   *   - permit status
-   *   - cancellation status
-   *   - current record
-   *
-   * A cancelled record still owns/consumes its historical voucher code.
-   */
   const allAssignedCodesSet = new Set<string>();
 
   const consumeAssignedCode = (rawCode: any) => {
     if (rawCode === undefined || rawCode === null) return;
 
-    // Some legacy records can contain multiple codes in one field.
     const parts = String(rawCode).split(/[\n,;\s]+/);
 
     for (const part of parts) {
@@ -2422,8 +2382,6 @@ export function getUnusedVouchersForDate(
   const collectAssignedCodesFromRecord = (permit: any) => {
     if (!permit) return;
 
-    // Collect every possible voucher-code field. Do not use the record date or
-    // cancellation state as an exclusion condition.
     consumeAssignedCode(permit.voucherCode);
     consumeAssignedCode(permit.prePaidCode);
     consumeAssignedCode(permit.qrCode);
@@ -2440,22 +2398,16 @@ export function getUnusedVouchersForDate(
     consumeAssignedCode(permit["QR CODE"]);
   };
 
-  // ALL records consume their voucher codes, including cancelled records and
-  // records for different dates.
   (database || []).forEach(collectAssignedCodesFromRecord);
 
-  // Include any additional matching/spreadsheet records supplied by callers.
   if (Array.isArray(spreadsheetMatches)) {
     spreadsheetMatches.forEach(collectAssignedCodesFromRecord);
   }
 
-  // Intentionally include the current record too. There is no current-record
-  // exemption: a code already assigned to this record is not an unused code.
   if (currentRecord) {
     collectAssignedCodesFromRecord(currentRecord);
   }
 
-  // Keep spreadsheet-derived allocations as an additional safety net.
   const spreadsheetAssigned = getSpreadsheetMatchingAssignedCodes(
     spreadsheetMatches || [],
     database,
@@ -2478,17 +2430,14 @@ export function getUnusedVouchersForDate(
   const seenCodes = new Set<string>();
 
   dailyVouchersMap.forEach((voucher, codeUpper) => {
-    // Exact match first.
     if (allAssignedCodesSet.has(codeUpper)) return;
 
-    // Then use tolerant matching for legacy QR/code formatting differences.
     for (const assigned of allAssignedCodesSet) {
       if (isVoucherCodeMatch(assigned, codeUpper)) {
         return;
       }
     }
 
-    // Never show vouchers explicitly marked as used/assigned.
     const status = String(voucher.status || "").trim().toLowerCase();
     if (
       voucher.isUsed === true ||
@@ -2500,7 +2449,6 @@ export function getUnusedVouchersForDate(
       return;
     }
 
-    // Preserve the existing dedicated-VRM rule.
     if (voucher.vrm) {
       const vVrmClean = String(voucher.vrm)
         .toUpperCase()
@@ -2631,13 +2579,11 @@ export function parseFullDateTimeMs(str?: string, fallbackIsoDate?: string): num
   const s = String(str).trim();
   if (!s || s === "-" || s === "null" || s === "undefined") return null;
 
-  // 1. ISO 8601 with T (e.g. 2026-08-21T15:14:24)
   if (s.includes("T")) {
     const parsedISO = Date.parse(s);
     if (!isNaN(parsedISO)) return parsedISO;
   }
 
-  // 2. Extract time components (HH:MM:SS or HH:MM with optional AM/PM)
   const timeMatch = s.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?(?:\s*([AP]M))?/i);
   let hours = 0;
   let minutes = 0;
@@ -2656,7 +2602,6 @@ export function parseFullDateTimeMs(str?: string, fallbackIsoDate?: string): num
     hasTime = true;
   }
 
-  // 3. Resolve the date component
   const parsedDateISO = parseDateToISO(s);
   const resolvedFallbackISO = fallbackIsoDate ? parseDateToISO(fallbackIsoDate) : "";
   const isoDate = (parsedDateISO && /^\d{4}-\d{2}-\d{2}$/.test(parsedDateISO))
@@ -2673,12 +2618,10 @@ export function parseFullDateTimeMs(str?: string, fallbackIsoDate?: string): num
     }
   }
 
-  // 4. If time matched but no date was available, return milliseconds from baseline date 2000-01-01
   if (hasTime) {
     return new Date(2000, 0, 1, hours, minutes, seconds).getTime();
   }
 
-  // 5. Fallback using native Date
   const dateObj = new Date(s);
   if (!isNaN(dateObj.getTime()) && dateObj.getTime() > 0) {
     return dateObj.getTime();
@@ -2687,13 +2630,6 @@ export function parseFullDateTimeMs(str?: string, fallbackIsoDate?: string): num
   return null;
 }
 
-// ============================================================================
-// HELPER FUNCTIONS FOR checkIsBlockedDuplicate
-// ============================================================================
-
-/**
- * Helper: Extract numeric Form ID from a record
- */
 export function extractRecordNumericFormId(record: any): number {
   if (!record) return 0;
   const raw = record.formId !== undefined && record.formId !== null && record.formId !== ""
@@ -2712,14 +2648,9 @@ export function extractRecordNumericFormId(record: any): number {
   return 0;
 }
 
-/**
- * Helper: Extract submission timestamp (in epoch milliseconds) from a record.
- * Prioritizes actual submission time strings, falling back to base dates.
- */
 export function extractRecordSubmissionTimeMs(record: any, fallbackDateStr?: string): number {
   if (!record) return 0;
 
-  // Resolve base date from record itself if available
   const recDateRaw = record.dateRequired || record.validFrom || record.todayDate || fallbackDateStr || "";
   const recDateISO = recDateRaw ? (parseDateToISO(recDateRaw) || "") : "";
 
@@ -2754,9 +2685,6 @@ export function extractRecordSubmissionTimeMs(record: any, fallbackDateStr?: str
   return 0;
 }
 
-/**
- * Helper: Check if two records refer to the exact same submission
- */
 export function isSamePermitRecord(a: any, b: any): boolean {
   if (a === b) return true;
   if (!a || !b) return false;
@@ -2769,14 +2697,6 @@ export function isSamePermitRecord(a: any, b: any): boolean {
   const rawIdB = String(b.formId ?? b.id ?? "").trim();
   if (rawIdA && rawIdB && rawIdA !== "-" && rawIdA === rawIdB) return true;
 
-  // If both records carry a confident, distinct explicit identity (numeric Form ID
-  // or raw id), that is definitive: they are different submissions. Do NOT fall
-  // through to the fuzzy VRM/timestamp heuristic below, which can otherwise treat
-  // two different people's (or the same person's two different) submissions as
-  // "the same record" purely because their VRM matches and their computed
-  // timestamps happen to coincide (e.g. both truncate to midnight when a time
-  // component is missing) - a false positive that also corrupts dataset-index
-  // lookups and chronological-precedence checks used for duplicate blocking.
   const hasDistinctExplicitIds = (idA > 0 && idB > 0) || (rawIdA && rawIdB && rawIdA !== "-" && rawIdB !== "-");
   if (hasDistinctExplicitIds) return false;
 
@@ -2799,9 +2719,6 @@ export function isSamePermitRecord(a: any, b: any): boolean {
   return false;
 }
 
-/**
- * Helper: Find the array position of a record within the dataset.
- */
 export function getRecordDatasetIndex(
   record: any,
   database: CsvPermitRecord[],
@@ -2827,14 +2744,6 @@ export function getRecordDatasetIndex(
   return idx;
 }
 
-/**
- * Determines whether candidate is STRICTLY EARLIER in submission order than target.
- *
- * Precedence hierarchy:
- * 1. Both have valid numeric Form IDs and they differ -> lower Form ID integer wins (earliest submission).
- * 2. If Form IDs tie/missing, compare valid submission timestamps -> earlier timestamp wins.
- * 3. Fallback to appearance order in database -> in descending datasets, higher index is earlier.
- */
 export function isRecordStrictlyEarlier(
   candidate: any,
   target: any,
@@ -2843,7 +2752,6 @@ export function isRecordStrictlyEarlier(
   if (!candidate || !target) return false;
   if (isSamePermitRecord(candidate, target)) return false;
 
-  // Resolve full records from database if available
   let cand = candidate;
   let targ = target;
   if (database && database.length > 0) {
@@ -2856,7 +2764,6 @@ export function isRecordStrictlyEarlier(
     if (matchedTarg) targ = { ...matchedTarg, ...target };
   }
 
-  // Priority 1: Compare Form IDs (Numerically) - Primary ground truth submission sequence
   const formIdCandidate = extractRecordNumericFormId(cand);
   const formIdTarget = extractRecordNumericFormId(targ);
 
@@ -2864,7 +2771,6 @@ export function isRecordStrictlyEarlier(
     return formIdCandidate < formIdTarget;
   }
 
-  // Priority 2: Compare Timestamps if Form IDs tie or are missing
   const timeCandidate = extractRecordSubmissionTimeMs(cand);
   const timeTarget = extractRecordSubmissionTimeMs(targ);
 
@@ -2872,7 +2778,6 @@ export function isRecordStrictlyEarlier(
     return timeCandidate < timeTarget;
   }
 
-  // If one has numeric Form ID and the other does not
   if (formIdCandidate > 0 && formIdTarget === 0) {
     return true;
   }
@@ -2880,7 +2785,6 @@ export function isRecordStrictlyEarlier(
     return false;
   }
 
-  // If one has timestamp and the other does not
   if (timeCandidate > 0 && timeTarget === 0) {
     return true;
   }
@@ -2888,7 +2792,6 @@ export function isRecordStrictlyEarlier(
     return false;
   }
 
-  // Priority 3: Fallback to Dataset Index (Array Position)
   if (database && database.length > 0) {
     const idxCandidate = getRecordDatasetIndex(cand, database, formIdCandidate);
     const idxTarget = getRecordDatasetIndex(targ, database, formIdTarget);
@@ -2896,7 +2799,7 @@ export function isRecordStrictlyEarlier(
     if (idxCandidate !== -1 && idxTarget !== -1 && idxCandidate !== idxTarget) {
       const isDesc = database.length >= 2 && extractRecordNumericFormId(database[0]) > extractRecordNumericFormId(database[database.length - 1]);
       if (isDesc) {
-        return idxCandidate > idxTarget; // in descending sorted arrays, higher index is earlier (e.g. index 2 is 1562 vs index 0 is 1565)
+        return idxCandidate > idxTarget;
       }
       return idxCandidate < idxTarget;
     }
@@ -2905,10 +2808,6 @@ export function isRecordStrictlyEarlier(
   return false;
 }
 
-/**
- * Helper: Compare records in strict chronological submission timestamp and Form ID order
- * EARLIER submission comes FIRST (lower timestamp or lower Form ID integer).
- */
 export function compareRecordsBySubmissionOrder(a: any, b: any, fallbackDateStr?: string): number {
   if (isSamePermitRecord(a, b)) return 0;
   if (isRecordStrictlyEarlier(a, b)) return -1;
@@ -2916,19 +2815,11 @@ export function compareRecordsBySubmissionOrder(a: any, b: any, fallbackDateStr?
   return 0;
 }
 
-/**
- * Determines whether a given permit application record is a blocked duplicate.
- * STRICT CHRONOLOGICAL SUBMISSION ORDER RULES:
- * 1. For each VRM on a given date, only the EARLIEST submission should be active.
- * 2. ALL subsequent records with the same VRM within 0-6 days are marked as CANCELLED duplicates.
- * 3. The earliest record is preserved as active (receives QR code and is sendable).
- */
 export function checkIsBlockedDuplicate(
   record: { vrm?: string; validFrom?: string; dateRequired?: string; id?: string | number; formId?: string | number; voucherCode?: string; createdAt?: string; startTime?: string; driverName?: string; isCancelled?: boolean },
   database: CsvPermitRecord[],
   refDateISO?: string
 ): boolean {
-  // --- EARLY EXITS ---
   if (!record) return false;
   if (!record.vrm) return false;
   
@@ -2939,13 +2830,10 @@ export function checkIsBlockedDuplicate(
     return false;
   }
 
-  // Resolve full record from database if needed
   const numId = extractRecordNumericFormId(record);
   const matchedDbRecord = database.find(r => isSamePermitRecord(r, record) || (numId > 0 && extractRecordNumericFormId(r) === numId));
   const fullRecord = matchedDbRecord ? { ...matchedDbRecord, ...record } : record;
 
-  // If this record already has an explicit valid voucher code assigned (e.g. from Active Date Codes or manual entry),
-  // it is not blocked as a duplicate.
   const assignedCode = (record as any).voucherCodesText || record.voucherCode || (fullRecord as any).voucherCodesText || fullRecord.voucherCode;
   if (assignedCode) {
     const cleanAssigned = cleanVoucherCodeValue(String(assignedCode)).toUpperCase();
@@ -2954,7 +2842,6 @@ export function checkIsBlockedDuplicate(
     }
   }
 
-  // Find all records with matching VRM
   const vrmRecords = database.filter(r => {
     const rVrm = (r.vrm || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
     return rVrm === cleanVrm;
@@ -2964,7 +2851,6 @@ export function checkIsBlockedDuplicate(
     return false;
   }
 
-  // Find records that are STRICTLY EARLIER than current record
   const strictlyEarlierRecords: CsvPermitRecord[] = [];
 
   for (const other of vrmRecords) {
@@ -2974,20 +2860,16 @@ export function checkIsBlockedDuplicate(
     }
   }
 
-  // If no strictly earlier records, this is the original/earliest submission → NOT BLOCKED
   if (strictlyEarlierRecords.length === 0) {
     return false;
   }
 
-  // Get current record's required date
   const reqIsoX = parseDateToISO(fullRecord.dateRequired || fullRecord.validFrom || "") || 
                   parseDateToISO(fullRecord.startTime || fullRecord.createdAt || "") || 
                   refDateISO || getTodayISO();
   const reqTimeMsX = new Date(reqIsoX + "T00:00:00").getTime();
 
-  // Check each strictly earlier record: is it within the 0-6 day block window?
   for (const earlier of strictlyEarlierRecords) {
-    // Skip records that are cancelled for their OWN reason (date-invalid, or an explicit manual override)
     const earlierDateRequired = earlier.dateRequired || earlier.validFrom || "";
     const earlierSubmissionDate = earlier.submissionDate || earlier.startTime || earlier.completionTime || earlier.createdAt;
     const earlierRefDate = earlierSubmissionDate 
@@ -2997,16 +2879,13 @@ export function checkIsBlockedDuplicate(
                                     earlier.isCancelled === true;
     if (earlierIsDateCancelled) continue;
 
-    // Get earlier record's required date
     const earlierReqIso = parseDateToISO(earlier.dateRequired || earlier.validFrom || "") || 
                           parseDateToISO(earlier.startTime || earlier.createdAt || "") || 
                           refDateISO || getTodayISO();
     const earlierReqTimeMs = new Date(earlierReqIso + "T00:00:00").getTime();
 
-    // Calculate days difference: current request date minus earlier request date
     const diffDays = Math.round((reqTimeMsX - earlierReqTimeMs) / (1000 * 60 * 60 * 24));
 
-    // If within 0-6 days (inclusive), the current record is a BLOCKED duplicate
     if (diffDays >= 0 && diffDays < 7) {
       return true;
     }
@@ -3026,14 +2905,6 @@ function simpleStringHash(str: string): number {
   return hash;
 }
 
-/**
- * Canonical single source of truth for cancellation logic across all components and algorithms.
- * Evaluates:
- * 1. Explicit cancellation flags (record.isCancelled === true)
- * 2. Date window validity (isDateRequiredOutsideValidWindow)
- * 3. Duplicate blocking within 0-6 days window (checkIsBlockedDuplicate)
- * 4. Stored voucher "CANCELLED" string values when no database is provided
- */
 export function isRecordCancelled(
   record: any,
   todayDateOrReference?: string,
@@ -3041,10 +2912,8 @@ export function isRecordCancelled(
 ): boolean {
   if (!record) return false;
 
-  // 0. Hard Manage Blocklist — the primary source for blocking
   if (isVrmSilentBlockedSync(record.vrm)) return true;
 
-  // 1. Explicit boolean cancellation override or cancelled status/code
   if (record.isCancelled === true) return true;
   if (typeof record.status === "string" && record.status.trim().toLowerCase().includes("cancel")) return true;
   if (
@@ -3058,8 +2927,6 @@ export function isRecordCancelled(
     return true;
   }
 
-  // If the record has an explicit valid voucher code assigned (not "-" or "CANCELLED"),
-  // manual operator assignment unblocks duplicate/window cancellation (unless on hard silent blocklist)
   const assignedCode = record.voucherCodesText || record.voucherCode;
   if (assignedCode) {
     const cleanAssigned = cleanVoucherCodeValue(String(assignedCode)).toUpperCase();
@@ -3068,7 +2935,6 @@ export function isRecordCancelled(
     }
   }
 
-  // 2. Date window validity
   const submissionDate = record.submissionDate || record.startTime || record.completionTime || record.createdAt;
   const referenceDate = submissionDate 
     ? (parseDateToISO(String(submissionDate)) || "") 
@@ -3078,7 +2944,6 @@ export function isRecordCancelled(
     return true;
   }
 
-  // 3. Duplicate blocking check if database context is available
   if (database && database.length > 0) {
     const dupRefDate = getRequestedPermitDateISO(record, todayDateOrReference) || referenceDate;
     if (checkIsBlockedDuplicate(record, database, dupRefDate)) {
@@ -3089,10 +2954,6 @@ export function isRecordCancelled(
   return false;
 }
 
-/**
- * Resolves the primary processing/active date from a permit record or data object in standard ISO format (YYYY-MM-DD),
- * prioritizing processingDate -> submissionDate -> todayDate -> startTime -> completionTime -> validFrom -> dateRequired -> today.
- */
 export function resolvePermitDate(record?: any): string {
   if (!record) return getTodayISO();
   const rawDate = record.processingDate ||
@@ -3114,4 +2975,3 @@ export function resolvePermitDate(record?: any): string {
   }
   return getTodayISO();
 }
-

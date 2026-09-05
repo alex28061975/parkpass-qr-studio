@@ -89,7 +89,9 @@ export const checkSupabaseConnection = async (): Promise<{ connected: boolean; e
   }
 };
 
-// 1. Permits Table
+// ============================================================
+// 1. PERMITS TABLE - WITH completion_time (Column C from Excel)
+// ============================================================
 export interface SupabasePermit {
   id: string;
   hospital: string;
@@ -102,6 +104,7 @@ export interface SupabasePermit {
   email?: string;
   voucher_code?: string;
   start_time?: string;
+  completion_time?: string;  // ✅ Column C from Excel
   created_at?: string;
 }
 
@@ -133,7 +136,7 @@ export const fetchPermitsFromSupabase = async (options?: { daysLimit?: number | 
 
       let query = client
         .from('permits')
-        .select('id, hospital, ward, date_required, date_expiry, vrm, driver_name, phone, email, voucher_code, start_time, created_at')
+        .select('id, hospital, ward, date_required, date_expiry, vrm, driver_name, phone, email, voucher_code, start_time, completion_time, created_at')  // ✅ Includes completion_time
         .range(from, to)
         .order('created_at', { ascending: false });
 
@@ -162,6 +165,7 @@ export const fetchPermitsFromSupabase = async (options?: { daysLimit?: number | 
 
     if (allData.length === 0) return [];
 
+    // Map Supabase data to CsvPermitRecord
     let mappedRecords: CsvPermitRecord[] = allData.map((item: SupabasePermit) => ({
       id: item.id,
       formId: item.id,
@@ -174,7 +178,8 @@ export const fetchPermitsFromSupabase = async (options?: { daysLimit?: number | 
       phone: item.phone || '',
       email: item.email || '',
       voucherCode: item.voucher_code || '',
-      startTime: item.start_time || undefined
+      startTime: item.start_time || undefined,
+      completionTime: item.completion_time || undefined,  // ✅ Map completion_time from Supabase
     }));
 
     if (daysLimit && daysLimit > 0) {
@@ -237,6 +242,7 @@ export const syncPermitsToSupabase = async (records: CsvPermitRecord[], replaceA
 
     if (records.length === 0) return true;
 
+    // Upsert payload with completion_time
     const payload = records.map(r => ({
       id: r.id,
       hospital: r.hospital || '',
@@ -248,7 +254,8 @@ export const syncPermitsToSupabase = async (records: CsvPermitRecord[], replaceA
       phone: r.phone || null,
       email: r.email || null,
       voucher_code: r.voucherCode || null,
-      start_time: r.startTime || null
+      start_time: r.startTime || null,
+      completion_time: r.completionTime || null,  // ✅ Sync completion_time to Supabase
     }));
 
     const BATCH_SIZE = 400;
@@ -268,7 +275,9 @@ export const syncPermitsToSupabase = async (records: CsvPermitRecord[], replaceA
   }
 };
 
-// 2. Vouchers Table
+// ============================================================
+// 2. VOUCHERS TABLE
+// ============================================================
 export interface SupabaseVoucher {
   code: string;
   vrm?: string;
@@ -418,7 +427,9 @@ export const syncVouchersToSupabase = async (vouchers: ParsedVoucherData[], repl
   }
 };
 
-// 3. Dispatched History Table
+// ============================================================
+// 3. DISPATCHED HISTORY TABLE
+// ============================================================
 export interface SupabaseDispatched {
   key: string;
   dispatch_date: string;
@@ -553,7 +564,6 @@ export const bulkSyncDispatchedToSupabase = async (
       const { error } = await client.from('dispatched_history').upsert(chunk, { onConflict: 'key' });
       if (error) {
         console.warn(`Supabase bulk sync dispatched error on batch starting at index ${i}:`, error.message);
-        // Fallback with basic fields if extra column fails
         const basicChunk = chunk.map(c => ({
           key: c.key,
           dispatch_date: c.dispatch_date,

@@ -30,7 +30,9 @@ import {
   isDateRequiredOutsideValidWindow,
   getSpreadsheetMatchingAllocationsMap,
   extractRecordVoucherCode,
-  isRecordCancelled
+  isRecordCancelled,
+  formatSubmittedDateTime,
+  getRecordSubmittedDateISO
 } from "../utils/csvParser";
 import { checkIsRecordDispatched } from "../utils/dispatchUtils";
 import { BlocklistPanel } from "./BlocklistPanel";
@@ -222,9 +224,8 @@ export function TableView({
     // Load selected record details into the Dispatcher Desk
     onSelectRecord(updatedRecord);
     
-    // Update Processing Date to the record's Start Time (submission timestamp) when "Load Desk" / "Load Table" is clicked
-    const submissionTimestamp = record.startTime || record.created_at || record.createdAt || record.completionTime || record.validFrom || record.dateRequired;
-    const fromISO = parseDateToISO(submissionTimestamp);
+    // Update Processing Date to the record's submitted timestamp (Completion Time -> Start Time -> createdAt)
+    const fromISO = getRecordSubmittedDateISO(record) || parseDateToISO(record.validFrom || record.dateRequired || "");
     if (fromISO && onProcessingDateChange) {
       onProcessingDateChange(fromISO);
     }
@@ -444,7 +445,7 @@ export function TableView({
                 <th className="p-3 whitespace-nowrap border-r border-gray-200/60 dark:border-slate-800/60">Phone</th>
                 <th className="p-3 whitespace-nowrap border-r border-gray-200/60 dark:border-slate-800/60">Email</th>
                 <th className="p-3 whitespace-nowrap border-r border-gray-200/60 dark:border-slate-800/60">Voucher Code</th>
-                <th className="p-3 whitespace-nowrap border-r border-gray-200/60 dark:border-slate-800/60">Start Time</th>
+                <th className="p-3 whitespace-nowrap border-r border-gray-200/60 dark:border-slate-800/60">Submitted</th>
                 <th className="p-3 whitespace-nowrap text-center">Action</th>
               </tr>
             </thead>
@@ -561,7 +562,7 @@ export function TableView({
                         )}
                       </td>
                       <td className="p-3 text-gray-500 dark:text-slate-500 text-[10px] whitespace-nowrap border-r border-gray-150/60 dark:border-slate-800/60">
-                        {r.startTime || "-"}
+                        {formatSubmittedDateTime(r)}
                       </td>
                       <td className="p-3 text-center whitespace-nowrap">
                         <button
