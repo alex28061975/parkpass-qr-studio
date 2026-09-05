@@ -16,6 +16,7 @@ import {
   extractRecordNumericFormId,
   isSamePermitRecord,
   cleanVoucherCodeValue,
+  isVoucherCodeMatch,
   isRecordCancelledCanonical as isCancelled
 } from "../utils/csvParser";
 import { 
@@ -474,15 +475,65 @@ export function PermitForm({
             <select
               value={unusedVouchersForDay.some(v => v.code === data.voucherCodesText) ? data.voucherCodesText : ""}
               onChange={(e) => {
-                if (e.target.value) {
-                  onChange({
-                    voucherCodesText: e.target.value,
-                    status: "Pending",
-                    emailType: "RESEND_CONCESSION",
-                    isResend: true,
-                    emailTemplate: "replacement"
-                  });
+                const selectedCode = cleanVoucherCodeValue(e.target.value).toUpperCase();
+                if (!selectedCode || selectedCode === "-" || selectedCode === "CANCELLED") {
+                  return;
                 }
+
+                // Final client-side race-condition guard. The dropdown is built
+                // from unusedVouchersForDay, but the database may have changed
+                // since that list was calculated. Never allow a code that is
+                // already present on ANY permit record to be assigned again.
+                const codeFields = [
+                  "voucherCode",
+                  "prePaidCode",
+                  "qrCode",
+                  "voucherCodesText",
+                  "serialNumber",
+                  "voucher",
+                  "code",
+                  "qrOverride",
+                  "Voucher Code",
+                  "VOUCHER CODE",
+                  "Pre-Paid Code",
+                  "Pre Paid Code",
+                  "QR Code",
+                  "QR CODE"
+                ];
+
+                const isCodeAssigned = (record: any) => {
+                  if (!record) return false;
+
+                  return codeFields.some((field) => {
+                    const raw = record[field];
+                    if (raw === undefined || raw === null) return false;
+
+                    return String(raw)
+                      .split(/[\n,;\s]+/)
+                      .map((part) => cleanVoucherCodeValue(part).toUpperCase())
+                      .some((code) => code && code !== "-" && isVoucherCodeMatch(code, selectedCode));
+                  });
+                };
+
+                // Include the complete database AND the currently edited record.
+                // Cancellation status/date is deliberately ignored.
+                const alreadyAssigned =
+                  (database || []).some(isCodeAssigned) || isCodeAssigned(data);
+
+                if (alreadyAssigned) {
+                  console.warn(
+                    `🚫 Voucher ${selectedCode} is already assigned and cannot be reused.`
+                  );
+                  return;
+                }
+
+                onChange({
+                  voucherCodesText: selectedCode,
+                  status: "Pending",
+                  emailType: "RESEND_CONCESSION",
+                  isResend: true,
+                  emailTemplate: "replacement"
+                });
               }}
               disabled={unusedVouchersForDay.length === 0}
               className={`flex-1 min-w-[180px] w-full h-9 px-3 py-1.5 border rounded-md text-xs font-mono font-extrabold focus:outline-none transition-all ${

@@ -34,7 +34,9 @@ import {
   getNumericFormId,
   extractRecordSubmissionTimeMs,
   getRequestedPermitDateISO,
-  getTodayISO
+  getTodayISO,
+  formatSubmittedDateTime,
+  getRecordSubmittedTimeMs
 } from "../utils/csvParser";
 import { checkIsRecordDispatched, getRecordKeys } from "../utils/dispatchUtils";
 import { isVrmSilentBlockedSync } from "../lib/blocklist";
@@ -82,6 +84,7 @@ const formatDate = (dateStr?: string) => {
 
 export type SortKey = 
   | "id" 
+  | "submitted"
   | "qr" 
   | "driverName" 
   | "vrm" 
@@ -343,12 +346,17 @@ export function DispatchCentre({
           }
           break;
         }
+        case "submitted":
         case "qr": {
-          const aCanc = getIsCancelled(a, aIdx);
-          const bCanc = getIsCancelled(b, bIdx);
-          const aVal = aCanc ? "CANCELLED" : "QR Code";
-          const bVal = bCanc ? "CANCELLED" : "QR Code";
-          comparison = aVal.localeCompare(bVal);
+          const timeA = getRecordSubmittedTimeMs(a);
+          const timeB = getRecordSubmittedTimeMs(b);
+          if (timeA !== timeB) {
+            comparison = timeA - timeB;
+          } else {
+            const aId = getNumericFormId(a) || (aIdx + 1);
+            const bId = getNumericFormId(b) || (bIdx + 1);
+            comparison = aId - bId;
+          }
           break;
         }
         case "driverName": {
@@ -880,18 +888,18 @@ export function DispatchCentre({
                   </div>
                 </th>
 
-                {/* QR CODE Column */}
+                {/* SUBMITTED Column */}
                 <th 
                   scope="col" 
-                  onClick={() => handleSort("qr")}
+                  onClick={() => handleSort("submitted")}
                   className={`py-3 px-3 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none ${
-                    sortKey === "qr" ? "bg-blue-50 text-blue-700 dark:bg-[#0c2847] dark:text-[#38bdf8] font-black" : "hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-[#0b2440] dark:hover:text-white"
+                    sortKey === "submitted" ? "bg-blue-50 text-blue-700 dark:bg-[#0c2847] dark:text-[#38bdf8] font-black" : "hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-[#0b2440] dark:hover:text-white"
                   }`}
-                  title="Click to sort by QR Code status"
+                  title="Click to sort by Submitted timestamp"
                 >
                   <div className="flex items-center justify-between gap-1">
-                    <span>QR CODE</span>
-                    {renderSortIndicator("qr")}
+                    <span>SUBMITTED</span>
+                    {renderSortIndicator("submitted")}
                   </div>
                 </th>
 
@@ -910,22 +918,22 @@ export function DispatchCentre({
                   </div>
                 </th>
 
-                {/* VRN Column */}
+                {/* VRM Column */}
                 <th 
                   scope="col" 
                   onClick={() => handleSort("vrm")}
                   className={`py-3 px-3 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none ${
                     sortKey === "vrm" ? "bg-blue-50 text-blue-700 dark:bg-[#0c2847] dark:text-[#38bdf8] font-black" : "hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-[#0b2440] dark:hover:text-white"
                   }`}
-                  title="Click to sort by VRN / Vehicle Reg"
+                  title="Click to sort by VRM"
                 >
                   <div className="flex items-center justify-between gap-1">
-                    <span>VRN</span>
+                    <span>VRM</span>
                     {renderSortIndicator("vrm")}
                   </div>
                 </th>
 
-                {/* VOUCHERCODE Column */}
+                {/* VOUCHER CODE Column */}
                 <th 
                   scope="col" 
                   onClick={() => handleSort("voucherCode")}
@@ -935,7 +943,7 @@ export function DispatchCentre({
                   title="Click to sort by Voucher Code"
                 >
                   <div className="flex items-center justify-between gap-1">
-                    <span>VOUCHERCODE</span>
+                    <span>VOUCHER CODE</span>
                     {renderSortIndicator("voucherCode")}
                   </div>
                 </th>
@@ -1083,23 +1091,9 @@ export function DispatchCentre({
                       {excelId}
                     </td>
 
-                    {/* 2. QR Code Column */}
-                    <td className="py-3 px-3 border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap">
-                      {(isBlocked || isCancelled || displayCode === "CANCELLED") ? (
-                        <span className="text-red-600 dark:text-[#FF453A] font-semibold text-xs tracking-wider">
-                          CANCELLED
-                        </span>
-                      ) : (
-                        <button 
-                          type="button" 
-                          onClick={(e) => { e.stopPropagation(); onSelectRecord(record); }} 
-                          className="inline-flex items-center gap-1.5 text-xs text-blue-600 dark:text-[#38bdf8] hover:text-blue-800 dark:hover:text-[#7dd3fc] font-medium transition-colors cursor-pointer"
-                          title="Open QR Permit"
-                        >
-                          <QrCode className="w-3.5 h-3.5 text-blue-600 dark:text-[#38bdf8]" />
-                          <span>QR Code</span>
-                        </button>
-                      )}
+                    {/* 2. Submitted Column */}
+                    <td className="py-3 px-3 font-mono text-slate-700 dark:text-slate-200 border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-xs">
+                      {formatSubmittedDateTime(record)}
                     </td>
 
                     {/* 3. Driver's Name Column */}

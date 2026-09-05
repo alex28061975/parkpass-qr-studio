@@ -343,6 +343,137 @@ export function formatExportCreatedAt(createdAt?: string, created_at?: string, s
   return "-";
 }
 
+/**
+ * Format the record's submitted timestamp for the table display as DD/MM/YYYY HH:MM:SS.
+ * Priority: completionTime -> startTime -> createdAt -> fallback to dateRequired/validFrom
+ */
+export function formatSubmittedDateTime(record: CsvPermitRecord): string {
+  if (!record) return "-";
+
+  // 1. Candidate priority: completionTime -> startTime -> createdAt
+  const candidate = 
+    record.completionTime || 
+    (record as any).completion_time ||
+    record.startTime || 
+    (record as any).start_time ||
+    record.createdAt || 
+    (record as any).created_at ||
+    (record as any).submissionTime ||
+    (record as any).submission_time ||
+    "";
+
+  let effectiveStr = String(candidate || "").trim();
+
+  // If no timestamp was found, fallback to dateRequired or validFrom
+  if (!effectiveStr || effectiveStr === "-" || effectiveStr === "null" || effectiveStr === "undefined") {
+    const fallbackDate = record.dateRequired || record.validFrom || record.todayDate || "";
+    if (!fallbackDate || fallbackDate === "-") {
+      return "-";
+    }
+    effectiveStr = String(fallbackDate).trim();
+  }
+
+  // 1. Check for UK date format DD/MM/YYYY or D/M/YYYY or with hyphens DD-MM-YYYY
+  const ukMatch = effectiveStr.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?(?:\s*([AP]M))?)?/i);
+  if (ukMatch) {
+    let day = parseInt(ukMatch[1], 10);
+    let month = parseInt(ukMatch[2], 10);
+    const year = parseInt(ukMatch[3], 10);
+    let hours = ukMatch[4] ? parseInt(ukMatch[4], 10) : 0;
+    const minutes = ukMatch[5] ? parseInt(ukMatch[5], 10) : 0;
+    const seconds = ukMatch[6] ? parseInt(ukMatch[6], 10) : 0;
+    const ampm = ukMatch[7];
+
+    if (ampm) {
+      if (/PM/i.test(ampm) && hours < 12) hours += 12;
+      if (/AM/i.test(ampm) && hours === 12) hours = 0;
+    }
+
+    if (month > 12 && day <= 12) {
+      const temp = day;
+      day = month;
+      month = temp;
+    }
+
+    const dd = String(day).padStart(2, "0");
+    const mm = String(month).padStart(2, "0");
+    const yyyy = String(year).padStart(4, "0");
+    const hh = String(hours).padStart(2, "0");
+    const min = String(minutes).padStart(2, "0");
+    const ss = String(seconds).padStart(2, "0");
+
+    return `${dd}/${mm}/${yyyy} ${hh}:${min}:${ss}`;
+  }
+
+  // 2. Check for ISO date format YYYY-MM-DD or YYYY/MM/DD
+  const isoMatch = effectiveStr.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?(?:\s*([AP]M))?)?/i);
+  if (isoMatch) {
+    const year = parseInt(isoMatch[1], 10);
+    const month = parseInt(isoMatch[2], 10);
+    const day = parseInt(isoMatch[3], 10);
+    let hours = isoMatch[4] ? parseInt(isoMatch[4], 10) : 0;
+    const minutes = isoMatch[5] ? parseInt(isoMatch[5], 10) : 0;
+    const seconds = isoMatch[6] ? parseInt(isoMatch[6], 10) : 0;
+    const ampm = isoMatch[7];
+
+    if (ampm) {
+      if (/PM/i.test(ampm) && hours < 12) hours += 12;
+      if (/AM/i.test(ampm) && hours === 12) hours = 0;
+    }
+
+    const dd = String(day).padStart(2, "0");
+    const mm = String(month).padStart(2, "0");
+    const yyyy = String(year).padStart(4, "0");
+    const hh = String(hours).padStart(2, "0");
+    const min = String(minutes).padStart(2, "0");
+    const ss = String(seconds).padStart(2, "0");
+
+    return `${dd}/${mm}/${yyyy} ${hh}:${min}:${ss}`;
+  }
+
+  // 3. Fallback using native Date parsing
+  const d = new Date(effectiveStr);
+  if (!isNaN(d.getTime()) && d.getTime() > 0) {
+    const dd = String(d.getDate()).padStart(2, "0");
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const yyyy = d.getFullYear();
+    const hh = String(d.getHours()).padStart(2, "0");
+    const min = String(d.getMinutes()).padStart(2, "0");
+    const ss = String(d.getSeconds()).padStart(2, "0");
+    return `${dd}/${mm}/${yyyy} ${hh}:${min}:${ss}`;
+  }
+
+  return effectiveStr;
+}
+
+/**
+ * Extract numerical epoch milliseconds for submitted time to enable accurate sorting.
+ */
+export function getRecordSubmittedTimeMs(record: CsvPermitRecord): number {
+  if (!record) return 0;
+  const candidate = 
+    record.completionTime || 
+    (record as any).completion_time ||
+    record.startTime || 
+    (record as any).start_time ||
+    record.createdAt || 
+    (record as any).created_at ||
+    (record as any).submissionTime ||
+    (record as any).submission_time ||
+    record.dateRequired ||
+    record.validFrom ||
+    "";
+  if (!candidate) return 0;
+
+  const recDateISO = parseDateToISO(record.dateRequired || record.validFrom || record.todayDate || "") || "";
+  const ms = parseFullDateTimeMs(String(candidate), recDateISO);
+  if (ms !== null && ms > 0) return ms;
+
+  const d = new Date(String(candidate));
+  if (!isNaN(d.getTime()) && d.getTime() > 0) return d.getTime();
+  return 0;
+}
+
 export function exportToExcel(
   records: CsvPermitRecord[], 
   filename = "Concessions_Permits_Export.xlsx", 
@@ -593,6 +724,21 @@ export function parsePastedText(rawText: string): CsvPermitRecord[] {
     if (startTimeIdx === -1 && headers.length >= 10) {
       startTimeIdx = 1;
     }
+
+    let completionTimeIdx = headers.findIndex(h => 
+      h === "completion time" || 
+      h === "completion_time" || 
+      h === "completiontime" ||
+      h.includes("completion time") || 
+      h.includes("completed time") ||
+      h.includes("completion")
+    );
+    if (completionTimeIdx === -1 && headers.length > 2) {
+      const colCHeader = headers[2];
+      if (colCHeader.includes("completion") || colCHeader.includes("complete") || (startTimeIdx === 1 && colCHeader.includes("time"))) {
+        completionTimeIdx = 2;
+      }
+    }
     
     let driverIdx = -1;
     if (headers.length > 11) {
@@ -631,6 +777,7 @@ export function parsePastedText(rawText: string): CsvPermitRecord[] {
       const rawVoucher = voucherIdx !== -1 ? columns[voucherIdx] : "";
       const rawExpiry = validToIdx !== -1 ? columns[validToIdx] : "";
       const rawStartTime = startTimeIdx !== -1 ? columns[startTimeIdx] : "";
+      const rawCompletionTime = completionTimeIdx !== -1 ? columns[completionTimeIdx] : "";
 
       const cleanVrm = rawVrm ? rawVrm.toUpperCase().replace(/\s+/g, "") : "";
       if (!cleanVrm && !rawDriver && !rawEmail) continue;
@@ -663,6 +810,7 @@ export function parsePastedText(rawText: string): CsvPermitRecord[] {
         email: rawEmail ? String(rawEmail).trim() : "",
         voucherCode: cleanVoucherCodeValue(rawVoucher),
         startTime: rawStartTime || undefined,
+        completionTime: rawCompletionTime || undefined,
         createdAt: rawStartTime || undefined
       });
     }
@@ -853,6 +1001,21 @@ export function parsePermitCsv(rawText: string): CsvPermitRecord[] {
   if (startTimeIdx === -1 && headers.length >= 10) {
     startTimeIdx = 1;
   }
+
+  let completionTimeIdx = headers.findIndex(h => 
+    h === "completion time" || 
+    h === "completion_time" || 
+    h === "completiontime" ||
+    h.includes("completion time") || 
+    h.includes("completed time") ||
+    h.includes("completion")
+  );
+  if (completionTimeIdx === -1 && headers.length > 2) {
+    const colCHeader = headers[2];
+    if (colCHeader.includes("completion") || colCHeader.includes("complete") || (startTimeIdx === 1 && colCHeader.includes("time"))) {
+      completionTimeIdx = 2;
+    }
+  }
   
   let driverIdx = -1;
   if (headers.length > 11) {
@@ -893,6 +1056,7 @@ export function parsePermitCsv(rawText: string): CsvPermitRecord[] {
     const rawVoucher = voucherIdx !== -1 ? columns[voucherIdx] : "";
     const rawExpiry = validToIdx !== -1 ? columns[validToIdx] : "";
     const rawStartTime = startTimeIdx !== -1 ? columns[startTimeIdx] : "";
+    const rawCompletionTime = completionTimeIdx !== -1 ? columns[completionTimeIdx] : "";
 
     let cleanVrm = rawVrm ? String(rawVrm).trim().toUpperCase().replace(/\s+/g, "") : "";
     let cleanDriver = rawDriver ? String(rawDriver).trim() : "";
@@ -942,6 +1106,7 @@ export function parsePermitCsv(rawText: string): CsvPermitRecord[] {
       email: cleanEmail,
       voucherCode: cleanVoucherCodeValue(rawVoucher),
       startTime: rawStartTime ? String(rawStartTime).trim() : undefined,
+      completionTime: rawCompletionTime ? String(rawCompletionTime).trim() : undefined,
       createdAt: rawStartTime ? String(rawStartTime).trim() : undefined
     });
   }
@@ -1012,6 +1177,21 @@ export function parsePermitExcel(arrayBuffer: ArrayBuffer): CsvPermitRecord[] {
     }
     if (startTimeIdx === -1 && headers.length >= 10) {
       startTimeIdx = 1;
+    }
+
+    let completionTimeIdx = headers.findIndex(h => 
+      h === "completion time" || 
+      h === "completion_time" || 
+      h === "completiontime" ||
+      h.includes("completion time") || 
+      h.includes("completed time") ||
+      h.includes("completion")
+    );
+    if (completionTimeIdx === -1 && headers.length > 2) {
+      const colCHeader = headers[2];
+      if (colCHeader.includes("completion") || colCHeader.includes("complete") || (startTimeIdx === 1 && colCHeader.includes("time"))) {
+        completionTimeIdx = 2;
+      }
     }
     
     let driverIdx = -1;
@@ -1103,6 +1283,26 @@ export function parsePermitExcel(arrayBuffer: ArrayBuffer): CsvPermitRecord[] {
         }
       }
 
+      let rawCompletionTime = "";
+      if (completionTimeIdx !== -1 && columns[completionTimeIdx] !== undefined && columns[completionTimeIdx] !== null) {
+        const val = columns[completionTimeIdx];
+        if (typeof val === "number") {
+          const date = new Date((val - 25569) * 86400 * 1000);
+          if (!isNaN(date.getTime())) {
+            const hours = String(date.getUTCHours()).padStart(2, "0");
+            const minutes = String(date.getUTCMinutes()).padStart(2, "0");
+            const seconds = String(date.getUTCSeconds()).padStart(2, "0");
+            const year = date.getUTCFullYear();
+            const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+            const day = String(date.getUTCDate()).padStart(2, "0");
+            rawCompletionTime = `${day}/${month}/${year} ${hours}:${minutes}:${seconds}`;
+          }
+        } else {
+          const s = String(val).trim();
+          if (s && s !== "null" && s !== "undefined") rawCompletionTime = s;
+        }
+      }
+
       let cleanVrm = rawVrm !== undefined && rawVrm !== null ? String(rawVrm).trim().toUpperCase().replace(/\s+/g, "") : "";
       let cleanDriver = rawDriver !== undefined && rawDriver !== null ? String(rawDriver).trim() : "";
       let cleanEmail = rawEmail !== undefined && rawEmail !== null ? String(rawEmail).trim() : "";
@@ -1157,6 +1357,7 @@ export function parsePermitExcel(arrayBuffer: ArrayBuffer): CsvPermitRecord[] {
         email: cleanEmail,
         voucherCode: cleanVoucherCodeValue(rawVoucher),
         startTime: rawStartTime || undefined,
+        completionTime: rawCompletionTime || undefined,
         createdAt: rawStartTime ? String(rawStartTime).trim() : undefined
       });
     }
@@ -2118,114 +2319,188 @@ export function getUnusedVouchersForDate(
   }
 
   const targetDateISO = parseDateToISO(targetISO) || targetISO;
-  const currentVrmClean = (currentVrm || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const currentVrmClean = (currentVrm || "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
 
-  let dailyVouchersForDate = (vouchersDatabase || []).filter(v => {
+  // The voucher pool is still date-specific. Only vouchers belonging to the
+  // requested date (or an undated/general pool) are candidates for display.
+  let dailyVouchersForDate = vouchersDatabase.filter((v) => {
     if (!v) return false;
-    const vIso = getVoucherDateISO(v);
-    return vIso === targetDateISO;
+    return getVoucherDateISO(v) === targetDateISO;
   });
 
-  // Fallback: if no vouchers explicitly match targetDateISO, use undated vouchers or the pool
-  if (dailyVouchersForDate.length === 0 && vouchersDatabase && vouchersDatabase.length > 0) {
-    const undated = vouchersDatabase.filter(v => !getVoucherDateISO(v));
-    if (undated.length > 0) {
-      dailyVouchersForDate = undated;
-    } else {
-      dailyVouchersForDate = vouchersDatabase;
-    }
+  // Fallback for undated/general voucher pools.
+  if (dailyVouchersForDate.length === 0) {
+    const undated = vouchersDatabase.filter((v) => !getVoucherDateISO(v));
+    dailyVouchersForDate = undated.length > 0 ? undated : vouchersDatabase;
   }
 
-  // Deduplicate daily vouchers by uppercase voucher code
+  // Deduplicate the voucher pool by normalised code.
   const dailyVouchersMap = new Map<string, ParsedVoucherData>();
-  dailyVouchersForDate.forEach(v => {
-    const raw = v.code || (v as any).voucherCode || (v as any).qrCode || (v as any).serialNumber || (v as any).prePaidCode;
+  dailyVouchersForDate.forEach((v) => {
+    if (!v) return;
+
+    const raw =
+      v.code ||
+      (v as any).voucherCode ||
+      (v as any).qrCode ||
+      (v as any).serialNumber ||
+      (v as any).prePaidCode;
+
     if (!raw) return;
+
     const clean = cleanVoucherCodeValue(raw).toUpperCase();
-    if (clean && clean !== "-" && clean !== "CANCELLED" && clean !== "PENDING") {
+    if (
+      clean &&
+      clean !== "-" &&
+      clean !== "CANCELLED" &&
+      clean !== "PENDING"
+    ) {
       if (!dailyVouchersMap.has(clean)) {
         dailyVouchersMap.set(clean, { ...v, code: clean });
       }
     }
   });
 
-  const totalVouchersForDate = dailyVouchersMap.size;
-
+  /*
+   * CRITICAL DUPLICATE-PREVENTION RULE
+   * ----------------------------------
+   * A voucher is consumed globally once it appears on ANY permit record.
+   *
+   * Do NOT filter these records by:
+   *   - target date
+   *   - permit status
+   *   - cancellation status
+   *   - current record
+   *
+   * A cancelled record still owns/consumes its historical voucher code.
+   */
   const allAssignedCodesSet = new Set<string>();
 
   const consumeAssignedCode = (rawCode: any) => {
     if (rawCode === undefined || rawCode === null) return;
+
+    // Some legacy records can contain multiple codes in one field.
     const parts = String(rawCode).split(/[\n,;\s]+/);
+
     for (const part of parts) {
       const clean = cleanVoucherCodeValue(part).toUpperCase();
-      if (!clean || clean === "-" || clean === "CANCELLED" || clean === "PENDING" || clean === "N/A") {
+      if (
+        !clean ||
+        clean === "-" ||
+        clean === "CANCELLED" ||
+        clean === "PENDING" ||
+        clean === "N/A" ||
+        clean === "NA" ||
+        clean === "NONE" ||
+        clean === "NULL" ||
+        clean === "UNDEFINED"
+      ) {
         continue;
       }
       allAssignedCodesSet.add(clean);
     }
   };
 
-  const considerAssignedRecord = (permit: any) => {
+  const collectAssignedCodesFromRecord = (permit: any) => {
     if (!permit) return;
-    // CRITICAL: Only count assigned codes for the SELECTED target date!
-    const permitDateISO = getRequestedPermitDateISO(permit);
-    if (!permitDateISO || permitDateISO !== targetDateISO) {
-      return; // Do NOT count permits belonging to other dates
-    }
-    if (permit.isCancelled === true || isRecordCancelledCanonical(permit, targetDateISO, database)) {
-      return;
-    }
-    const explicitCode = extractRecordVoucherCode(permit);
-    consumeAssignedCode(explicitCode);
+
+    // Collect every possible voucher-code field. Do not use the record date or
+    // cancellation state as an exclusion condition.
+    consumeAssignedCode(permit.voucherCode);
+    consumeAssignedCode(permit.prePaidCode);
+    consumeAssignedCode(permit.qrCode);
     consumeAssignedCode(permit.voucherCodesText);
+    consumeAssignedCode(permit.serialNumber);
+    consumeAssignedCode(permit.voucher);
+    consumeAssignedCode(permit.code);
     consumeAssignedCode(permit.qrOverride);
+    consumeAssignedCode(permit["Voucher Code"]);
+    consumeAssignedCode(permit["VOUCHER CODE"]);
+    consumeAssignedCode(permit["Pre-Paid Code"]);
+    consumeAssignedCode(permit["Pre Paid Code"]);
+    consumeAssignedCode(permit["QR Code"]);
+    consumeAssignedCode(permit["QR CODE"]);
   };
 
-  (database || []).forEach(considerAssignedRecord);
-  if (spreadsheetMatches && Array.isArray(spreadsheetMatches)) {
-    spreadsheetMatches.forEach(considerAssignedRecord);
-  }
-  if (currentRecord) {
-    const curDateISO = getRequestedPermitDateISO(currentRecord);
-    if (!curDateISO || curDateISO === targetDateISO) {
-      considerAssignedRecord(currentRecord);
-    }
+  // ALL records consume their voucher codes, including cancelled records and
+  // records for different dates.
+  (database || []).forEach(collectAssignedCodesFromRecord);
+
+  // Include any additional matching/spreadsheet records supplied by callers.
+  if (Array.isArray(spreadsheetMatches)) {
+    spreadsheetMatches.forEach(collectAssignedCodesFromRecord);
   }
 
+  // Intentionally include the current record too. There is no current-record
+  // exemption: a code already assigned to this record is not an unused code.
+  if (currentRecord) {
+    collectAssignedCodesFromRecord(currentRecord);
+  }
+
+  // Keep spreadsheet-derived allocations as an additional safety net.
   const spreadsheetAssigned = getSpreadsheetMatchingAssignedCodes(
     spreadsheetMatches || [],
     database,
     targetDateISO,
     vouchersDatabase
   );
-  spreadsheetAssigned.forEach((code) => allAssignedCodesSet.add(code));
+  spreadsheetAssigned.forEach((code) => {
+    const clean = cleanVoucherCodeValue(code).toUpperCase();
+    if (
+      clean &&
+      clean !== "-" &&
+      clean !== "CANCELLED" &&
+      clean !== "PENDING"
+    ) {
+      allAssignedCodesSet.add(clean);
+    }
+  });
 
   const activeUnassignedCodes: ParsedVoucherData[] = [];
   const seenCodes = new Set<string>();
 
   dailyVouchersMap.forEach((voucher, codeUpper) => {
+    // Exact match first.
     if (allAssignedCodesSet.has(codeUpper)) return;
 
-    let isMatchedToAssigned = false;
+    // Then use tolerant matching for legacy QR/code formatting differences.
     for (const assigned of allAssignedCodesSet) {
       if (isVoucherCodeMatch(assigned, codeUpper)) {
-        isMatchedToAssigned = true;
-        break;
+        return;
       }
     }
-    if (isMatchedToAssigned) return;
 
-    // Check voucher usage status in database
-    const status = String(voucher.status || "").toLowerCase();
-    if (voucher.isUsed === true || status === "used" || status === "assigned" || status === "sent" || status === "completed") {
+    // Never show vouchers explicitly marked as used/assigned.
+    const status = String(voucher.status || "").trim().toLowerCase();
+    if (
+      voucher.isUsed === true ||
+      status === "used" ||
+      status === "assigned" ||
+      status === "sent" ||
+      status === "completed"
+    ) {
       return;
     }
 
-    // VRM constraint if voucher is dedicated to a specific vehicle
+    // Preserve the existing dedicated-VRM rule.
     if (voucher.vrm) {
-      const vVrmClean = String(voucher.vrm).toUpperCase().replace(/[^A-Z0-9]/g, "");
-      const isUnrestricted = !vVrmClean || ["-", "—", "PENDING", "N/A", "NA", "UNKNOWN", "NULL"].includes(vVrmClean);
-      if (!isUnrestricted && currentVrmClean && vVrmClean !== currentVrmClean) {
+      const vVrmClean = String(voucher.vrm)
+        .toUpperCase()
+        .replace(/[^A-Z0-9]/g, "");
+
+      const isUnrestricted =
+        !vVrmClean ||
+        ["-", "—", "PENDING", "N/A", "NA", "UNKNOWN", "NULL"].includes(
+          vVrmClean
+        );
+
+      if (
+        !isUnrestricted &&
+        currentVrmClean &&
+        vVrmClean !== currentVrmClean
+      ) {
         return;
       }
     }
@@ -2236,15 +2511,13 @@ export function getUnusedVouchersForDate(
     }
   });
 
-  // Debug log showing the target date and breakdown: Total for Date - Assigned for Date = Unused
-  console.log(`🔍 [Unused Codes Calculation - ${targetDateISO}]`, {
+  console.log(`🔒 [Global Voucher Availability - ${targetDateISO}]`, {
     targetDate: targetDateISO,
-    totalVouchersForDate,
-    assignedCodesCount: allAssignedCodesSet.size,
+    totalVouchersForDate: dailyVouchersMap.size,
+    globallyAssignedCodes: allAssignedCodesSet.size,
     unusedCodesCount: activeUnassignedCodes.length,
     assignedCodes: Array.from(allAssignedCodesSet),
-    availableCodesCount: activeUnassignedCodes.length,
-    availableCodes: activeUnassignedCodes.map(v => v.code)
+    availableCodes: activeUnassignedCodes.map((v) => v.code),
   });
 
   return activeUnassignedCodes;
