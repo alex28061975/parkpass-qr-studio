@@ -345,32 +345,38 @@ export function formatExportCreatedAt(createdAt?: string, created_at?: string, s
 
 /**
  * Format the record's submitted timestamp for the table display as DD/MM/YYYY HH:MM:SS.
- * Priority: completionTime -> startTime -> createdAt -> fallback to dateRequired/validFrom
+ * Priority:
+ * 1. Primary: completionTime
+ * 2. Fallback: startTime
+ * 3. Last fallback: createdAt
+ * Format: DD/MM/YYYY HH:MM:SS
  */
 export function formatSubmittedDateTime(record: CsvPermitRecord): string {
   if (!record) return "-";
 
-  // 1. Candidate priority: completionTime -> startTime -> createdAt
+  // 1. Primary: completionTime
+  // 2. Fallback: startTime
+  // 3. Last fallback: createdAt
   const candidate = 
-    record.completionTime || 
-    (record as any).completion_time ||
-    record.startTime || 
-    (record as any).start_time ||
-    record.createdAt || 
-    (record as any).created_at ||
-    (record as any).submissionTime ||
-    (record as any).submission_time ||
-    "";
+    (record.completionTime && String(record.completionTime).trim() && String(record.completionTime).trim() !== "-")
+      ? String(record.completionTime).trim()
+      : ((record as any).completion_time && String((record as any).completion_time).trim() && String((record as any).completion_time).trim() !== "-")
+        ? String((record as any).completion_time).trim()
+        : (record.startTime && String(record.startTime).trim() && String(record.startTime).trim() !== "-")
+          ? String(record.startTime).trim()
+          : ((record as any).start_time && String((record as any).start_time).trim() && String((record as any).start_time).trim() !== "-")
+            ? String((record as any).start_time).trim()
+            : (record.createdAt && String(record.createdAt).trim() && String(record.createdAt).trim() !== "-")
+              ? String(record.createdAt).trim()
+              : ((record as any).created_at && String((record as any).created_at).trim() && String((record as any).created_at).trim() !== "-")
+                ? String((record as any).created_at).trim()
+                : "";
 
-  let effectiveStr = String(candidate || "").trim();
+  const effectiveStr = String(candidate || "").trim();
 
-  // If no timestamp was found, fallback to dateRequired or validFrom
-  if (!effectiveStr || effectiveStr === "-" || effectiveStr === "null" || effectiveStr === "undefined") {
-    const fallbackDate = record.dateRequired || record.validFrom || record.todayDate || "";
-    if (!fallbackDate || fallbackDate === "-") {
-      return "-";
-    }
-    effectiveStr = String(fallbackDate).trim();
+  // If no timestamp was found from completionTime, startTime, or createdAt, return "-"
+  if (!effectiveStr || effectiveStr === "-" || effectiveStr.toLowerCase() === "null" || effectiveStr.toLowerCase() === "undefined") {
+    return "-";
   }
 
   // 1. Check for UK date format DD/MM/YYYY or D/M/YYYY or with hyphens DD-MM-YYYY
@@ -448,22 +454,25 @@ export function formatSubmittedDateTime(record: CsvPermitRecord): string {
 
 /**
  * Extract numerical epoch milliseconds for submitted time to enable accurate sorting.
+ * Hierarchy: 1. completionTime, 2. startTime, 3. createdAt
  */
 export function getRecordSubmittedTimeMs(record: CsvPermitRecord): number {
   if (!record) return 0;
   const candidate = 
-    record.completionTime || 
-    (record as any).completion_time ||
-    record.startTime || 
-    (record as any).start_time ||
-    record.createdAt || 
-    (record as any).created_at ||
-    (record as any).submissionTime ||
-    (record as any).submission_time ||
-    record.dateRequired ||
-    record.validFrom ||
-    "";
-  if (!candidate) return 0;
+    (record.completionTime && String(record.completionTime).trim() && String(record.completionTime).trim() !== "-")
+      ? String(record.completionTime).trim()
+      : ((record as any).completion_time && String((record as any).completion_time).trim() && String((record as any).completion_time).trim() !== "-")
+        ? String((record as any).completion_time).trim()
+        : (record.startTime && String(record.startTime).trim() && String(record.startTime).trim() !== "-")
+          ? String(record.startTime).trim()
+          : ((record as any).start_time && String((record as any).start_time).trim() && String((record as any).start_time).trim() !== "-")
+            ? String((record as any).start_time).trim()
+            : (record.createdAt && String(record.createdAt).trim() && String(record.createdAt).trim() !== "-")
+              ? String(record.createdAt).trim()
+              : ((record as any).created_at && String((record as any).created_at).trim() && String((record as any).created_at).trim() !== "-")
+                ? String((record as any).created_at).trim()
+                : "";
+  if (!candidate || candidate === "-" || candidate.toLowerCase() === "null" || candidate.toLowerCase() === "undefined") return 0;
 
   const recDateISO = parseDateToISO(record.dateRequired || record.validFrom || record.todayDate || "") || "";
   const ms = parseFullDateTimeMs(String(candidate), recDateISO);
@@ -840,7 +849,8 @@ export function parsePastedText(rawText: string): CsvPermitRecord[] {
         const rawPhone = columns[7] || "";
         const rawEmail = columns[8] || "";
         const rawVoucher = columns[9] || "";
-        const rawStartTime = columns[10] || columns[11] || "";
+        const rawStartTime = columns[10] || "";
+        const rawCompletionTime = columns[11] || "";
 
         const formIdStr = formatFormId(rawId) || String(i + 1);
         const cleanVrm = rawVrm ? rawVrm.toUpperCase().replace(/\s+/g, "") : "";
@@ -858,6 +868,7 @@ export function parsePastedText(rawText: string): CsvPermitRecord[] {
           email: rawEmail,
           voucherCode: cleanVoucherCodeValue(rawVoucher),
           startTime: rawStartTime || undefined,
+          completionTime: rawCompletionTime || undefined,
           createdAt: rawStartTime || undefined
         });
         continue;
@@ -891,9 +902,13 @@ export function parsePastedText(rawText: string): CsvPermitRecord[] {
       let rawEmail = "";
       let rawPhone = "";
       let rawStartTime = "";
+      let rawCompletionTime = "";
 
       if (isMsFormsFormat) {
         rawStartTime = columns[0] || "";
+        if (columns[1] && (columns[1].includes(":") || columns[1].includes("/"))) {
+          rawCompletionTime = columns[1];
+        }
         rawEmail = formsEmailIdx !== -1 ? (columns[formsEmailIdx] || "") : "";
         rawHospital = columns[formsHospitalIdx] || "Newham Hospital";
         rawWard = columns[formsHospitalIdx + 1] || "Acorn Ward";
@@ -941,6 +956,7 @@ export function parsePastedText(rawText: string): CsvPermitRecord[] {
         email: rawEmail,
         voucherCode: cleanVoucherCodeValue(rawVoucher),
         startTime: rawStartTime || undefined,
+        completionTime: rawCompletionTime || undefined,
         createdAt: rawStartTime || undefined
       });
     }

@@ -36,7 +36,13 @@ import {
   getRequestedPermitDateISO,
   getTodayISO,
   formatSubmittedDateTime,
-  getRecordSubmittedTimeMs
+  getRecordSubmittedTimeMs,
+  getMatchingPermits,
+  getUnusedVouchersForDate,
+  getSpreadsheetMatchingAssignedCodes,
+  getVoucherDateISO,
+  cleanVoucherCodeValue,
+  isVoucherCodeMatch
 } from "../utils/csvParser";
 import { checkIsRecordDispatched, getRecordKeys } from "../utils/dispatchUtils";
 import { isVrmSilentBlockedSync } from "../lib/blocklist";
@@ -133,6 +139,120 @@ export function DispatchCentre({
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [actionsOpen, setActionsOpen] = useState(false);
   const [wardDropdownOpen, setWardDropdownOpen] = useState(false);
+
+  // Target ISO for Active Date Codes dropdown
+  const targetIso = useMemo(() => {
+    if (formData) {
+      const permitIso = getRequestedPermitDateISO(formData as any);
+      if (permitIso && /^\d{4}-\d{2}-\d{2}$/.test(permitIso)) {
+        return permitIso;
+      }
+      const formDateIso = formData.todayDate ? parseDateToISO(String(formData.todayDate)) : "";
+      if (formDateIso && /^\d{4}-\d{2}-\d{2}$/.test(formDateIso)) {
+        return formDateIso;
+      }
+    }
+    const procIso = processingDate ? parseDateToISO(processingDate) : "";
+    if (procIso && /^\d{4}-\d{2}-\d{2}$/.test(procIso)) {
+      return procIso;
+    }
+    return getTodayISO();
+  }, [formData?.validFrom, formData?.dateRequired, formData?.startTime, formData?.createdAt, formData?.todayDate, processingDate]);
+
+  // Matching permits for the active date
+  const matchingPermits = useMemo(() => {
+    if (!targetIso) return [];
+    return getMatchingPermits(database, targetIso);
+  }, [database, targetIso]);
+
+  // Unused vouchers computation for the active date
+  const unusedVouchersForDay = useMemo<ParsedVoucherData[]>(() => {
+    if (!targetIso) return [];
+
+    const vouchers = getUnusedVouchersForDate(
+      vouchersDatabase,
+      database,
+      targetIso,
+      formData?.vrm,
+      formData,
+      matchingPermits
+    );
+
+    // Filter to vouchers matching targetIso (or generic pool)
+    const dateFiltered = vouchers.filter(v => {
+      const vIso = getVoucherDateISO(v);
+      return !vIso || vIso === targetIso;
+    });
+
+    const spreadsheetAssignedCodes = getSpreadsheetMatchingAssignedCodes(
+      matchingPermits,
+      database,
+      targetIso,
+      vouchersDatabase
+    );
+    const finalFiltered = dateFiltered.filter(v => {
+      const codeUpper = (v.code || "").trim().toUpperCase();
+      return !spreadsheetAssignedCodes.has(codeUpper);
+    });
+
+    return finalFiltered;
+  }, [vouchersDatabase, database, targetIso, formData?.vrm, formData, matchingPermits]);
+
+  const handleActiveDateCodeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const selectedCode = cleanVoucherCodeValue(e.target.value).toUpperCase();
+    if (!selectedCode || selectedCode === "-" || selectedCode === "CANCELLED") {
+      return;
+    }
+
+    const codeFields = [
+      "voucherCode",
+      "prePaidCode",
+      "qrCode",
+      "voucherCodesText",
+      "serialNumber",
+      "voucher",
+      "code",
+      "qrOverride",
+      "Voucher Code",
+      "VOUCHER CODE",
+      "Pre-Paid Code",
+      "Pre Paid Code",
+      "QR Code",
+      "QR CODE"
+    ];
+
+    const isCodeAssigned = (record: any) => {
+      if (!record) return false;
+
+      return codeFields.some((field) => {
+        const raw = record[field];
+        if (raw === undefined || raw === null) return false;
+
+        return String(raw)
+          .split(/[\n,;\s]+/)
+          .map((part) => cleanVoucherCodeValue(part).toUpperCase())
+          .some((code) => code && code !== "-" && isVoucherCodeMatch(code, selectedCode));
+      });
+    };
+
+    const alreadyAssigned =
+      (database || []).some(isCodeAssigned) || (formData && isCodeAssigned(formData));
+
+    if (alreadyAssigned) {
+      console.warn(
+        `🚫 Voucher ${selectedCode} is already assigned and cannot be reused.`
+      );
+      return;
+    }
+
+    onChangeFormData?.({
+      voucherCodesText: selectedCode,
+      status: "Pending",
+      emailType: "RESEND_CONCESSION",
+      isResend: true,
+      emailTemplate: "replacement"
+    });
+  };
 
   // Sorting state (Excel-like sorting: asc -> desc -> reset)
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
@@ -709,15 +829,39 @@ export function DispatchCentre({
             </div>
             <div>
               <h2 className="text-xl font-bold text-slate-900 dark:text-white tracking-tight">Permit Dispatch Centre</h2>
-              <p className="text-xs text-slate-500 dark:text-slate-400 font-normal mt-0.5">Select recipients and dispatch emails via Outlook</p>
             </div>
           </div>
 
           <div className="flex items-center gap-2 self-start sm:self-auto">
-            {/* Outlook info badge */}
-            <div className="flex items-center gap-1.5 bg-blue-50 dark:bg-[#0b2138] border border-blue-200 dark:border-[#1b436c] text-blue-700 dark:text-[#93c5fd] text-xs px-3 py-1.5 rounded-lg select-none">
-              <Mail className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-              <span>Select recipients and dispatch emails via Outlook</span>
+            {/* Active Date Codes dropdown */}
+            <div className="flex items-center gap-2">
+              <label className="text-xs sm:text-sm font-semibold text-slate-700 dark:text-slate-200 whitespace-nowrap shrink-0">
+                Active Date Codes ({unusedVouchersForDay.length}):
+              </label>
+
+              <select
+                value={unusedVouchersForDay.some(v => v.code === formData?.voucherCodesText) ? formData?.voucherCodesText : ""}
+                onChange={handleActiveDateCodeChange}
+                disabled={unusedVouchersForDay.length === 0}
+                className={`h-9 px-3 py-1.5 border rounded-md text-xs font-mono font-extrabold focus:outline-none transition-all ${
+                  unusedVouchersForDay.length > 0
+                    ? "border-gray-300 dark:border-slate-700 focus:border-[#005EB8] dark:focus:border-blue-500 bg-emerald-50/80 dark:bg-emerald-950/30 text-emerald-900 dark:text-emerald-200 cursor-pointer"
+                    : "border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-900 text-gray-400 dark:text-slate-500 cursor-not-allowed font-normal"
+                }`}
+              >
+                <option value="" disabled className="font-mono font-normal">
+                  -- Choose Code --
+                </option>
+                {unusedVouchersForDay.map((v, index) => (
+                  <option
+                    key={`voucher_${v.code}_${index}`}
+                    value={v.code}
+                    className="font-mono font-extrabold text-gray-800 dark:bg-slate-900 dark:text-slate-100"
+                  >
+                    {v.code}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
         </div>
