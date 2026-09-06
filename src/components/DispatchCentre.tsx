@@ -826,23 +826,28 @@ export function DispatchCentre({
 
   return (
     <section className="w-full bg-white dark:bg-[#07172b] border border-slate-200 dark:border-[#183a5e] rounded-2xl p-4 md:p-6 shadow-sm dark:shadow-2xl text-slate-800 dark:text-slate-200 transition-colors">
-      {/* Top Header Section */}
+      {/* Top Header Section - Single Line */}
       <div className="flex flex-col gap-3 pb-4 border-b border-slate-200 dark:border-[#143252]">
-        <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-          <div className="flex items-center gap-3 sm:flex-1">
-            <div className="w-10 h-10 rounded-full bg-blue-600 flex items-center justify-center shadow-lg shadow-blue-500/20 text-white shrink-0">
-              <Send className="w-5 h-5 -rotate-45" />
+        <div className="flex items-center gap-3 flex-nowrap overflow-x-auto py-1">
+          {/* Title */}
+          <div className="flex items-center gap-2.5 shrink-0 flex-nowrap">
+            <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center shadow-md shadow-blue-500/20 text-white shrink-0">
+              <Send className="w-4 h-4 -rotate-45" />
             </div>
-            <div>
-              <h2 className="text-xl font-bold text-slate-900 dark:text-white tracking-tight">Permit Dispatch Centre</h2>
-            </div>
+            <h2 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white tracking-tight uppercase whitespace-nowrap shrink-0">
+              Permit Dispatch Centre
+            </h2>
           </div>
 
-          <div className="flex items-center justify-center gap-2 sm:flex-1">
+          {/* Divider */}
+          <span className="text-slate-400 dark:text-slate-600 select-none whitespace-nowrap shrink-0">│</span>
+
+          {/* Left side: Browse buttons + Sub-200ms */}
+          <div className="flex items-center gap-2 shrink-0 flex-nowrap">
             <button
               type="button"
               onClick={onBrowseConcessions}
-              className="flex items-center gap-1.5 border rounded-md text-[13px] leading-none transition-colors"
+              className="flex items-center gap-1.5 border rounded-md text-[13px] leading-none transition-colors whitespace-nowrap shrink-0"
               style={{
                 background: "transparent",
                 borderColor: "#2c6e4f",
@@ -851,13 +856,13 @@ export function DispatchCentre({
                 padding: "7px 12px"
               }}
             >
-              <FileSpreadsheet className="w-4 h-4" style={{ color: "#4ade80" }} />
-              <span>Browse concessions</span>
+              <FileSpreadsheet className="w-4 h-4 shrink-0" style={{ color: "#4ade80" }} />
+              <span className="whitespace-nowrap">Browse concessions</span>
             </button>
             <button
               type="button"
               onClick={onBrowseVouchers}
-              className="flex items-center gap-1.5 border rounded-md text-[13px] leading-none transition-colors"
+              className="flex items-center gap-1.5 border rounded-md text-[13px] leading-none transition-colors whitespace-nowrap shrink-0"
               style={{
                 background: "transparent",
                 borderColor: "#2c6e4f",
@@ -866,14 +871,21 @@ export function DispatchCentre({
                 padding: "7px 12px"
               }}
             >
-              <FileText className="w-4 h-4" style={{ color: "#4ade80" }} />
-              <span>Browse vouchers</span>
+              <FileText className="w-4 h-4 shrink-0" style={{ color: "#4ade80" }} />
+              <span className="whitespace-nowrap">Browse vouchers</span>
             </button>
+            <span className="whitespace-nowrap shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold text-emerald-400 bg-emerald-950/40 border border-emerald-800/60">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+              Sub-200ms
+            </span>
           </div>
 
-          {/* Active Date Codes dropdown */}
-          <div className="flex items-center gap-2 self-start sm:self-auto sm:flex-1 sm:justify-end">
-            <label className="text-xs sm:text-sm font-semibold text-slate-700 dark:text-slate-200 whitespace-nowrap shrink-0">
+          {/* Divider */}
+          <span className="text-slate-400 dark:text-slate-600 select-none whitespace-nowrap shrink-0">│</span>
+
+          {/* Right side: Active Date Codes */}
+          <div className="flex items-center gap-2 whitespace-nowrap shrink-0 flex-nowrap">
+            <label className="text-xs sm:text-sm font-semibold text-slate-700 dark:text-slate-300 whitespace-nowrap shrink-0">
               Active Date Codes ({unusedVouchersForDay.length}):
             </label>
 
@@ -881,7 +893,7 @@ export function DispatchCentre({
               value={unusedVouchersForDay.some(v => v.code === formData?.voucherCodesText) ? formData?.voucherCodesText : ""}
               onChange={handleActiveDateCodeChange}
               disabled={unusedVouchersForDay.length === 0}
-              className={`h-9 px-3 py-1.5 border rounded-md text-xs font-mono font-extrabold focus:outline-none transition-all ${
+              className={`h-9 px-3 py-1.5 border rounded-md text-xs font-mono font-extrabold focus:outline-none transition-all shrink-0 whitespace-nowrap ${
                 unusedVouchersForDay.length > 0
                   ? "border-gray-300 dark:border-slate-700 focus:border-[#005EB8] dark:focus:border-blue-500 bg-emerald-50/80 dark:bg-emerald-950/30 text-emerald-900 dark:text-emerald-200 cursor-pointer"
                   : "border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-900 text-gray-400 dark:text-slate-500 cursor-not-allowed font-normal"

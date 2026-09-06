@@ -24,7 +24,6 @@ import { INITIAL_DEMO_CSV } from "./data/defaultCsv";
 import { isVrmSilentBlockedSync } from "./lib/blocklist";
 import { CsvPermitRecord, parsePermitCsv, parseDateToISO, addDays, formatPhoneNumber, ParsedVoucherData, addDaysSafe, parseDateRange, getDatesInRange, cleanVoucherCodeValue, exportToExcel, isVoucherCodeMatch, sortRecordsByFormIdDesc, getMatchingPermits, isDateRequiredOutsideValidWindow, getTodayISO, checkIsBlockedDuplicate, parseFullDateTimeMs, normalizeVouchersList, isRecordCancelled, getRequestedPermitDateISO, isVoucherExactPeriodEligible, isVoucherAvailableStatus, isVoucherVrmCompatible, getDefaultSampleVouchers } from "./utils/csvParser";
 import { CsvDatabasePanel, type CsvDatabasePanelHandle } from "./components/CsvDatabasePanel";
-import { TableView } from "./components/TableView";
 import { BlocklistPanel } from "./components/BlocklistPanel";
 import { 
   isSupabaseConfigured, 
@@ -490,7 +489,7 @@ export default function App() {
     }
   }, [dispatchedKeys]);
 
-  const [activeTab, setActiveTab] = useState<"dispatcher" | "table">("dispatcher");
+  const [activeTab, setActiveTab] = useState<"dispatcher">("dispatcher");
   const permitCardRef = useRef<PermitCardHandle>(null);
   const csvPanelRef = useRef<CsvDatabasePanelHandle>(null);
   const [searchQuery, setSearchQuery] = useState("");

@@ -15,8 +15,8 @@ import {
 interface HeaderProps {
   darkMode: boolean;
   onToggleDarkMode: () => void;
-  activeTab?: "dispatcher" | "table";
-  onActiveTabChange?: (tab: "dispatcher" | "table") => void;
+  activeTab?: "dispatcher";
+  onActiveTabChange?: (tab: "dispatcher") => void;
   onExportExcel?: () => void;
   onCleanDatabase?: () => void;
   onOpenBlocklist?: () => void;
@@ -129,17 +129,6 @@ export function Header({
                   >
                     <span>Permit Dispatcher</span>
                     {activeTab === "dispatcher" && <Check className="w-3.5 h-3.5 text-[#5bdcff]" />}
-                  </button>
-                  <button
-                    type="button"
-                    className={activeTab === "table" ? "selected" : ""}
-                    onClick={() => {
-                      onActiveTabChange("table");
-                      setShowSettings(false);
-                    }}
-                  >
-                    <span>Full Records Table</span>
-                    {activeTab === "table" && <Check className="w-3.5 h-3.5 text-[#5bdcff]" />}
                   </button>
                 </>
               )}

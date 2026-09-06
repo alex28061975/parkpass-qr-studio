@@ -300,10 +300,6 @@ export function TableView({
           <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold text-[#005EB8] dark:text-blue-300 bg-blue-950/60 border border-blue-800/80">
             {tableDisplayCount.toLocaleString()} Records Loaded
           </span>
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold text-emerald-400 bg-emerald-950/40 border border-emerald-800/60 font-sans">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-            Sub-200ms
-          </span>
         </div>
       </div>
 
