@@ -795,17 +795,23 @@ export function DispatchCentre({
 
   return (
     <section className="w-full bg-white dark:bg-[#07172b] border border-slate-200 dark:border-[#183a5e] rounded-2xl p-4 md:p-6 shadow-sm dark:shadow-2xl text-slate-800 dark:text-slate-200 transition-colors">
-      {/* Top Header Section - Single Line with Centered Buttons - NO "|" DIVIDERS */}
+      {/* Top Header Section - EVERYTHING IN A SINGLE LINE */}
       <div className="flex flex-col gap-3 pb-4 border-b border-slate-200 dark:border-[#143252]">
-        <div className="flex items-center gap-4 w-full">
-          {/* Left: Title */}
-          <div className="flex items-center gap-2.5 shrink-0">
+        <div className="flex items-center gap-3 w-full flex-nowrap overflow-x-auto">
+          {/* Left: Title + Record Counts */}
+          <div className="flex items-center gap-3 shrink-0">
             <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center shadow-md shadow-blue-500/20 text-white shrink-0">
               <Send className="w-4 h-4 -rotate-45" />
             </div>
             <h2 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white tracking-tight whitespace-nowrap shrink-0">
               Permit Dispatch Centre
             </h2>
+            <span className="text-xs text-emerald-400 font-semibold whitespace-nowrap">
+              {totalDbCount} records
+            </span>
+            <span className="text-xs text-emerald-400 font-semibold whitespace-nowrap">
+              {totalVouchersCount} vouchers
+            </span>
           </div>
 
           {/* Center: Browse Buttons - TRULY CENTERED */}
@@ -856,8 +862,7 @@ export function DispatchCentre({
               onChange={handleActiveDateCodeChange}
               disabled={unusedVouchersForDay.length === 0}
               className={`h-9 px-3 py-1.5 border rounded-md text-xs font-mono font-extrabold focus:outline-none transition-all shrink-0 whitespace-nowrap ${
-                unusedVouchersForDay.length > 0
-                  ? "border-gray-300 dark:border-slate-700 focus:border-[#005EB8] dark:focus:border-blue-500 bg-emerald-50/80 dark:bg-emerald-950/30 text-emerald-900 dark:text-emerald-200 cursor-pointer"
+                unusedVouchersForDay.length > 0                  ? "border-gray-300 dark:border-slate-700 focus:border-[#005EB8] dark:focus:border-blue-500 bg-emerald-50/80 dark:bg-emerald-950/30 text-emerald-900 dark:text-emerald-200 cursor-pointer"
                   : "border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-900 text-gray-400 dark:text-slate-500 cursor-not-allowed font-normal"
               }`}
             >
@@ -1480,113 +1485,6 @@ export function DispatchCentre({
             </form>
           </div>
         )}
-      </div>
-
-      {/* Footer Controls Bar */}
-      <div className="bg-slate-50 dark:bg-[#051322] border border-slate-200 dark:border-[#143252] rounded-xl px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 mt-4 text-xs text-slate-700 dark:text-slate-300">
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="relative">
-            <button 
-              type="button"
-              onClick={() => setActionsOpen(v => !v)}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-slate-100 dark:bg-[#071b30] dark:hover:bg-[#0d2745] border border-slate-300 dark:border-[#1e436c] rounded-md text-slate-800 dark:text-white font-medium text-xs transition-colors shadow-xs cursor-pointer"
-            >
-              <Zap className="w-3.5 h-3.5 text-blue-600 dark:text-[#38bdf8]" />
-              <span>Actions</span>
-              <ChevronDown className="w-3 h-3 text-slate-400" />
-            </button>
-            {actionsOpen && (
-              <div className="absolute left-0 bottom-full mb-1 w-48 bg-white dark:bg-[#091e34] border border-slate-200 dark:border-[#1d436e] rounded-lg shadow-xl py-1 z-30 text-xs">
-                <button 
-                  type="button" 
-                  onClick={() => { setActionsOpen(false); handleExportZip(); }} 
-                  className="w-full text-left px-3 py-2 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-[#132e4d] flex items-center gap-2 cursor-pointer"
-                >
-                  <Download className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" /> Export Excel
-                </button>
-                <button 
-                  type="button" 
-                  onClick={() => { setActionsOpen(false); handleExportZip(); }} 
-                  className="w-full text-left px-3 py-2 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-[#132e4d] flex items-center gap-2 cursor-pointer"
-                >
-                  <Archive className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" /> Export All ZIP
-                </button>
-              </div>
-            )}
-          </div>
-
-          <button 
-            type="button"
-            onClick={onClear}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-slate-100 dark:bg-[#071b30] dark:hover:bg-[#0d2745] border border-slate-300 dark:border-[#1e436c] rounded-md text-slate-800 dark:text-white font-medium text-xs transition-colors shadow-xs cursor-pointer"
-          >
-            <XSquare className="w-3.5 h-3.5 text-slate-400" />
-            <span>Clear Form</span>
-          </button>
-
-          <div className="flex items-center gap-1.5">
-            <Calendar className="w-3.5 h-3.5 text-blue-600 dark:text-[#38bdf8]" />
-            <span className="text-slate-700 dark:text-slate-300 font-medium">Valid From</span>
-            <span className="bg-white dark:bg-[#071b30] border border-slate-300 dark:border-[#1e436c] px-2.5 py-1 rounded text-slate-900 dark:text-white font-mono text-xs flex items-center gap-1.5 shadow-2xs">
-              <Calendar className="w-3 h-3 text-slate-400" />
-              {formatDate(validFromDisplay)}
-            </span>
-          </div>
-
-          <div className="flex items-center gap-1.5">
-            <Calendar className="w-3.5 h-3.5 text-blue-600 dark:text-[#38bdf8]" />
-            <span className="text-slate-700 dark:text-slate-300 font-medium">Valid To</span>
-            <span className="bg-white dark:bg-[#071b30] border border-slate-300 dark:border-[#1e436c] px-2.5 py-1 rounded text-slate-900 dark:text-white font-mono text-xs flex items-center gap-1.5 shadow-2xs">
-              <Calendar className="w-3 h-3 text-slate-400" />
-              {formatDate(validToDisplay)}
-            </span>
-          </div>
-
-          <div className="flex items-center gap-1.5">
-            <span className="text-slate-700 dark:text-slate-300 font-medium">Ward / Department</span>
-            <div className="relative">
-              <button 
-                type="button" 
-                onClick={() => setWardDropdownOpen(v => !v)}
-                className="bg-white hover:bg-slate-100 dark:bg-[#071b30] dark:hover:bg-[#0d2745] border border-slate-300 dark:border-[#1e436c] px-2.5 py-1 rounded text-slate-800 dark:text-white text-xs flex items-center gap-1.5 font-medium transition-colors shadow-2xs cursor-pointer"
-              >
-                <Building2 className="w-3 h-3 text-slate-400" />
-                <span>{selectedWard}</span>
-                <ChevronDown className="w-3 h-3 text-slate-400" />
-              </button>
-              {wardDropdownOpen && (
-                <div className="absolute left-0 bottom-full mb-1 w-52 max-h-48 overflow-y-auto bg-white dark:bg-[#091e34] border border-slate-200 dark:border-[#1d436e] rounded-lg shadow-xl py-1 z-30 text-xs">
-                  {availableWards.map(w => (
-                    <button 
-                      key={w} 
-                      type="button" 
-                      onClick={() => { setWardDropdownOpen(false); onChangeFormData?.({ ward: w }); }} 
-                      className="w-full text-left px-3 py-1.5 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-[#132e4d] cursor-pointer"
-                    >
-                      {w}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Bottom Metadata Info Strip */}
-      <div className="flex flex-wrap items-center gap-6 px-2 py-3 text-xs text-slate-500 dark:text-slate-400 font-medium select-none">
-        <span className="flex items-center gap-1.5">
-          <Database className="w-3.5 h-3.5 text-blue-600 dark:text-[#38bdf8]" />
-          <span>{totalDbCount} records · {totalVouchersCount} vouchers</span>
-        </span>
-        <span className="flex items-center gap-1.5">
-          <CheckCircle2 className="w-3.5 h-3.5 text-blue-600 dark:text-[#38bdf8]" />
-          <span>v3.4 Elite · {formatDate(processingDate || "07/07/2026")}</span>
-        </span>
-        <span className="flex items-center gap-1.5">
-          <Lock className="w-3.5 h-3.5 text-blue-600 dark:text-[#38bdf8]" />
-          <span>Secure QR</span>
-        </span>
       </div>
     </section>
   );
