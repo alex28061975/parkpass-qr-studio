@@ -18,7 +18,9 @@ import {
   QrCode,
   Search,
   X,
-  Filter
+  Filter,
+  FileSpreadsheet,
+  FileText
 } from "lucide-react";
 import { 
   CsvPermitRecord, 
@@ -75,6 +77,8 @@ interface DispatchCentreProps {
   dateRangeFilter?: '7days' | '30days' | 'all';
   onDateRangeFilterChange?: (filter: '7days' | '30days' | 'all') => void;
   isLoadingHistory?: boolean;
+  onBrowseConcessions?: () => void;
+  onBrowseVouchers?: () => void;
 }
 
 const formatDate = (dateStr?: string) => {
@@ -123,7 +127,9 @@ export function DispatchCentre({
   onClear,
   onChangeFormData,
   onDateRangeFilterChange,
-  isLoadingHistory
+  isLoadingHistory,
+  onBrowseConcessions,
+  onBrowseVouchers
 }: DispatchCentreProps) {
   const [internalSearchQuery, setInternalSearchQuery] = useState("");
   const isControlled = searchQueryProp !== undefined;
@@ -822,8 +828,8 @@ export function DispatchCentre({
     <section className="w-full bg-white dark:bg-[#07172b] border border-slate-200 dark:border-[#183a5e] rounded-2xl p-4 md:p-6 shadow-sm dark:shadow-2xl text-slate-800 dark:text-slate-200 transition-colors">
       {/* Top Header Section */}
       <div className="flex flex-col gap-3 pb-4 border-b border-slate-200 dark:border-[#143252]">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+          <div className="flex items-center gap-3 sm:flex-1">
             <div className="w-10 h-10 rounded-full bg-blue-600 flex items-center justify-center shadow-lg shadow-blue-500/20 text-white shrink-0">
               <Send className="w-5 h-5 -rotate-45" />
             </div>
@@ -832,37 +838,68 @@ export function DispatchCentre({
             </div>
           </div>
 
-          <div className="flex items-center gap-2 self-start sm:self-auto">
-            {/* Active Date Codes dropdown */}
-            <div className="flex items-center gap-2">
-              <label className="text-xs sm:text-sm font-semibold text-slate-700 dark:text-slate-200 whitespace-nowrap shrink-0">
-                Active Date Codes ({unusedVouchersForDay.length}):
-              </label>
+          <div className="flex items-center justify-center gap-2 sm:flex-1">
+            <button
+              type="button"
+              onClick={onBrowseConcessions}
+              className="flex items-center gap-1.5 border rounded-md text-[13px] leading-none transition-colors"
+              style={{
+                background: "transparent",
+                borderColor: "#2c6e4f",
+                borderWidth: "1px",
+                color: "#4ade80",
+                padding: "7px 12px"
+              }}
+            >
+              <FileSpreadsheet className="w-4 h-4" style={{ color: "#4ade80" }} />
+              <span>Browse concessions</span>
+            </button>
+            <button
+              type="button"
+              onClick={onBrowseVouchers}
+              className="flex items-center gap-1.5 border rounded-md text-[13px] leading-none transition-colors"
+              style={{
+                background: "transparent",
+                borderColor: "#2c6e4f",
+                borderWidth: "1px",
+                color: "#4ade80",
+                padding: "7px 12px"
+              }}
+            >
+              <FileText className="w-4 h-4" style={{ color: "#4ade80" }} />
+              <span>Browse vouchers</span>
+            </button>
+          </div>
 
-              <select
-                value={unusedVouchersForDay.some(v => v.code === formData?.voucherCodesText) ? formData?.voucherCodesText : ""}
-                onChange={handleActiveDateCodeChange}
-                disabled={unusedVouchersForDay.length === 0}
-                className={`h-9 px-3 py-1.5 border rounded-md text-xs font-mono font-extrabold focus:outline-none transition-all ${
-                  unusedVouchersForDay.length > 0
-                    ? "border-gray-300 dark:border-slate-700 focus:border-[#005EB8] dark:focus:border-blue-500 bg-emerald-50/80 dark:bg-emerald-950/30 text-emerald-900 dark:text-emerald-200 cursor-pointer"
-                    : "border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-900 text-gray-400 dark:text-slate-500 cursor-not-allowed font-normal"
-                }`}
-              >
-                <option value="" disabled className="font-mono font-normal">
-                  -- Choose Code --
+          {/* Active Date Codes dropdown */}
+          <div className="flex items-center gap-2 self-start sm:self-auto sm:flex-1 sm:justify-end">
+            <label className="text-xs sm:text-sm font-semibold text-slate-700 dark:text-slate-200 whitespace-nowrap shrink-0">
+              Active Date Codes ({unusedVouchersForDay.length}):
+            </label>
+
+            <select
+              value={unusedVouchersForDay.some(v => v.code === formData?.voucherCodesText) ? formData?.voucherCodesText : ""}
+              onChange={handleActiveDateCodeChange}
+              disabled={unusedVouchersForDay.length === 0}
+              className={`h-9 px-3 py-1.5 border rounded-md text-xs font-mono font-extrabold focus:outline-none transition-all ${
+                unusedVouchersForDay.length > 0
+                  ? "border-gray-300 dark:border-slate-700 focus:border-[#005EB8] dark:focus:border-blue-500 bg-emerald-50/80 dark:bg-emerald-950/30 text-emerald-900 dark:text-emerald-200 cursor-pointer"
+                  : "border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-900 text-gray-400 dark:text-slate-500 cursor-not-allowed font-normal"
+              }`}
+            >
+              <option value="" disabled className="font-mono font-normal">
+                -- Choose Code --
+              </option>
+              {unusedVouchersForDay.map((v, index) => (
+                <option
+                  key={`voucher_${v.code}_${index}`}
+                  value={v.code}
+                  className="font-mono font-extrabold text-gray-800 dark:bg-slate-900 dark:text-slate-100"
+                >
+                  {v.code}
                 </option>
-                {unusedVouchersForDay.map((v, index) => (
-                  <option
-                    key={`voucher_${v.code}_${index}`}
-                    value={v.code}
-                    className="font-mono font-extrabold text-gray-800 dark:bg-slate-900 dark:text-slate-100"
-                  >
-                    {v.code}
-                  </option>
-                ))}
-              </select>
-            </div>
+              ))}
+            </select>
           </div>
         </div>
 

@@ -2,7 +2,6 @@ import React, { useState, useEffect, useRef } from "react";
 import { PermitData, StorageMode } from "./types";
 import { CheckCircle2, AlertCircle, Info, CloudUpload } from "lucide-react";
 import { Header } from "./components/Header";
-import { PermitForm } from "./components/PermitForm";
 import { PermitCard } from "./components/PermitCard";
 import type { PermitCardHandle } from "./components/PermitCard";
 import { DispatchCentre } from "./components/DispatchCentre";
@@ -24,7 +23,7 @@ import {
 import { INITIAL_DEMO_CSV } from "./data/defaultCsv";
 import { isVrmSilentBlockedSync } from "./lib/blocklist";
 import { CsvPermitRecord, parsePermitCsv, parseDateToISO, addDays, formatPhoneNumber, ParsedVoucherData, addDaysSafe, parseDateRange, getDatesInRange, cleanVoucherCodeValue, exportToExcel, isVoucherCodeMatch, sortRecordsByFormIdDesc, getMatchingPermits, isDateRequiredOutsideValidWindow, getTodayISO, checkIsBlockedDuplicate, parseFullDateTimeMs, normalizeVouchersList, isRecordCancelled, getRequestedPermitDateISO, isVoucherExactPeriodEligible, isVoucherAvailableStatus, isVoucherVrmCompatible, getDefaultSampleVouchers } from "./utils/csvParser";
-import { CsvDatabasePanel } from "./components/CsvDatabasePanel";
+import { CsvDatabasePanel, type CsvDatabasePanelHandle } from "./components/CsvDatabasePanel";
 import { TableView } from "./components/TableView";
 import { AnalyticsDashboard } from "./components/AnalyticsDashboard";
 import { 
@@ -492,6 +491,7 @@ export default function App() {
 
   const [activeTab, setActiveTab] = useState<"dispatcher" | "table" | "analytics">("dispatcher");
   const permitCardRef = useRef<PermitCardHandle>(null);
+  const csvPanelRef = useRef<CsvDatabasePanelHandle>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [lastProcessedDate, setLastProcessedDate] = useState<string>("");
   const [lastDbLength, setLastDbLength] = useState<number>(0);
@@ -1683,40 +1683,26 @@ export default function App() {
 
       {activeTab === "dispatcher" && (
         <main className="w-full flex flex-col gap-4">
-          <div className="dispatcher-layout">
-            <CsvDatabasePanel
-              database={enrichedDatabase}
-              totalRecordsCount={totalRecordsCount > 0 ? totalRecordsCount : enrichedDatabase.length}
-              onDatabaseChange={handleDatabaseChange}
-              vouchersDatabase={vouchersDatabase}
-              onVouchersDatabaseChange={handleVouchersDatabaseChange}
-              onSelectRecord={handleSelectRecordQuickSearch}
-              onRefreshDatabase={refreshDatabase}
-              dispatchedKeys={dispatchedKeys}
-              dispatchDates={dispatchDates}
-              searchQuery={searchQuery}
-              onSearchQueryChange={setSearchQuery}
-              dateRangeFilter={dateRangeFilter}
-              onDateRangeFilterChange={handleDateRangeFilterChange}
-              isLoadingHistory={isLoadingHistory}
-              processingDate={formData.todayDate || getTodayISO()}
-              onProcessingDateChange={handleProcessingDateChange}
-              customVouchersMap={customVouchers}
-            />
-
-            <div className="dispatcher-main">
-              <PermitForm
-                data={formData}
-                database={enrichedDatabase}
-                vouchersDatabase={vouchersDatabase}
-                dispatchedKeys={dispatchedKeys}
-                unsentKeys={unsentKeys}
-                dispatchBy={dispatchBy}
-                onChange={handleUpdate}
-                onClear={handleClear}
-              />
-            </div>
-          </div>
+          <CsvDatabasePanel
+            ref={csvPanelRef}
+            database={enrichedDatabase}
+            totalRecordsCount={totalRecordsCount > 0 ? totalRecordsCount : enrichedDatabase.length}
+            onDatabaseChange={handleDatabaseChange}
+            vouchersDatabase={vouchersDatabase}
+            onVouchersDatabaseChange={handleVouchersDatabaseChange}
+            onSelectRecord={handleSelectRecordQuickSearch}
+            onRefreshDatabase={refreshDatabase}
+            dispatchedKeys={dispatchedKeys}
+            dispatchDates={dispatchDates}
+            searchQuery={searchQuery}
+            onSearchQueryChange={setSearchQuery}
+            dateRangeFilter={dateRangeFilter}
+            onDateRangeFilterChange={handleDateRangeFilterChange}
+            isLoadingHistory={isLoadingHistory}
+            processingDate={formData.todayDate || getTodayISO()}
+            onProcessingDateChange={handleProcessingDateChange}
+            customVouchersMap={customVouchers}
+          />
 
           <DispatchCentre
             database={enrichedDatabase}
@@ -1739,6 +1725,8 @@ export default function App() {
             dateRangeFilter={dateRangeFilter}
             onDateRangeFilterChange={handleDateRangeFilterChange}
             isLoadingHistory={isLoadingHistory}
+            onBrowseConcessions={() => csvPanelRef.current?.browseConcessions()}
+            onBrowseVouchers={() => csvPanelRef.current?.browseVouchers()}
           />
 
           <div id="print-card-wrapper" className="permit-card-engine" aria-hidden="true">

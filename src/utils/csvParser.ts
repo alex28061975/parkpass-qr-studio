@@ -1904,7 +1904,12 @@ export function parseVoucherFile(arrayBuffer: ArrayBuffer, fileName?: string): P
 
 export function addDaysSafe(dateStr: string, days: number): string {
   if (!dateStr) return "";
-  const parts = dateStr.split("-");
+  let iso = String(dateStr).trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
+    iso = parseDateToISO(iso);
+  }
+  if (!iso || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return "";
+  const parts = iso.split("-");
   if (parts.length !== 3) return "";
   const year = parseInt(parts[0], 10);
   const month = parseInt(parts[1], 10) - 1;

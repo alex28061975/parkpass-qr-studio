@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, forwardRef, useImperativeHandle } from "react";
 import { 
   CsvPermitRecord, 
   ParsedVoucherData, 
@@ -75,7 +75,12 @@ interface CsvDatabasePanelProps {
   customVouchersMap?: Record<string, string>;
 }
 
-export function CsvDatabasePanel({ 
+export interface CsvDatabasePanelHandle {
+  browseConcessions: () => void;
+  browseVouchers: () => void;
+}
+
+export const CsvDatabasePanel = forwardRef<CsvDatabasePanelHandle, CsvDatabasePanelProps>(function CsvDatabasePanel({ 
   database, 
   totalRecordsCount,
   onDatabaseChange, 
@@ -95,7 +100,7 @@ export function CsvDatabasePanel({
   processingDate,
   onProcessingDateChange,
   customVouchersMap
-}: CsvDatabasePanelProps) {
+}: CsvDatabasePanelProps, ref: React.Ref<CsvDatabasePanelHandle>) {
   const [concessionsInputMode, setConcessionsInputMode] = useState<"file" | "paste">("file");
   const [pastedConcessions, setPastedConcessions] = useState("");
   const [internalShowTable, setInternalShowTable] = useState(false);
@@ -162,6 +167,11 @@ export function CsvDatabasePanel({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const vouchersFileInputRef = useRef<HTMLInputElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+
+  useImperativeHandle(ref, () => ({
+    browseConcessions: () => fileInputRef.current?.click(),
+    browseVouchers: () => vouchersFileInputRef.current?.click(),
+  }), []);
 
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState(searchQuery);
 
@@ -471,54 +481,11 @@ export function CsvDatabasePanel({
 
   return (
     <aside ref={panelRef} className="data-sidebar h-full">
-      <div className="sidebar-card">
-        <div className="sidebar-card-title"><span>1. Concessions Spreadsheet</span></div>
-        <div className="file-summary">
-          <div className="file-logo excel">X</div>
-          <div className="file-meta">
-            <div className="file-name" title={uploadedFileName || "_Visitor _ Patient Parking Concessions Request Form(1-72).xlsx"}>{uploadedFileName || "_Visitor _ Patient Parking Concessions Request Form(1-72).xlsx"}</div>
-            <div className="file-links"><button type="button" onClick={() => setConcessionsInputMode("file")}>File</button><span>|</span><button type="button" onClick={() => setConcessionsInputMode("paste")}>Paste</button><span>|</span><span>{effectiveTotalCount.toLocaleString()} Records</span></div>
-          </div>
-        </div>
-        {concessionsInputMode === "paste" ? (
-          <div className="paste-box">
-            <textarea value={pastedConcessions} onChange={e => setPastedConcessions(e.target.value)} placeholder="Paste tab-separated concession rows here..." />
-            <button type="button" disabled={!pastedConcessions.trim()} onClick={() => {
-              if (!pastedConcessions.trim()) return;
-              const records = parsePastedText(pastedConcessions);
-              if (!records.length) { setFeedbackMsg({ type: "error", text: "Could not parse the pasted concession rows." }); return; }
-              const sorted = sortRecordsByFormIdDesc(records);
-              safeLocalStorage.setItem("concessions_permit_db", JSON.stringify(sorted));
-              safeLocalStorage.setItem("concessions_permit_db_last_modified", Date.now().toString());
-              onDatabaseChange(sorted);
-              setUploadedFileName("Pasted Spreadsheet Rows");
-              safeLocalStorage.setItem("concessions_uploaded_file_name", "Pasted Spreadsheet Rows");
-              setConcessionsInputMode("file");
-              setFeedbackMsg({ type: "success", text: `Loaded ${sorted.length} concession records.` });
-            }}>Import Pasted Rows</button>
-          </div>
-        ) : (
-          <div onDragEnter={handleDrag} onDragOver={handleDrag} onDragLeave={handleDrag} onDrop={handleDrop} onClick={() => fileInputRef.current?.click()} className={`sidebar-dropzone ${dragActive ? "drag-active" : ""}`}>
-            <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".xlsx,.xls" className="hidden" />
-            <Upload /><span>Click/drop to replace concessions</span>
-          </div>
-        )}
-      </div>
-
-      <div className="sidebar-card">
-        <div className="sidebar-card-title"><span>2. Voucher Codes CSV</span></div>
-        <div className="file-summary">
-          <div className="file-logo csv">CSV</div>
-          <div className="file-meta"><div className="file-name">{uploadedVouchersFileName || "Vouchers.csv"}</div><div className="file-links"><span>{vouchersDatabase.length.toLocaleString()} Codes</span></div></div>
-        </div>
-        <div onDragEnter={handleVouchersDrag} onDragOver={handleVouchersDrag} onDragLeave={handleVouchersDrag} onDrop={handleVouchersDrop} onClick={() => vouchersFileInputRef.current?.click()} className={`sidebar-dropzone ${vouchersDragActive ? "drag-active" : ""}`}>
-          <input type="file" ref={vouchersFileInputRef} onChange={handleVouchersFileUpload} accept=".csv,.txt" className="hidden" />
-          <Upload /><span>Click/drop to replace voucher list</span>
-        </div>
-      </div>
+      <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".xlsx,.xls" className="hidden" />
+      <input type="file" ref={vouchersFileInputRef} onChange={handleVouchersFileUpload} accept=".csv,.txt" className="hidden" />
 
       {feedbackMsg && <div className={`sidebar-feedback ${feedbackMsg.type}`}><span>{feedbackMsg.type === "success" ? "✓" : "!"}</span><span>{feedbackMsg.text}</span><button type="button" onClick={() => setFeedbackMsg(null)}><X /></button></div>}
     </aside>
   );
 
-}
+});

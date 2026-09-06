@@ -1803,7 +1803,7 @@ function PermitCardInner({
       formId: data.formId,
       vrm: data.vrm,
       driverName: data.name,
-      dateRequired: data.validFrom || data.todayDate,
+      dateRequired: data.dateRequired || data.validFrom || data.todayDate,
       email: data.email,
       ward: data.ward,
       site: data.site,

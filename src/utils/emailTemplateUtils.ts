@@ -77,34 +77,84 @@ export function resolveCancellationDetails(
     const isBlocked = checkIsBlockedDuplicate(record, database, refDateISO);
 
     // 2. Look for any matching record for this VRM in database (excluding self)
+    const cleanRecordId = (val: any) => String(val || "").replace(/^#/, "").trim();
+    const recFormId = cleanRecordId(record.formId ?? record.id);
+
     const matchingRecords = database.filter(r => {
       const rVrm = (r.vrm || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
       if (rVrm !== cleanVrm) return false;
       // Exclude self if ID / formId matches
-      if (record.formId !== undefined && r.formId !== undefined && String(record.formId) === String(r.formId)) return false;
-      if (record.id !== undefined && r.id !== undefined && String(record.id) === String(r.id)) return false;
+      const rFormId = cleanRecordId(r.formId ?? r.id);
+      if (recFormId && rFormId && recFormId === rFormId) return false;
       return true;
     });
 
     if (matchingRecords.length > 0) {
+      // Sort matching records descending by date so the latest is always evaluated first
+      const sortedMatchingRecords = [...matchingRecords].sort((a, b) => {
+        const aD = parseDateToISO(a.dateRequired || a.validFrom || a.startTime || a.createdAt || "") || "";
+        const bD = parseDateToISO(b.dateRequired || b.validFrom || b.startTime || b.createdAt || "") || "";
+        return bD.localeCompare(aD);
+      });
+
       // Find active / sent / valid permits for this VRM
-      const activeMatches = matchingRecords.filter(r => {
+      const activeMatches = sortedMatchingRecords.filter(r => {
         if (r.status === 'sent' || r.isDispatched === true) return true;
         if (r.voucherCode && r.voucherCode !== '-' && r.voucherCode !== 'CANCELLED' && r.voucherCode !== 'Cancelled') return true;
         if (!isRecordCancelled(r, refDateISO, database)) return true;
         return false;
       });
 
-      if (isBlocked || activeMatches.length > 0) {
+      // Look for overlapping earlier permit for this vehicle (e.g., within 7 days before this request)
+      const thisReqIso = parseDateToISO(record.dateRequired || record.validFrom || "") || refDateISO;
+      const overlappingMatch = sortedMatchingRecords.find(r => {
+        const rReqIso = parseDateToISO(r.dateRequired || r.validFrom || "");
+        if (!rReqIso || !thisReqIso) return false;
+        const rTime = new Date(rReqIso + "T00:00:00").getTime();
+        const thisTime = new Date(thisReqIso + "T00:00:00").getTime();
+        const diff = Math.round((thisTime - rTime) / (1000 * 60 * 60 * 24));
+        return diff >= 0 && diff < 7;
+      });
+
+      if (isBlocked || activeMatches.length > 0 || overlappingMatch) {
         isDuplicate = true;
-        activePermit = activeMatches[0] || matchingRecords[0];
+        if (overlappingMatch) {
+          activePermit = overlappingMatch;
+        } else if (activeMatches.length > 0) {
+          activePermit = activeMatches[0];
+        } else {
+          activePermit = sortedMatchingRecords[0];
+        }
       }
     }
   }
 
   if (isDuplicate && activePermit) {
-    const startIso = parseDateToISO(activePermit.validFrom || activePermit.dateRequired || activePermit.startTime || activePermit.createdAt || "");
-    const expiryIso = activePermit.validTo ? parseDateToISO(activePermit.validTo) : (startIso ? addDays(startIso, 6) : null);
+    // Requirements:
+    // 1. validTo must be dateRequired + 6 days (e.g., 31/08/2026 → 06/09/2026)
+    // 2. earliestRenewalDate must be validTo + 1 day (e.g., 06/09/2026 → 07/09/2026)
+    let expiryIso = "";
+    const activeReqIso = parseDateToISO(activePermit.dateRequired || "");
+    const activeValidToIso = parseDateToISO(activePermit.validTo || "");
+    const activeValidFromIso = parseDateToISO(activePermit.validFrom || "");
+    const activeExpiryIso = parseDateToISO(activePermit.dateExpiry || "");
+
+    if (activeReqIso) {
+      const calculatedExpiry = addDays(activeReqIso, 6);
+      expiryIso = (activeValidToIso && activeValidToIso > calculatedExpiry) ? activeValidToIso : calculatedExpiry;
+    } else if (activeValidToIso) {
+      expiryIso = activeValidToIso;
+    } else if (activeValidFromIso) {
+      expiryIso = addDays(activeValidFromIso, 6);
+    } else if (activeExpiryIso) {
+      expiryIso = activeExpiryIso;
+    } else {
+      const fallbackStart = parseDateToISO(activePermit.startTime || activePermit.createdAt || "");
+      if (fallbackStart) {
+        expiryIso = addDays(fallbackStart, 6);
+      }
+    }
+
     let currentExpiryDate = "";
     let earliestRenewalDate = "";
     if (expiryIso) {
