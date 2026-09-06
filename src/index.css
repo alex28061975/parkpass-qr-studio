@@ -212,7 +212,8 @@ button { -webkit-tap-highlight-color: transparent; }
   position: absolute;
   right: 0;
   top: calc(100% + 6px);
-  width: 210px;
+  width: 270px;
+  max-width: calc(100vw - 24px);
   z-index: 50;
   background: #ffffff;
   border: 1px solid #e2e8f0;
@@ -224,6 +225,132 @@ button { -webkit-tap-highlight-color: transparent; }
   background: #0a1b2e;
   border-color: #31506b;
   box-shadow: 0 14px 35px rgba(0, 0, 0, 0.45);
+}
+
+.park-admin-panel {
+  padding: 8px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+.dark .park-admin-panel {
+  background: #0b1d33;
+  border-color: #213d5b;
+}
+
+.park-admin-panel-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px;
+  background: #e2e8f0;
+  border-radius: 6px;
+  border: 1px solid #cbd5e1;
+}
+.dark .park-admin-panel-toggle {
+  background: #061527;
+  border-color: #1e3a58;
+}
+
+.park-admin-toggle-btn {
+  flex: 1;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 5px !important;
+  padding: 5px 8px !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  border-radius: 4px !important;
+  border: none !important;
+  cursor: pointer !important;
+  transition: all 0.15s ease !important;
+  width: 50% !important;
+  color: #64748b !important;
+  background: transparent !important;
+}
+.dark .park-admin-toggle-btn {
+  color: #94a3b8 !important;
+}
+
+.park-admin-toggle-btn.active-cloud {
+  background: #059669 !important;
+  color: #ffffff !important;
+  box-shadow: 0 1px 3px rgba(5, 150, 105, 0.3) !important;
+}
+
+.park-admin-toggle-btn.active-offline {
+  background: #d97706 !important;
+  color: #ffffff !important;
+  box-shadow: 0 1px 3px rgba(217, 119, 6, 0.3) !important;
+}
+
+.park-admin-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  background: #ffffff;
+  padding: 6px;
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+  text-align: center;
+}
+.dark .park-admin-stats-grid {
+  background: #081729;
+  border-color: #1a334d;
+}
+
+.park-admin-stat-item {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.park-admin-stat-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  color: #64748b;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+.dark .park-admin-stat-label {
+  color: #8da4be;
+}
+.park-admin-stat-val {
+  font-size: 13px;
+  font-weight: 700;
+  color: #0f172a;
+  font-family: monospace;
+}
+.dark .park-admin-stat-val {
+  color: #f1f5f9;
+}
+
+.park-admin-sync-btn {
+  width: 100% !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 6px !important;
+  padding: 6px 10px !important;
+  background: #005EB8 !important;
+  color: #ffffff !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  border-radius: 6px !important;
+  border: none !important;
+  cursor: pointer !important;
+  transition: all 0.15s ease !important;
+}
+.park-admin-sync-btn:hover:not(:disabled) {
+  background: #004d99 !important;
+}
+.park-admin-sync-btn:disabled {
+  opacity: 0.6 !important;
+  cursor: not-allowed !important;
 }
 
 .park-menu-section-label {

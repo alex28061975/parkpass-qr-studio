@@ -20,14 +20,9 @@ import {
   ShieldAlert,
   HelpCircle,
   BarChart3,
-  Cloud,
-  HardDrive,
-  RefreshCw,
-  Server,
   KeyRound,
   CheckCircle2,
-  AlertCircle,
-  Lock
+  AlertCircle
 } from "lucide-react";
 
 // Helper to format string to Title Case (capitalize each word)
@@ -67,31 +62,6 @@ export function AnalyticsDashboard({
   onSyncNow,
   totalRecordsCount
 }: AnalyticsDashboardProps) {
-  // Secret multi-click admin panel trigger
-  const [showAdminSyncPanel, setShowAdminSyncPanel] = useState<boolean>(false);
-  const clickCountRef = useRef<number>(0);
-  const clickTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const handleSecretHeaderClick = () => {
-    clickCountRef.current += 1;
-    if (clickTimeoutRef.current) {
-      clearTimeout(clickTimeoutRef.current);
-    }
-
-    if (clickCountRef.current >= 5) {
-      setShowAdminSyncPanel((prev) => !prev);
-      clickCountRef.current = 0;
-    } else {
-      clickTimeoutRef.current = setTimeout(() => {
-        clickCountRef.current = 0;
-      }, 1500);
-    }
-  };
-
-  const isCloudMode = storageMode === "cloud";
-  const recordsCount = totalRecordsCount !== undefined ? totalRecordsCount : database.length;
-
-  
   // Helper to format Date to ISO String YYYY-MM-DD
   const getTodayISO = (): string => {
     const d = new Date();
@@ -228,12 +198,11 @@ export function AnalyticsDashboard({
   return (
     <div className="space-y-6 animate-fade-in select-none">
       
-      {/* Top Section Header with Secret Admin Click Trigger */}
+      {/* Top Section Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pb-1 border-b border-slate-200/60 dark:border-slate-800/60">
         <div>
           <h2 
-            onClick={handleSecretHeaderClick}
-            className="text-lg font-bold text-slate-800 dark:text-slate-100 tracking-tight flex items-center gap-2 cursor-pointer select-none hover:text-[#005EB8] dark:hover:text-sky-400 transition-colors"
+            className="text-lg font-bold text-slate-800 dark:text-slate-100 tracking-tight flex items-center gap-2 select-none"
             title="Daily Operations & Concessions Overview"
           >
             <BarChart3 className="w-5 h-5 text-[#005EB8] dark:text-sky-400" />
@@ -243,123 +212,7 @@ export function AnalyticsDashboard({
             Operational dashboard tracking permits, vouchers, and active hospital queues.
           </p>
         </div>
-
-        {showAdminSyncPanel && (
-          <button
-            type="button"
-            onClick={() => setShowAdminSyncPanel(false)}
-            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-semibold text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 bg-slate-100 dark:bg-slate-800/60 self-start sm:self-auto cursor-pointer"
-          >
-            <Lock className="w-3 h-3" />
-            <span>Hide Admin Panel</span>
-          </button>
-        )}
       </div>
-
-      {/* Secret Admin Database & Sync Settings Card */}
-      {showAdminSyncPanel && (
-        <div className="bg-gradient-to-r from-slate-900 to-slate-950 text-white rounded-xl border border-slate-700/80 p-4 shadow-lg animate-in fade-in slide-in-from-top-2 duration-300">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-            
-            {/* Left: Info & Mode Description */}
-            <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <Server className="w-4 h-4 text-sky-400 shrink-0" />
-                <h3 className="text-sm font-bold text-slate-100 tracking-wide flex items-center gap-2">
-                  <span>Admin Database &amp; Sync Settings</span>
-                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-sky-950/80 text-sky-300 border border-sky-800/50">
-                    Unlocked
-                  </span>
-                </h3>
-              </div>
-              <p className="text-xs text-slate-400">
-                Configure data persistence layer and synchronize local dispatch records with Supabase cloud.
-              </p>
-            </div>
-
-            {/* Right: Controls & Status */}
-            <div className="flex flex-wrap items-center gap-2.5">
-              
-              {/* Storage Mode Toggle Pill */}
-              {onToggleStorageMode && (
-                <div className="flex items-center gap-1 bg-slate-800/90 p-1 rounded-lg border border-slate-700">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!isCloudMode) onToggleStorageMode();
-                    }}
-                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all cursor-pointer ${
-                      isCloudMode
-                        ? "bg-emerald-600 text-white shadow-xs"
-                        : "text-slate-400 hover:text-slate-200"
-                    }`}
-                  >
-                    <Cloud className="w-3.5 h-3.5" />
-                    <span>Cloud Mode</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (isCloudMode) onToggleStorageMode();
-                    }}
-                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all cursor-pointer ${
-                      !isCloudMode
-                        ? "bg-amber-600 text-white shadow-xs"
-                        : "text-slate-400 hover:text-slate-200"
-                    }`}
-                  >
-                    <HardDrive className="w-3.5 h-3.5" />
-                    <span>Offline Mode</span>
-                  </button>
-                </div>
-              )}
-
-              {/* Status Badge */}
-              {isCloudMode ? (
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-emerald-950/60 text-emerald-300 border border-emerald-800/60">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                  <span>Cloud Connected</span>
-                </span>
-              ) : (
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-amber-950/60 text-amber-300 border border-amber-800/60">
-                  <span className="w-2 h-2 rounded-full bg-amber-400"></span>
-                  <span>Offline Local Mode</span>
-                </span>
-              )}
-
-              {/* Sync Now Button */}
-              {isCloudMode && onSyncNow && (
-                <button
-                  type="button"
-                  onClick={onSyncNow}
-                  disabled={isSyncing}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-[#005EB8] hover:bg-[#004d99] text-white cursor-pointer shadow-xs disabled:opacity-50 transition-all border border-blue-400/30"
-                  title="Force immediate database sync"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
-                  <span>{isSyncing ? "Syncing..." : "Sync Now"}</span>
-                </button>
-              )}
-            </div>
-
-          </div>
-
-          {/* Quick Metrics Footer Readout */}
-          <div className="mt-3 pt-2.5 border-t border-slate-800 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-400 font-mono">
-            <div className="flex items-center gap-3">
-              <span>Permit Records: <strong className="text-slate-200">{recordsCount}</strong></span>
-              <span>•</span>
-              <span>Dispatched Permits: <strong className="text-slate-200">{dispatchedRecords.length}</strong></span>
-              <span>•</span>
-              <span>Voucher Pool: <strong className="text-slate-200">{vouchersDatabase.length}</strong></span>
-            </div>
-            <div className="text-slate-500">
-              Auto-re-sync on reconnect active • Auto-locks on navigation
-            </div>
-          </div>
-        </div>
-      )}
       
       {/* KPI Cards Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">

@@ -12,9 +12,7 @@ import {
   Building2,
   Car,
   User,
-  Ticket,
-  ShieldAlert,
-  RotateCcw
+  Ticket
 } from "lucide-react";
 import { 
   CsvPermitRecord, 
@@ -35,7 +33,6 @@ import {
   getRecordSubmittedDateISO
 } from "../utils/csvParser";
 import { checkIsRecordDispatched } from "../utils/dispatchUtils";
-import { BlocklistPanel } from "./BlocklistPanel";
 import { isVrmSilentBlockedSync } from "../lib/blocklist";
 
 interface TableViewProps {
@@ -78,8 +75,6 @@ export function TableView({
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedHospital, setSelectedHospital] = useState<string>("ALL");
   const [feedback, setFeedback] = useState<string | null>(null);
-  const [showBlocklist, setShowBlocklist] = useState<boolean>(false);
-  const [isCleaning, setIsCleaning] = useState<boolean>(false);
   const [tableDateFilter, setTableDateFilter] = useState<"ALL" | "TODAY" | "THIS_WEEK" | "THIS_MONTH" | "CUSTOM">("ALL");
   const [tableCustomStartDate, setTableCustomStartDate] = useState("");
   const [tableCustomEndDate, setTableCustomEndDate] = useState("");
@@ -103,21 +98,6 @@ export function TableView({
       last30DaysStart: addCalendarDays(todayISO, -29)
     };
   }, [todayISO]);
-
-  const handleCleanDatabase = async () => {
-    if (isCleaning) return;
-    setIsCleaning(true);
-    try {
-      if (onCleanDatabase) {
-        await onCleanDatabase();
-      }
-      setFeedback("Database cleaned and synchronized successfully!");
-    } catch (e: any) {
-      console.warn("Failed to clean database:", e);
-    } finally {
-      setIsCleaning(false);
-    }
-  };
 
   // Merge database with vouchers if applicable
   const sortedDatabase = useMemo(() => {
@@ -261,27 +241,6 @@ export function TableView({
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
-          <button
-            type="button"
-            onClick={handleCleanDatabase}
-            disabled={isCleaning}
-            className="flex items-center gap-1.5 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-bold rounded-lg transition-all cursor-pointer shadow-xs active:scale-95 disabled:opacity-50"
-            title="Clean Database"
-          >
-            <RotateCcw className={`w-3.5 h-3.5 text-blue-400 ${isCleaning ? "animate-spin" : ""}`} />
-            <span>{isCleaning ? "Cleaning..." : "Clean Database"}</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setShowBlocklist(true)}
-            className="flex items-center gap-1.5 px-3 py-2 bg-rose-950/40 hover:bg-rose-900/50 text-rose-300 border border-rose-800/60 text-xs font-bold rounded-lg transition-all cursor-pointer shadow-xs active:scale-95"
-            title="Manage Concessions Blocklist"
-          >
-            <ShieldAlert className="w-3.5 h-3.5 text-rose-400" />
-            <span>Manage Blocklist</span>
-          </button>
-
           <button
             type="button"
             onClick={onExportExcel}
@@ -591,13 +550,6 @@ export function TableView({
           <span className="font-medium text-gray-700 dark:text-slate-300">Tip: Click any row to load into Dispatcher Desk</span>
         </div>
       </div>
-
-      {/* Blocklist Management Modal Panel */}
-      <BlocklistPanel 
-        isOpen={showBlocklist} 
-        onClose={() => setShowBlocklist(false)} 
-        database={database}
-      />
     </div>
   );
 }

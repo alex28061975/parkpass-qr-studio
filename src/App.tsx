@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import { PermitData, StorageMode } from "./types";
 import { CheckCircle2, AlertCircle, Info, CloudUpload } from "lucide-react";
 import { Header } from "./components/Header";
@@ -26,6 +26,7 @@ import { CsvPermitRecord, parsePermitCsv, parseDateToISO, addDays, formatPhoneNu
 import { CsvDatabasePanel, type CsvDatabasePanelHandle } from "./components/CsvDatabasePanel";
 import { TableView } from "./components/TableView";
 import { AnalyticsDashboard } from "./components/AnalyticsDashboard";
+import { BlocklistPanel } from "./components/BlocklistPanel";
 import { 
   isSupabaseConfigured, 
   initSupabaseConfig,
@@ -409,6 +410,7 @@ export default function App() {
   }, [storageMode]);
 
   const [isSyncing, setIsSyncing] = useState(false);
+  const [showBlocklist, setShowBlocklist] = useState<boolean>(false);
   const [syncToast, setSyncToast] = useState<{ message: string; type: "success" | "info" | "warning" | "error" } | null>(null);
 
   const showToast = (message: string, type: "success" | "info" | "warning" | "error" = "success") => {
@@ -1002,6 +1004,17 @@ export default function App() {
       console.log(`[Purge Keys] Cleaned ${count} corrupted collision keys:`, deletedKeys);
     }
     await refreshDatabase();
+  };
+
+  const handleCleanDatabase = async () => {
+    showToast("Cleaning database...", "info");
+    try {
+      await handlePurgeCorruptedKeys();
+      showToast("Database cleaned and synchronized successfully!", "success");
+    } catch (e: any) {
+      console.warn("Failed to clean database:", e);
+      showToast("Failed to clean database.", "error");
+    }
   };
 
   const handleDateRangeFilterChange = async (newFilter: '7days' | '30days' | 'all') => {
@@ -1660,6 +1673,12 @@ export default function App() {
     }
   };
 
+  const dispatchedCount = useMemo(() => {
+    return enrichedDatabase.filter(record => 
+      checkIsRecordDispatched(record, record.vrm, record.driverName, record.dateRequired, dispatchedKeys, unsentKeys)
+    ).length;
+  }, [enrichedDatabase, dispatchedKeys, unsentKeys]);
+
   return (
     <div className="park-app" id="print-root-container">
       <style>{`@media print { body { background:#fff !important; } .no-print, .data-sidebar, .form-panel, .dispatch-panel, .park-view-tabs { display:none !important; } #print-card-wrapper { display:block !important; position:fixed !important; inset:0 !important; margin:auto !important; width:370px !important; height:max-content !important; } #print-card-content { box-shadow:none !important; } }`}</style>
@@ -1676,6 +1695,15 @@ export default function App() {
         activeTab={activeTab}
         onActiveTabChange={setActiveTab}
         onExportExcel={handleExportExcel}
+        onCleanDatabase={handleCleanDatabase}
+        onOpenBlocklist={() => setShowBlocklist(true)}
+        storageMode={storageMode}
+        onToggleStorageMode={handleToggleStorageMode}
+        isSyncing={isSyncing}
+        onSyncNow={handleManualSync}
+        totalRecordsCount={totalRecordsCount > 0 ? totalRecordsCount : enrichedDatabase.length}
+        dispatchedCount={dispatchedCount}
+        vouchersCount={vouchersDatabase.length}
         onOutlook={handleHeaderSend}
         onEmail={handleHeaderSend}
         onPrint={handleHeaderPrint}
@@ -1784,6 +1812,13 @@ export default function App() {
           onSelectSite={(siteName) => { setSearchQuery(siteName); setActiveTab("dispatcher"); }}
         />
       )}
+
+      {/* Blocklist Management Modal Panel */}
+      <BlocklistPanel 
+        isOpen={showBlocklist} 
+        onClose={() => setShowBlocklist(false)} 
+        database={enrichedDatabase}
+      />
     </div>
   );
 

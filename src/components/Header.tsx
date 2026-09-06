@@ -1,5 +1,16 @@
 import React, { useState, useRef, useEffect } from "react";
-import { QrCode, Settings, FileSpreadsheet, ChevronDown, Check } from "lucide-react";
+import { 
+  QrCode, 
+  Settings, 
+  FileSpreadsheet, 
+  ChevronDown, 
+  Check, 
+  RotateCcw, 
+  ShieldAlert,
+  Cloud,
+  HardDrive,
+  RefreshCw
+} from "lucide-react";
 
 interface HeaderProps {
   darkMode: boolean;
@@ -7,7 +18,15 @@ interface HeaderProps {
   activeTab?: "dispatcher" | "table" | "analytics";
   onActiveTabChange?: (tab: "dispatcher" | "table" | "analytics") => void;
   onExportExcel?: () => void;
+  onCleanDatabase?: () => void;
+  onOpenBlocklist?: () => void;
+  storageMode?: "cloud" | "offline";
+  onToggleStorageMode?: () => void;
+  isSyncing?: boolean;
+  onSyncNow?: () => void;
   totalRecordsCount?: number;
+  dispatchedCount?: number;
+  vouchersCount?: number;
   onEmail?: () => void;
   onPrint?: () => void;
   onOutlook?: () => void;
@@ -17,11 +36,22 @@ export function Header({
   darkMode,
   onToggleDarkMode,
   onExportExcel,
+  onCleanDatabase,
+  onOpenBlocklist,
   activeTab,
   onActiveTabChange,
+  storageMode = "cloud",
+  onToggleStorageMode,
+  isSyncing = false,
+  onSyncNow,
+  totalRecordsCount = 0,
+  dispatchedCount = 0,
+  vouchersCount = 0,
 }: HeaderProps) {
   const [showSettings, setShowSettings] = useState(false);
   const settingsRef = useRef<HTMLDivElement>(null);
+  const isCloudMode = storageMode === "cloud";
+  const recordsCount = totalRecordsCount;
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -125,22 +155,116 @@ export function Header({
                 </>
               )}
 
-              {onExportExcel && (
+              {(onExportExcel || onCleanDatabase || onOpenBlocklist) && (
                 <>
                   <div className="park-menu-divider" />
                   <div className="park-menu-section-label">Data Actions</div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onExportExcel();
-                      setShowSettings(false);
-                    }}
-                  >
-                    <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400 mr-1.5 inline" />
-                    <span>Export to Spreadsheet</span>
-                  </button>
+                  {onExportExcel && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onExportExcel();
+                        setShowSettings(false);
+                      }}
+                    >
+                      <span className="flex items-center">
+                        <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400 mr-2 shrink-0" />
+                        <span>Export to Spreadsheet</span>
+                      </span>
+                    </button>
+                  )}
+                  {onCleanDatabase && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onCleanDatabase();
+                        setShowSettings(false);
+                      }}
+                    >
+                      <span className="flex items-center">
+                        <RotateCcw className="w-3.5 h-3.5 text-blue-400 mr-2 shrink-0" />
+                        <span>Clean Database</span>
+                      </span>
+                    </button>
+                  )}
+                  {onOpenBlocklist && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onOpenBlocklist();
+                        setShowSettings(false);
+                      }}
+                    >
+                      <span className="flex items-center">
+                        <ShieldAlert className="w-3.5 h-3.5 text-rose-400 mr-2 shrink-0" />
+                        <span>Manage Blocklist</span>
+                      </span>
+                    </button>
+                  )}
                 </>
               )}
+
+              {/* DATABASE & SYNC SETTINGS */}
+              <div className="park-menu-divider" />
+              <div className="park-menu-section-label">Database &amp; Sync Settings</div>
+              <div className="park-admin-panel">
+                {onToggleStorageMode && (
+                  <div className="park-admin-panel-toggle">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!isCloudMode) onToggleStorageMode();
+                      }}
+                      className={`park-admin-toggle-btn ${isCloudMode ? "active-cloud" : ""}`}
+                    >
+                      <Cloud className="w-3.5 h-3.5 shrink-0" />
+                      <span>Cloud Mode</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (isCloudMode) onToggleStorageMode();
+                      }}
+                      className={`park-admin-toggle-btn ${!isCloudMode ? "active-offline" : ""}`}
+                    >
+                      <HardDrive className="w-3.5 h-3.5 shrink-0" />
+                      <span>Offline Mode</span>
+                    </button>
+                  </div>
+                )}
+
+                <div className="park-admin-stats-grid">
+                  <div className="park-admin-stat-item">
+                    <span className="park-admin-stat-label">Records</span>
+                    <span className="park-admin-stat-val">{recordsCount}</span>
+                  </div>
+                  <div className="park-admin-stat-item">
+                    <span className="park-admin-stat-label">Dispatched</span>
+                    <span className="park-admin-stat-val">{dispatchedCount}</span>
+                  </div>
+                  <div className="park-admin-stat-item">
+                    <span className="park-admin-stat-label">Vouchers</span>
+                    <span className="park-admin-stat-val">{vouchersCount}</span>
+                  </div>
+                </div>
+
+                {onSyncNow && (
+                  <button
+                    type="button"
+                    onClick={onSyncNow}
+                    disabled={isSyncing}
+                    className="park-admin-sync-btn"
+                    title="Synchronize database now"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 shrink-0 ${isSyncing ? "animate-spin" : ""}`} />
+                    <span>{isSyncing ? "Syncing..." : "Sync Now"}</span>
+                  </button>
+                )}
+
+                <div className="text-[10px] text-slate-500 dark:text-slate-400 text-center font-medium">
+                  Auto-re-sync on reconnect active
+                </div>
+              </div>
             </div>
           )}
         </div>
