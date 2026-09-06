@@ -184,7 +184,6 @@ export function DispatchCentre({
       matchingPermits
     );
 
-    // Filter to vouchers matching targetIso (or generic pool)
     const dateFiltered = vouchers.filter(v => {
       const vIso = getVoucherDateISO(v);
       return !vIso || vIso === targetIso;
@@ -260,7 +259,7 @@ export function DispatchCentre({
     });
   };
 
-  // Sorting state (Excel-like sorting: asc -> desc -> reset)
+  // Sorting state
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [sortDirection, setSortDirection] = useState<SortDirection>(null);
 
@@ -281,17 +280,17 @@ export function DispatchCentre({
     return () => window.removeEventListener("blocklist_updated", handleBlocklistUpdate);
   }, []);
 
-  // Pagination state (default: 50 rows per page)
+  // Pagination state
   const [pageSize, setPageSize] = useState<number>(50);
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [goToPageInput, setGoToPageInput] = useState<string>("");
 
-  // Base records: always shows all records sorted by Form ID (#) descending (highest number first)
+  // Base records
   const baseRecords = useMemo(() => {
     return sortRecordsByFormIdDesc(database);
   }, [database]);
 
-  // Compute dynamic voucher allocations map matching Matching Helper exactly
+  // Compute dynamic voucher allocations map
   const recordCodeMap = useMemo(() => {
     return getSpreadsheetMatchingAllocationsMap(
       baseRecords,
@@ -302,18 +301,6 @@ export function DispatchCentre({
     );
   }, [baseRecords, database, processingDate, vouchersDatabase, customVouchers, blocklistVersion]);
 
-  // A replacement is temporarily UNSENT while its new QR code is prepared.
-  // Keep that state visible in the Dispatch Centre using the selected form's
-  // explicit replacement marker rather than relying on dispatchedKeys alone.
-  /**
-   * IMPORTANT: replacement state must belong to ONE exact permit record.
-   * VRM/date is NOT a safe identity because multiple rows can share the same
-   * VRM and valid-from date (including cancelled + active records).
-   *
-   * If either side has a stable id/formId, we ONLY compare stable ids.
-   * VRM/date fallback is permitted only for genuinely legacy rows where BOTH
-   * the row and the selected form have no stable identity.
-   */
   const isSameSelectedRecord = (record: CsvPermitRecord) => {
     if (!formData) return false;
 
@@ -325,7 +312,6 @@ export function DispatchCentre({
     const recordHasStableId = Boolean(recordId || recordFormId);
     const selectedHasStableId = Boolean(selectedId || selectedFormId);
 
-    // Stable identity exists: NEVER fall back to VRM/date.
     if (recordHasStableId || selectedHasStableId) {
       return Boolean(
         (recordId && selectedId && recordId === selectedId) ||
@@ -335,7 +321,6 @@ export function DispatchCentre({
       );
     }
 
-    // Legacy records with no stable identity on either side.
     const recordVrm = (record.vrm || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
     const selectedVrm = (formData.vrm || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
     const recordDate = parseDateToISO(record.dateRequired || record.validFrom) || "";
@@ -352,7 +337,6 @@ export function DispatchCentre({
     isSameSelectedRecord(record) &&
     (formData?.emailType === "RESEND_CONCESSION" || formData?.isResend === true || formData?.emailTemplate === "replacement");
 
-  // Shared status, hospital, and cancellation extractors
   const getHospital = (record: CsvPermitRecord) => {
     const raw = (record.hospital || "").trim();
     if (raw && !raw.toLowerCase().includes("royal london")) {
@@ -401,7 +385,6 @@ export function DispatchCentre({
     };
   }, [todayISO]);
 
-  // List of distinct hospitals for filter dropdown: only Newham Hospital and Whipps Cross Hospital
   const allHospitalsList = useMemo(() => {
     const standardHospitals = ["Newham Hospital", "Whipps Cross Hospital"];
     const set = new Set<string>(standardHospitals);
@@ -414,7 +397,6 @@ export function DispatchCentre({
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [database]);
 
-  // List of distinct wards for filter dropdown
   const allWardsList = useMemo(() => {
     const standardWards = [
       "Maternity",
@@ -434,7 +416,6 @@ export function DispatchCentre({
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [database]);
 
-  // Reset page to 1 whenever filters or search change
   useEffect(() => {
     setCurrentPage(1);
   }, [
@@ -448,7 +429,6 @@ export function DispatchCentre({
     pageSize
   ]);
 
-  // Sorted records based on active column sort
   const sortedRecords = useMemo(() => {
     if (!sortKey || !sortDirection) {
       return baseRecords;
@@ -557,10 +537,8 @@ export function DispatchCentre({
     return sorted;
   }, [baseRecords, sortKey, sortDirection, database, processingDate, recordCodeMap, dispatchedKeys, unsentKeys, formData]);
 
-  // Comprehensive filtering: Search Query + Status + Hospital + Ward + Date Range
   const filteredRecords = useMemo(() => {
     return sortedRecords.filter((record, idx) => {
-      // 1. Text Search Filter
       if (searchQuery && searchQuery.trim()) {
         const q = searchQuery.trim().toLowerCase();
         const cleanFormId = String(record.formId ?? record.id ?? "");
@@ -576,7 +554,6 @@ export function DispatchCentre({
         if (!matchesSearch) return false;
       }
 
-      // 2. Status Filter: "ALL" | "PENDING" | "SENT" | "UNSENT" | "BLOCKED"
       if (statusFilter !== "ALL") {
         const status = getStatusStr(record, idx);
         if (statusFilter === "PENDING" && status !== "PENDING") return false;
@@ -585,7 +562,6 @@ export function DispatchCentre({
         if (statusFilter === "BLOCKED" && status !== "BLOCKED") return false;
       }
 
-      // 3. Hospital Filter
       if (hospitalFilter !== "ALL") {
         const hosp = getHospital(record);
         if (hosp.toLowerCase().trim() !== hospitalFilter.toLowerCase().trim()) {
@@ -593,7 +569,6 @@ export function DispatchCentre({
         }
       }
 
-      // 4. Ward Filter
       if (wardFilter !== "ALL") {
         const w = (record.ward || "").toLowerCase();
         const target = wardFilter.toLowerCase();
@@ -673,7 +648,6 @@ export function DispatchCentre({
     );
   };
 
-  // Active filter chips calculation
   const activeFilters = useMemo(() => {
     const chips: { id: string; label: string; onRemove: () => void }[] = [];
 
@@ -742,12 +716,10 @@ export function DispatchCentre({
     setCurrentPage(1);
   };
 
-  // Counts & Metrics
   const totalFilteredCount = filteredRecords.length;
   const totalOriginalCount = totalRecordsCount && totalRecordsCount > 0 ? totalRecordsCount : (database.length || 0);
   const isFiltered = activeFilters.length > 0 || totalFilteredCount !== totalOriginalCount;
 
-  // Pagination calculation
   const effectivePageSize = pageSize === 0 ? (totalFilteredCount || 50) : pageSize;
   const totalPages = pageSize === 0 ? 1 : Math.max(1, Math.ceil(totalFilteredCount / effectivePageSize));
   const safePage = Math.min(Math.max(1, currentPage), totalPages);
@@ -755,13 +727,11 @@ export function DispatchCentre({
   const startIndex = totalFilteredCount === 0 ? 0 : (safePage - 1) * effectivePageSize;
   const endIndex = Math.min(startIndex + effectivePageSize, totalFilteredCount);
 
-  // Paginated records slice to render in the table
   const paginatedRecords = useMemo(() => {
     if (pageSize === 0) return filteredRecords;
     return filteredRecords.slice(startIndex, endIndex);
   }, [filteredRecords, startIndex, endIndex, pageSize]);
 
-  // Smart page number windowing (e.g. 1 ... 4 5 6 ... 32)
   const pageNumbers = useMemo(() => {
     if (totalPages <= 7) {
       return Array.from({ length: totalPages }, (_, i) => i + 1);
@@ -795,7 +765,6 @@ export function DispatchCentre({
   const validToDisplay = formData?.validTo || (processingDate ? addDays(processingDate, 6) : "13/07/2026");
   const selectedWard = formData?.ward || "Acorn Ward";
 
-  // List of distinct wards in database for filter/dropdown
   const availableWards = allWardsList;
 
   const handleAction = async (record: CsvPermitRecord, sent: boolean, replacement = false) => {
@@ -826,24 +795,21 @@ export function DispatchCentre({
 
   return (
     <section className="w-full bg-white dark:bg-[#07172b] border border-slate-200 dark:border-[#183a5e] rounded-2xl p-4 md:p-6 shadow-sm dark:shadow-2xl text-slate-800 dark:text-slate-200 transition-colors">
-      {/* Top Header Section - Single Line */}
+      {/* Top Header Section - Single Line with Centered Buttons - NO "|" DIVIDERS */}
       <div className="flex flex-col gap-3 pb-4 border-b border-slate-200 dark:border-[#143252]">
-        <div className="flex items-center gap-3 flex-nowrap overflow-x-auto py-1">
-          {/* Title */}
-          <div className="flex items-center gap-2.5 shrink-0 flex-nowrap">
+        <div className="flex items-center gap-4 w-full">
+          {/* Left: Title */}
+          <div className="flex items-center gap-2.5 shrink-0">
             <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center shadow-md shadow-blue-500/20 text-white shrink-0">
               <Send className="w-4 h-4 -rotate-45" />
             </div>
-            <h2 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white tracking-tight uppercase whitespace-nowrap shrink-0">
+            <h2 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white tracking-tight whitespace-nowrap shrink-0">
               Permit Dispatch Centre
             </h2>
           </div>
 
-          {/* Divider */}
-          <span className="text-slate-400 dark:text-slate-600 select-none whitespace-nowrap shrink-0">│</span>
-
-          {/* Left side: Browse buttons + Sub-200ms */}
-          <div className="flex items-center gap-2 shrink-0 flex-nowrap">
+          {/* Center: Browse Buttons - TRULY CENTERED */}
+          <div className="flex-1 flex items-center justify-center gap-3 min-w-0 overflow-x-auto">
             <button
               type="button"
               onClick={onBrowseConcessions}
@@ -880,15 +846,11 @@ export function DispatchCentre({
             </span>
           </div>
 
-          {/* Divider */}
-          <span className="text-slate-400 dark:text-slate-600 select-none whitespace-nowrap shrink-0">│</span>
-
-          {/* Right side: Active Date Codes */}
-          <div className="flex items-center gap-2 whitespace-nowrap shrink-0 flex-nowrap">
+          {/* Right: Active Date Codes */}
+          <div className="flex items-center gap-2 whitespace-nowrap shrink-0">
             <label className="text-xs sm:text-sm font-semibold text-slate-700 dark:text-slate-300 whitespace-nowrap shrink-0">
               Active Date Codes ({unusedVouchersForDay.length}):
             </label>
-
             <select
               value={unusedVouchersForDay.some(v => v.code === formData?.voucherCodesText) ? formData?.voucherCodesText : ""}
               onChange={handleActiveDateCodeChange}
@@ -918,7 +880,6 @@ export function DispatchCentre({
         {/* Filter Controls Toolbar */}
         <div className="flex flex-col gap-2.5 pt-1">
           <div className="flex flex-wrap items-center gap-2.5">
-            {/* Search Box - grows to fill remaining space */}
             <div className="relative flex-1 min-w-[220px]">
               <div className="flex items-center w-full bg-slate-50 dark:bg-[#041222] border border-slate-300 dark:border-[#1b436c] focus-within:border-blue-500 dark:focus-within:border-[#1677FF] focus-within:ring-2 focus-within:ring-blue-500/20 dark:focus-within:ring-[#1677FF]/20 rounded-xl px-3 py-2 transition shadow-inner">
                 <Search className="w-4 h-4 text-blue-500 dark:text-blue-400 shrink-0 mr-2" />
@@ -942,7 +903,6 @@ export function DispatchCentre({
               </div>
             </div>
 
-            {/* Status Filter - sized to content */}
             <div className="relative">
               <select
                 value={statusFilter}
@@ -958,7 +918,6 @@ export function DispatchCentre({
               <ChevronDown className="w-3.5 h-3.5 text-slate-400 pointer-events-none absolute right-3 top-1/2 -translate-y-1/2" />
             </div>
 
-            {/* Hospital Filter - sized to content */}
             <div className="relative">
               <select
                 value={hospitalFilter}
@@ -973,7 +932,6 @@ export function DispatchCentre({
               <ChevronDown className="w-3.5 h-3.5 text-slate-400 pointer-events-none absolute right-3 top-1/2 -translate-y-1/2" />
             </div>
 
-            {/* Ward Filter - sized to content */}
             <div className="relative">
               <select
                 value={wardFilter}
@@ -988,7 +946,6 @@ export function DispatchCentre({
               <ChevronDown className="w-3.5 h-3.5 text-slate-400 pointer-events-none absolute right-3 top-1/2 -translate-y-1/2" />
             </div>
 
-            {/* Date Filter - sized to content */}
             <div className="relative">
               <select
                 id="date-filter-dropdown"
@@ -1020,7 +977,6 @@ export function DispatchCentre({
             </div>
           </div>
 
-          {/* Custom Date Range Picker Sub-Bar */}
           {dateFilter === "CUSTOM" && (
             <div className="flex flex-wrap items-center gap-3 p-2.5 bg-blue-50/70 dark:bg-[#0b2138] border border-blue-200 dark:border-[#183d63] rounded-xl text-xs animate-in fade-in">
               <div className="flex items-center gap-1.5 font-semibold text-slate-700 dark:text-slate-300">
@@ -1056,7 +1012,6 @@ export function DispatchCentre({
               )}
             </div>
           )}
-
         </div>
       </div>
 
@@ -1066,7 +1021,6 @@ export function DispatchCentre({
           <table className="min-w-[1180px] w-full text-xs text-left border-collapse table-auto">
             <thead className="bg-slate-50 dark:bg-[#081b30] border-b border-slate-200 dark:border-[#163657] text-slate-600 dark:text-slate-300 font-bold uppercase tracking-wider text-[11px] sticky top-0 z-10 select-none">
               <tr>
-                {/* # Column */}
                 <th 
                   scope="col" 
                   onClick={() => handleSort("id")}
@@ -1081,7 +1035,6 @@ export function DispatchCentre({
                   </div>
                 </th>
 
-                {/* SUBMITTED Column */}
                 <th 
                   scope="col" 
                   onClick={() => handleSort("submitted")}
@@ -1096,7 +1049,6 @@ export function DispatchCentre({
                   </div>
                 </th>
 
-                {/* DRIVER'S NAME Column */}
                 <th 
                   scope="col" 
                   onClick={() => handleSort("driverName")}
@@ -1111,7 +1063,6 @@ export function DispatchCentre({
                   </div>
                 </th>
 
-                {/* PHONE Column */}
                 <th
                   scope="col"
                   className="py-3 px-3 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap"
@@ -1119,7 +1070,6 @@ export function DispatchCentre({
                   PHONE
                 </th>
 
-                {/* VRM Column */}
                 <th 
                   scope="col" 
                   onClick={() => handleSort("vrm")}
@@ -1134,7 +1084,6 @@ export function DispatchCentre({
                   </div>
                 </th>
 
-                {/* VOUCHER CODE Column */}
                 <th 
                   scope="col" 
                   onClick={() => handleSort("voucherCode")}
@@ -1149,7 +1098,6 @@ export function DispatchCentre({
                   </div>
                 </th>
 
-                {/* VALID FROM Column */}
                 <th 
                   scope="col" 
                   onClick={() => handleSort("validFrom")}
@@ -1164,7 +1112,6 @@ export function DispatchCentre({
                   </div>
                 </th>
 
-                {/* VALID TO Column */}
                 <th 
                   scope="col" 
                   onClick={() => handleSort("validTo")}
@@ -1179,7 +1126,6 @@ export function DispatchCentre({
                   </div>
                 </th>
 
-                {/* WARD Column */}
                 <th 
                   scope="col" 
                   onClick={() => handleSort("ward")}
@@ -1194,7 +1140,6 @@ export function DispatchCentre({
                   </div>
                 </th>
 
-                {/* HOSPITAL Column */}
                 <th 
                   scope="col" 
                   onClick={() => handleSort("hospital")}
@@ -1209,7 +1154,6 @@ export function DispatchCentre({
                   </div>
                 </th>
 
-                {/* STATUS Column */}
                 <th 
                   scope="col" 
                   onClick={() => handleSort("status")}
@@ -1224,7 +1168,6 @@ export function DispatchCentre({
                   </div>
                 </th>
 
-                {/* ACTIONS Column */}
                 <th 
                   scope="col" 
                   onClick={() => handleSort("actions")}
@@ -1265,7 +1208,6 @@ export function DispatchCentre({
                 const isUnsent = Boolean(unsentKeys && unsentKeys.length > 0 && (unsentKeys.includes(rowKey) || recordKeys.some(k => unsentKeys.includes(k))));
                 const replacementPending = !isBlocked && isReplacementPending(record);
 
-                // 2. # Column: Excel ID with row number fallback
                 const excelId = (() => {
                   if (record.formId !== undefined && record.formId !== null) {
                     const s = String(record.formId).trim();
@@ -1278,7 +1220,6 @@ export function DispatchCentre({
                   return String(index + 1);
                 })();
 
-                // Derive hospital site cleanly
                 const hospitalDisplay = getHospital(record);
 
                 return (
@@ -1287,32 +1228,26 @@ export function DispatchCentre({
                     onClick={() => onSelectRecord(record)}
                     className="hover:bg-blue-50/50 dark:hover:bg-[#0c233d]/70 transition-colors cursor-pointer text-slate-800 dark:text-slate-200"
                   >
-                    {/* 1. # Column */}
                     <td className="py-3 px-3 text-center text-slate-500 dark:text-slate-400 font-mono font-medium border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap">
                       {excelId}
                     </td>
 
-                    {/* 2. Submitted Column */}
                     <td className="py-3 px-3 font-mono text-slate-700 dark:text-slate-200 border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-xs">
                       {formatSubmittedDateTime(record)}
                     </td>
 
-                    {/* 3. Driver's Name Column */}
                     <td className="py-3 px-3 font-medium text-slate-900 dark:text-white border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap">
                       {record.driverName || "-"}
                     </td>
 
-                    {/* 3b. Phone Column */}
                     <td className="py-3 px-3 text-slate-700 dark:text-slate-200 border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap">
                       {record.phone || "-"}
                     </td>
 
-                    {/* 4. VRN Column */}
                     <td className="py-3 px-3 font-mono font-medium text-slate-900 dark:text-white uppercase tracking-wider border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap">
                       {record.vrm ? record.vrm.toUpperCase() : "-"}
                     </td>
 
-                    {/* 5. VOUCHERCODE Column */}
                     <td className="py-3 px-3 font-mono border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap">
                       {(isBlocked || isCancelled || displayCode === "CANCELLED") ? (
                         <span className="text-red-600 dark:text-[#FF453A] font-semibold tracking-wider">
@@ -1325,27 +1260,22 @@ export function DispatchCentre({
                       )}
                     </td>
 
-                    {/* 6. VALID FROM Column */}
                     <td className="py-3 px-3 font-mono text-slate-700 dark:text-slate-200 border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap">
                       {formatDate(record.dateRequired || record.validFrom)}
                     </td>
 
-                    {/* 7. VALID TO Column */}
                     <td className="py-3 px-3 font-mono text-slate-700 dark:text-slate-200 border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap">
                       {formatDate(expiresIso)}
                     </td>
 
-                    {/* 8. WARD Column */}
                     <td className="py-3 px-3 text-slate-700 dark:text-slate-200 border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap">
                       {record.ward || "-"}
                     </td>
 
-                    {/* 9. HOSPITAL Column */}
                     <td className="py-3 px-3.5 text-slate-700 dark:text-slate-200 border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap min-w-[185px]">
                       {hospitalDisplay}
                     </td>
 
-                    {/* 10. STATUS Column */}
                     <td className="py-3 px-3 text-center border-r border-slate-100 dark:border-[#102947]/60 select-none whitespace-nowrap">
                       {isBlocked ? (
                         <span className="border border-rose-300 dark:border-rose-800/60 bg-rose-50 dark:bg-rose-950/30 text-rose-700 dark:text-rose-300 font-bold px-2.5 py-0.5 rounded text-[10px] tracking-wider uppercase inline-flex items-center justify-center whitespace-nowrap">
@@ -1371,7 +1301,6 @@ export function DispatchCentre({
                       )}
                     </td>
 
-                    {/* 11. ACTIONS Column */}
                     <td className="py-3 px-3 text-center whitespace-nowrap" onClick={e => e.stopPropagation()}>
                       <div className="inline-flex items-center justify-center rounded-md overflow-hidden shadow-xs">
                         <button 
@@ -1447,7 +1376,6 @@ export function DispatchCentre({
 
       {/* Pagination Controls Bar */}
       <div className="flex flex-col sm:flex-row items-center justify-between gap-3.5 mt-3 px-1 text-xs text-slate-600 dark:text-slate-300">
-        {/* Left: Row counts + Page size selector */}
         <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto justify-between sm:justify-start">
           <div className="font-medium text-slate-700 dark:text-slate-300">
             Showing <span className="font-bold text-slate-900 dark:text-white">{totalFilteredCount === 0 ? 0 : (startIndex + 1).toLocaleString()}</span>
@@ -1473,10 +1401,8 @@ export function DispatchCentre({
           </div>
         </div>
 
-        {/* Right: Page navigation controls */}
         {totalPages > 1 && (
           <div className="flex flex-wrap items-center gap-1.5 w-full sm:w-auto justify-center sm:justify-end">
-            {/* Previous Page Button */}
             <button
               type="button"
               onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
@@ -1492,7 +1418,6 @@ export function DispatchCentre({
               <span>Prev</span>
             </button>
 
-            {/* Page number buttons */}
             <div className="inline-flex items-center gap-1">
               {pageNumbers.map((p, idx) => {
                 if (typeof p === "string") {
@@ -1520,7 +1445,6 @@ export function DispatchCentre({
               })}
             </div>
 
-            {/* Next Page Button */}
             <button
               type="button"
               onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
@@ -1536,7 +1460,6 @@ export function DispatchCentre({
               <ChevronRight className="w-3.5 h-3.5" />
             </button>
 
-            {/* Go to page form */}
             <form onSubmit={handleGoToPage} className="flex items-center gap-1 ml-1 sm:ml-2">
               <span className="text-[11px] text-slate-500 dark:text-slate-400">Go to:</span>
               <input
@@ -1559,10 +1482,9 @@ export function DispatchCentre({
         )}
       </div>
 
-      {/* Footer Controls Bar Inside Card */}
+      {/* Footer Controls Bar */}
       <div className="bg-slate-50 dark:bg-[#051322] border border-slate-200 dark:border-[#143252] rounded-xl px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 mt-4 text-xs text-slate-700 dark:text-slate-300">
         <div className="flex flex-wrap items-center gap-3">
-          {/* Actions Button */}
           <div className="relative">
             <button 
               type="button"
@@ -1593,7 +1515,6 @@ export function DispatchCentre({
             )}
           </div>
 
-          {/* Clear Form Button */}
           <button 
             type="button"
             onClick={onClear}
@@ -1603,7 +1524,6 @@ export function DispatchCentre({
             <span>Clear Form</span>
           </button>
 
-          {/* Valid From */}
           <div className="flex items-center gap-1.5">
             <Calendar className="w-3.5 h-3.5 text-blue-600 dark:text-[#38bdf8]" />
             <span className="text-slate-700 dark:text-slate-300 font-medium">Valid From</span>
@@ -1613,7 +1533,6 @@ export function DispatchCentre({
             </span>
           </div>
 
-          {/* Valid To */}
           <div className="flex items-center gap-1.5">
             <Calendar className="w-3.5 h-3.5 text-blue-600 dark:text-[#38bdf8]" />
             <span className="text-slate-700 dark:text-slate-300 font-medium">Valid To</span>
@@ -1623,7 +1542,6 @@ export function DispatchCentre({
             </span>
           </div>
 
-          {/* Ward / Department */}
           <div className="flex items-center gap-1.5">
             <span className="text-slate-700 dark:text-slate-300 font-medium">Ward / Department</span>
             <div className="relative">
