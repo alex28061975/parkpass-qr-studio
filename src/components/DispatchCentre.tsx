@@ -1062,6 +1062,14 @@ export function DispatchCentre({
                   </div>
                 </th>
 
+                {/* PHONE Column */}
+                <th
+                  scope="col"
+                  className="py-3 px-3 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap"
+                >
+                  PHONE
+                </th>
+
                 {/* VRM Column */}
                 <th 
                   scope="col" 
@@ -1245,6 +1253,11 @@ export function DispatchCentre({
                       {record.driverName || "-"}
                     </td>
 
+                    {/* 3b. Phone Column */}
+                    <td className="py-3 px-3 text-slate-700 dark:text-slate-200 border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap">
+                      {record.phone || "-"}
+                    </td>
+
                     {/* 4. VRN Column */}
                     <td className="py-3 px-3 font-mono font-medium text-slate-900 dark:text-white uppercase tracking-wider border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap">
                       {record.vrm ? record.vrm.toUpperCase() : "-"}
@@ -1358,7 +1371,7 @@ export function DispatchCentre({
               })}
               {filteredRecords.length === 0 && (
                 <tr>
-                  <td colSpan={11} className="py-12 text-center text-slate-500 dark:text-slate-400 text-xs">
+                  <td colSpan={12} className="py-12 text-center text-slate-500 dark:text-slate-400 text-xs">
                     <div className="flex flex-col items-center justify-center gap-2">
                       <Filter className="w-6 h-6 text-slate-400 stroke-1" />
                       <p className="font-semibold text-sm text-slate-700 dark:text-slate-300">No matching permits found</p>
