@@ -5,7 +5,7 @@ import { Header } from "./components/Header";
 import { PermitCard } from "./components/PermitCard";
 import type { PermitCardHandle } from "./components/PermitCard";
 import { DispatchCentre } from "./components/DispatchCentre";
-import { RefreshCw, Sparkles, Database, BarChart3 } from "lucide-react";
+import { RefreshCw, Sparkles, Database } from "lucide-react";
 import { safeLocalStorage } from "./utils/safeLocalStorage";
 import { isMobileDevice } from "./utils/device";
 import { 
@@ -25,7 +25,6 @@ import { isVrmSilentBlockedSync } from "./lib/blocklist";
 import { CsvPermitRecord, parsePermitCsv, parseDateToISO, addDays, formatPhoneNumber, ParsedVoucherData, addDaysSafe, parseDateRange, getDatesInRange, cleanVoucherCodeValue, exportToExcel, isVoucherCodeMatch, sortRecordsByFormIdDesc, getMatchingPermits, isDateRequiredOutsideValidWindow, getTodayISO, checkIsBlockedDuplicate, parseFullDateTimeMs, normalizeVouchersList, isRecordCancelled, getRequestedPermitDateISO, isVoucherExactPeriodEligible, isVoucherAvailableStatus, isVoucherVrmCompatible, getDefaultSampleVouchers } from "./utils/csvParser";
 import { CsvDatabasePanel, type CsvDatabasePanelHandle } from "./components/CsvDatabasePanel";
 import { TableView } from "./components/TableView";
-import { AnalyticsDashboard } from "./components/AnalyticsDashboard";
 import { BlocklistPanel } from "./components/BlocklistPanel";
 import { 
   isSupabaseConfigured, 
@@ -491,7 +490,7 @@ export default function App() {
     }
   }, [dispatchedKeys]);
 
-  const [activeTab, setActiveTab] = useState<"dispatcher" | "table" | "analytics">("dispatcher");
+  const [activeTab, setActiveTab] = useState<"dispatcher" | "table">("dispatcher");
   const permitCardRef = useRef<PermitCardHandle>(null);
   const csvPanelRef = useRef<CsvDatabasePanelHandle>(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -1793,23 +1792,6 @@ export default function App() {
           isLoadingHistory={isLoadingHistory}
           onCleanDatabase={handlePurgeCorruptedKeys}
           customVouchersMap={customVouchers}
-        />
-      )}
-
-      {activeTab === "analytics" && (
-        <AnalyticsDashboard
-          database={enrichedDatabase}
-          vouchersDatabase={vouchersDatabase}
-          dispatchedKeys={dispatchedKeys}
-          unsentKeys={unsentKeys}
-          dispatchDates={dispatchDates}
-          storageMode={storageMode}
-          onToggleStorageMode={handleToggleStorageMode}
-          isSyncing={isSyncing}
-          onSyncNow={handleManualSync}
-          totalRecordsCount={totalRecordsCount > 0 ? totalRecordsCount : enrichedDatabase.length}
-          onSelectWard={(wardName) => { setSearchQuery(wardName); setActiveTab("dispatcher"); }}
-          onSelectSite={(siteName) => { setSearchQuery(siteName); setActiveTab("dispatcher"); }}
         />
       )}
 
