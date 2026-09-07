@@ -2821,9 +2821,10 @@ export function compareRecordsBySubmissionOrder(a: any, b: any, fallbackDateStr?
 }
 
 export function checkIsBlockedDuplicate(
-  record: { vrm?: string; validFrom?: string; dateRequired?: string; id?: string | number; formId?: string | number; voucherCode?: string; createdAt?: string; startTime?: string; driverName?: string; isCancelled?: boolean },
+  record: { vrm?: string; validFrom?: string; dateRequired?: string; id?: string | number; formId?: string | number; voucherCode?: string; createdAt?: string; startTime?: string; driverName?: string; isCancelled?: boolean; status?: string; voucherCodesText?: string; prePaidCode?: string },
   database: CsvPermitRecord[],
-  refDateISO?: string
+  refDateISO?: string,
+  visited?: Set<string>
 ): boolean {
   if (!record) return false;
   if (!record.vrm) return false;
@@ -2874,15 +2875,37 @@ export function checkIsBlockedDuplicate(
                   refDateISO || getTodayISO();
   const reqTimeMsX = new Date(reqIsoX + "T00:00:00").getTime();
 
+  const recordKey = String(fullRecord.formId ?? fullRecord.id ?? (cleanVrm + "_" + reqIsoX));
+  const currentVisited = visited ? new Set(visited) : new Set<string>();
+  if (recordKey) {
+    if (currentVisited.has(recordKey)) return false;
+    currentVisited.add(recordKey);
+  }
+
   for (const earlier of strictlyEarlierRecords) {
     const earlierDateRequired = earlier.dateRequired || earlier.validFrom || "";
     const earlierSubmissionDate = earlier.submissionDate || earlier.startTime || earlier.completionTime || earlier.createdAt;
     const earlierRefDate = earlierSubmissionDate 
       ? (parseDateToISO(String(earlierSubmissionDate)) || "") 
       : (getRequestedPermitDateISO(earlier, refDateISO) || parseDateToISO(earlierDateRequired) || refDateISO || "");
-    const earlierIsDateCancelled = isDateRequiredOutsideValidWindow(earlierDateRequired, earlierRefDate) ||
-                                    earlier.isCancelled === true;
-    if (earlierIsDateCancelled) continue;
+
+    const earlierIsCancelled = 
+      earlier.isCancelled === true ||
+      earlier.voucherCode === "CANCELLED" ||
+      earlier.voucherCodesText === "CANCELLED" ||
+      earlier.prePaidCode === "CANCELLED" ||
+      (typeof earlier.voucherCode === "string" && earlier.voucherCode.trim().toUpperCase() === "CANCELLED") ||
+      (typeof earlier.voucherCodesText === "string" && earlier.voucherCodesText.trim().toUpperCase() === "CANCELLED") ||
+      (typeof earlier.prePaidCode === "string" && earlier.prePaidCode.trim().toUpperCase() === "CANCELLED") ||
+      (typeof earlier.status === "string" && earlier.status.trim().toLowerCase().includes("cancel")) ||
+      isVrmSilentBlockedSync(earlier.vrm) ||
+      isDateRequiredOutsideValidWindow(earlierDateRequired, earlierRefDate) ||
+      checkIsBlockedDuplicate(earlier, database, earlierRefDate, currentVisited);
+
+    // Skip cancelled records - they shouldn't block new ones!
+    if (earlierIsCancelled) {
+      continue;
+    }
 
     const earlierReqIso = parseDateToISO(earlier.dateRequired || earlier.validFrom || "") || 
                           parseDateToISO(earlier.startTime || earlier.createdAt || "") || 

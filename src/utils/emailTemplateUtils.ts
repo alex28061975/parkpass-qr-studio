@@ -107,7 +107,7 @@ export function resolveCancellationDetails(
 
       // Look for overlapping earlier permit for this vehicle (e.g., within 7 days before this request)
       const thisReqIso = parseDateToISO(record.dateRequired || record.validFrom || "") || refDateISO;
-      const overlappingMatch = sortedMatchingRecords.find(r => {
+      const overlappingMatch = activeMatches.find(r => {
         const rReqIso = parseDateToISO(r.dateRequired || r.validFrom || "");
         if (!rReqIso || !thisReqIso) return false;
         const rTime = new Date(rReqIso + "T00:00:00").getTime();
