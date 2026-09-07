@@ -470,6 +470,7 @@ function PermitCardInner({
   }, [database, matchingPermits, isRecordDispatched, data.todayDate]);
 
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [toastType, setToastType] = useState<string>("info");
   const [emailTemplate, setEmailTemplate] = useState<"new" | "replacement">("new");
 
   // Track voucher code changes to automatically switch to Replacement template
@@ -551,7 +552,13 @@ function PermitCardInner({
     ) {
       return true;
     }
-    return isRecordCancelled(data, data.todayDate, database);
+    const dataToCheck = {
+      ...data,
+      voucherCode: data.voucherCode === "CANCELLED" ? "CANCELLED" : "-",
+      voucherCodesText: data.voucherCodesText === "CANCELLED" ? "CANCELLED" : "-",
+      prePaidCode: data.prePaidCode === "CANCELLED" ? "CANCELLED" : "-",
+    };
+    return isRecordCancelled(data, data.todayDate, database) || isRecordCancelled(dataToCheck, data.todayDate, database);
   }, [data.todayDate, data.validFrom, data.dateRequired, data.isCancelled, data.status, data.voucherCodesText, data.voucherCode, data.prePaidCode, data, database]);
 
   // isDateRequiredOutsideValidWindow covers both "too far in the future" and
@@ -644,7 +651,8 @@ function PermitCardInner({
     }
   }, [data.name, data.vrm, data.validFrom, data.validTo, data.todayDate, data.dateRequired, data.emailType, data.isResend, data.emailTemplate, isCurrentDispatched, isVoucherChangedOnSent, emailTemplate, isReplacement]);
   
-  const showToast = (message: string) => {
+  const showToast = (message: string, type?: string) => {
+    setToastType(type || "info");
     setToastMessage(message);
   };
 
@@ -658,6 +666,32 @@ function PermitCardInner({
   }, [toastMessage]);
 
   const handleResendConcessionEmail = async () => {
+    const resendTargetRecord = (activeIndex !== -1 && matchingPermits[activeIndex])
+      ? matchingPermits[activeIndex]
+      : (database ? database.find(r => (data.formId && (r.formId === data.formId || r.id === data.formId))) : undefined) || {
+          ...data,
+          todayDate: data.todayDate || getTodayISO()
+        };
+    const recTodayDate = resendTargetRecord.todayDate || data.todayDate || getTodayISO();
+    if (!resendTargetRecord.todayDate) {
+      resendTargetRecord.todayDate = recTodayDate;
+    }
+    const recordToCheck = {
+      ...resendTargetRecord,
+      todayDate: recTodayDate,
+      voucherCode: resendTargetRecord.voucherCode === "CANCELLED" ? "CANCELLED" : "-",
+      voucherCodesText: resendTargetRecord.voucherCodesText === "CANCELLED" ? "CANCELLED" : "-",
+      prePaidCode: resendTargetRecord.prePaidCode === "CANCELLED" ? "CANCELLED" : "-",
+    };
+
+    // Check if the permit would be cancelled by the system
+    const isCancelledCheck = isRecordCancelled(resendTargetRecord, recTodayDate, database) ||
+                             isRecordCancelled(recordToCheck, recTodayDate, database);
+    if (isCancelledCheck) {
+      showToast("Cannot send: This permit has been cancelled.", "error");
+      return;
+    }
+
     if (isCancelled) {
       return handleSendClick();
     }
@@ -855,7 +889,44 @@ function PermitCardInner({
     };
     const targetRecord = isRealRecord(targetRecordArg) ? targetRecordArg : undefined;
     const rec = targetRecord || (activeIndex !== -1 && matchingPermits[activeIndex] ? matchingPermits[activeIndex] : null);
-    const recTodayDate = rec?.todayDate || data.todayDate || getTodayISO();
+    const record: any = rec || (database && data.formId ? database.find(r => r.formId === data.formId || r.id === data.formId) : null) || {
+      id: data.id,
+      formId: data.formId,
+      vrm: data.vrm,
+      driverName: data.name,
+      dateRequired: data.dateRequired || data.validFrom || data.todayDate,
+      email: data.email,
+      ward: data.ward,
+      site: data.site,
+      validFrom: data.validFrom,
+      validTo: data.validTo,
+      todayDate: data.todayDate,
+      isCancelled: data.isCancelled,
+      status: data.status,
+      voucherCode: data.voucherCode,
+      voucherCodesText: data.voucherCodesText,
+      prePaidCode: data.prePaidCode,
+    };
+    const recTodayDate = record?.todayDate || data.todayDate || getTodayISO();
+    if (!record.todayDate) {
+      record.todayDate = recTodayDate;
+    }
+
+    // Check if the permit would be cancelled by the system
+    const recordToCheck = {
+      ...record,
+      todayDate: record.todayDate,
+      voucherCode: record.voucherCode === "CANCELLED" ? "CANCELLED" : "-",
+      voucherCodesText: record.voucherCodesText === "CANCELLED" ? "CANCELLED" : "-",
+      prePaidCode: record.prePaidCode === "CANCELLED" ? "CANCELLED" : "-",
+    };
+    const isCancelled = isRecordCancelled(record, record.todayDate, database) ||
+                        isRecordCancelled(recordToCheck, record.todayDate, database);
+    if (isCancelled) {
+      showToast("Cannot send: This permit has been cancelled.", "error");
+      return;
+    }
+
     const isCancelledRec = Boolean(
       (rec ? isRecordCancelled(rec, recTodayDate, database) : isCancelled) ||
       (rec && (
@@ -1825,7 +1896,26 @@ function PermitCardInner({
     const targetValidFrom = targetRec.validFrom || targetRec.dateRequired || (targetRecord ? "" : data.validFrom) || "";
     const targetValidTo = targetRec.validTo || (targetValidFrom ? addDays(targetValidFrom, 6) : "") || (targetRecord ? "" : data.validTo) || "";
     const targetTodayDate = targetRec.todayDate || (targetRecord ? "" : data.todayDate) || getTodayISO();
+    if (!targetRec.todayDate) {
+      targetRec.todayDate = targetTodayDate;
+    }
     const targetDateRequired = targetRec.dateRequired || targetRec.validFrom || (targetRecord ? "" : data.dateRequired) || "";
+    
+    // Check if the permit would be cancelled by the system
+    const targetToCheck = {
+      ...targetRec,
+      todayDate: targetTodayDate,
+      voucherCode: targetRec.voucherCode === "CANCELLED" ? "CANCELLED" : "-",
+      voucherCodesText: targetRec.voucherCodesText === "CANCELLED" ? "CANCELLED" : "-",
+      prePaidCode: targetRec.prePaidCode === "CANCELLED" ? "CANCELLED" : "-",
+    };
+    const isCancelledOutlook = isRecordCancelled(targetRec, targetTodayDate, database) ||
+                               isRecordCancelled(targetToCheck, targetTodayDate, database);
+    if (isCancelledOutlook) {
+      showToast("Cannot send: This permit has been cancelled.", "error");
+      return false;
+    }
+
     const targetIsCancelled = Boolean(
       (targetRecord ? isRecordCancelled(targetRec, targetTodayDate, database) : isCancelled) ||
       isRecordCancelled(targetRec, targetTodayDate, database) ||
@@ -2920,7 +3010,12 @@ function PermitCardInner({
       )}
 
       {toastMessage && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 bg-slate-900/95 dark:bg-slate-950/95 text-white px-4 py-3 rounded-xl shadow-2xl border border-slate-700/80 animate-bounce font-semibold text-xs whitespace-nowrap">
+        <div className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 text-white px-4 py-3 rounded-xl shadow-2xl animate-bounce font-semibold text-xs whitespace-nowrap ${
+          toastType === "error" 
+            ? "bg-rose-950/95 border border-rose-600/80 text-rose-100" 
+            : "bg-slate-900/95 dark:bg-slate-950/95 border border-slate-700/80"
+        }`}>
+          {toastType === "error" && <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />}
           <span>{toastMessage}</span>
         </div>
       )}

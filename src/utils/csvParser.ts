@@ -1448,7 +1448,7 @@ export function isDateRequiredOutsideValidWindow(dateRequiredStr?: string, refer
   parkingDate.setHours(0, 0, 0, 0);
 
   const daysDiff = Math.floor((parkingDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-  return daysDiff < -7 || daysDiff > 1;
+  return daysDiff < -6 || daysDiff > 1;
 }
 
 export function parseUKDate(dateStr: string): string {
@@ -2131,23 +2131,15 @@ export function isRecordCancelledCanonical(record: any, todayDateOrReference?: s
     return true;
   }
 
-  const assignedCode = record.voucherCodesText || record.voucherCode;
-  if (assignedCode) {
-    const cleanAssigned = cleanVoucherCodeValue(String(assignedCode)).toUpperCase();
-    if (cleanAssigned && cleanAssigned !== "-" && cleanAssigned !== "CANCELLED" && cleanAssigned !== "PENDING" && cleanAssigned !== "N/A") {
-      return false;
-    }
-  }
-
-  const submissionDate = record.submissionDate || record.startTime || record.completionTime || record.createdAt;
-  const referenceDate = submissionDate 
-    ? (parseDateToISO(String(submissionDate)) || "") 
-    : (getRequestedPermitDateISO(record, todayDateOrReference) || parseDateToISO(String(todayDateOrReference || record.todayDate || record.processingDate || "")) || "");
+  // Priority for reference date (completionTime Column C -> startTime Column B -> createdAt):
+  const rawRefDate = record.completionTime || record.startTime || record.createdAt || todayDateOrReference || record.todayDate || record.processingDate || record.submissionDate;
+  const referenceDate = rawRefDate 
+    ? (parseDateToISO(String(rawRefDate)) || "") 
+    : "";
   const dateRequired = record.dateRequired || record.validFrom || "";
   if (isDateRequiredOutsideValidWindow(dateRequired, referenceDate)) return true;
   if (database && database.length > 0) {
-    const dupRefDate = getRequestedPermitDateISO(record, todayDateOrReference) || referenceDate;
-    if (checkIsBlockedDuplicate(record, database, dupRefDate)) return true;
+    if (checkIsBlockedDuplicate(record, database, referenceDate)) return true;
   }
   return false;
 }
@@ -2840,14 +2832,6 @@ export function checkIsBlockedDuplicate(
   const matchedDbRecord = database.find(r => isSamePermitRecord(r, record) || (numId > 0 && extractRecordNumericFormId(r) === numId));
   const fullRecord = matchedDbRecord ? { ...matchedDbRecord, ...record } : record;
 
-  const assignedCode = (record as any).voucherCodesText || record.voucherCode || (fullRecord as any).voucherCodesText || fullRecord.voucherCode;
-  if (assignedCode) {
-    const cleanAssigned = cleanVoucherCodeValue(String(assignedCode)).toUpperCase();
-    if (cleanAssigned && cleanAssigned !== "-" && cleanAssigned !== "CANCELLED" && cleanAssigned !== "PENDING" && cleanAssigned !== "N/A") {
-      return false;
-    }
-  }
-
   const vrmRecords = database.filter(r => {
     const rVrm = (r.vrm || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
     return rVrm === cleanVrm;
@@ -2884,10 +2868,10 @@ export function checkIsBlockedDuplicate(
 
   for (const earlier of strictlyEarlierRecords) {
     const earlierDateRequired = earlier.dateRequired || earlier.validFrom || "";
-    const earlierSubmissionDate = earlier.submissionDate || earlier.startTime || earlier.completionTime || earlier.createdAt;
-    const earlierRefDate = earlierSubmissionDate 
-      ? (parseDateToISO(String(earlierSubmissionDate)) || "") 
-      : (getRequestedPermitDateISO(earlier, refDateISO) || parseDateToISO(earlierDateRequired) || refDateISO || "");
+    const earlierRawRefDate = earlier.completionTime || earlier.startTime || earlier.createdAt || earlier.submissionDate;
+    const earlierRefDate = earlierRawRefDate 
+      ? (parseDateToISO(String(earlierRawRefDate)) || "") 
+      : (parseDateToISO(earlierDateRequired) || refDateISO || "");
 
     const earlierIsCancelled = 
       earlier.isCancelled === true ||
@@ -2955,26 +2939,18 @@ export function isRecordCancelled(
     return true;
   }
 
-  const assignedCode = record.voucherCodesText || record.voucherCode;
-  if (assignedCode) {
-    const cleanAssigned = cleanVoucherCodeValue(String(assignedCode)).toUpperCase();
-    if (cleanAssigned && cleanAssigned !== "-" && cleanAssigned !== "CANCELLED" && cleanAssigned !== "PENDING" && cleanAssigned !== "N/A") {
-      return false;
-    }
-  }
-
-  const submissionDate = record.submissionDate || record.startTime || record.completionTime || record.createdAt;
-  const referenceDate = submissionDate 
-    ? (parseDateToISO(String(submissionDate)) || "") 
-    : (getRequestedPermitDateISO(record, todayDateOrReference) || parseDateToISO(String(todayDateOrReference || record.todayDate || record.processingDate || "")) || "");
+  // Priority for reference date (completionTime Column C -> startTime Column B -> createdAt):
+  const rawRefDate = record.completionTime || record.startTime || record.createdAt || todayDateOrReference || record.todayDate || record.processingDate || record.submissionDate;
+  const referenceDate = rawRefDate 
+    ? (parseDateToISO(String(rawRefDate)) || "") 
+    : "";
   const dateRequired = record.dateRequired || record.validFrom || "";
   if (isDateRequiredOutsideValidWindow(dateRequired, referenceDate)) {
     return true;
   }
 
   if (database && database.length > 0) {
-    const dupRefDate = getRequestedPermitDateISO(record, todayDateOrReference) || referenceDate;
-    if (checkIsBlockedDuplicate(record, database, dupRefDate)) {
+    if (checkIsBlockedDuplicate(record, database, referenceDate)) {
       return true;
     }
   }

@@ -351,14 +351,27 @@ export function DispatchCentre({
     ) ? "Whipps Cross Hospital" : "Newham Hospital");
   };
 
-  const getIsCancelled = (record: CsvPermitRecord, idx: number) => {
-    return isVrmSilentBlockedSync(record.vrm);
+  const getIsCancelled = (record: CsvPermitRecord, idx?: number) => {
+    if (isVrmSilentBlockedSync(record.vrm)) return true;
+    if (record.isCancelled === true) return true;
+    if (typeof record.status === "string" && record.status.trim().toLowerCase().includes("cancel")) return true;
+    if (
+      record.voucherCode === "CANCELLED" ||
+      record.voucherCodesText === "CANCELLED" ||
+      record.prePaidCode === "CANCELLED" ||
+      (typeof record.voucherCode === "string" && record.voucherCode.trim().toUpperCase() === "CANCELLED") ||
+      (typeof record.voucherCodesText === "string" && record.voucherCodesText.trim().toUpperCase() === "CANCELLED") ||
+      (typeof record.prePaidCode === "string" && record.prePaidCode.trim().toUpperCase() === "CANCELLED")
+    ) {
+      return true;
+    }
+    const reqDate = getRequestedPermitDateISO(record, processingDate);
+    return isRecordCancelled(record, reqDate, database);
   };
 
   const getStatusStr = (record: CsvPermitRecord, idx: number) => {
     if (isVrmSilentBlockedSync(record.vrm)) return "BLOCKED";
-    const reqDate = getRequestedPermitDateISO(record, processingDate);
-    if (isRecordCancelled(record, reqDate, database) || (record.status && record.status.trim().toUpperCase() === "CANCELLED")) return "CANCELLED";
+    if (getIsCancelled(record, idx)) return "CANCELLED";
     if (isReplacementPending(record)) return "REPLACEMENT";
     const isDispatched = checkIsRecordDispatched(record, record.vrm, record.driverName, record.dateRequired, dispatchedKeys, unsentKeys);
     const rowKey = String(record.formId ?? record.id ?? record.vrm ?? idx);
@@ -482,10 +495,12 @@ export function DispatchCentre({
           break;
         }
         case "voucherCode": {
+          const aBlocked = isVrmSilentBlockedSync(a.vrm);
+          const bBlocked = isVrmSilentBlockedSync(b.vrm);
           const aCanc = getIsCancelled(a, aIdx);
           const bCanc = getIsCancelled(b, bIdx);
-          const aCode = aCanc ? "CANCELLED" : (recordCodeMap.get(String(a.formId ?? a.id ?? aIdx)) || a.voucherCode || "");
-          const bCode = bCanc ? "CANCELLED" : (recordCodeMap.get(String(b.formId ?? b.id ?? bIdx)) || b.voucherCode || "");
+          const aCode = aBlocked ? "BLOCKED" : (aCanc ? "CANCELLED" : (recordCodeMap.get(String(a.formId ?? a.id ?? aIdx)) || a.voucherCode || ""));
+          const bCode = bBlocked ? "BLOCKED" : (bCanc ? "CANCELLED" : (recordCodeMap.get(String(b.formId ?? b.id ?? bIdx)) || b.voucherCode || ""));
           comparison = aCode.localeCompare(bCode, undefined, { sensitivity: "base", numeric: true });
           break;
         }
@@ -1208,7 +1223,9 @@ export function DispatchCentre({
                 const recordKey = String(record.formId ?? record.id ?? index);
                 let displayCode = recordCodeMap.get(recordKey);
 
-                if (isBlocked || isCancelled) {
+                if (isBlocked) {
+                  displayCode = "BLOCKED";
+                } else if (isCancelled) {
                   displayCode = "CANCELLED";
                 } else if (displayCode === undefined || displayCode === null || displayCode === "CANCELLED" || displayCode === "BLOCKED") {
                   const rawCode = (record.voucherCode || (customVouchers && (customVouchers[recordKey] || (record.vrm && customVouchers[`${record.vrm.toUpperCase().replace(/\s+/g, "")}_${reqDate}`]))) || "").trim();
@@ -1262,7 +1279,11 @@ export function DispatchCentre({
                     </td>
 
                     <td className="py-3 px-3 font-mono border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap">
-                      {(isBlocked || isCancelled || displayCode === "CANCELLED") ? (
+                      {isBlocked ? (
+                        <span className="text-rose-600 dark:text-rose-400 font-semibold tracking-wider">
+                          BLOCKED
+                        </span>
+                      ) : (isCancelled || displayCode === "CANCELLED") ? (
                         <span className="text-red-600 dark:text-[#FF453A] font-semibold tracking-wider">
                           CANCELLED
                         </span>

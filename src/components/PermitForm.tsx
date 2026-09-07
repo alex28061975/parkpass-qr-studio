@@ -456,7 +456,7 @@ export function PermitForm({
               })
             }
             className={`w-full h-9 px-3 py-1.5 border rounded-md text-xs font-extrabold focus:outline-none transition-all ${
-              !hasValidVoucherCode && (isSilentBlocked || isCancelled(canonicalRecord, data.todayDate) ||
+              !hasValidVoucherCode && (isSilentBlocked || isCancelled(canonicalRecord, data.todayDate, database) ||
               data.voucherCodesText === "-" || data.voucherCodesText === "CANCELLED" || data.voucherCodesText === "Cancelled" || data.voucherCodesText === "BLOCKED")
                 ? "border-rose-200 dark:border-rose-900/60 bg-rose-50 dark:bg-rose-950/30 text-rose-700 dark:text-rose-300 font-mono"
                 : "border-gray-300 dark:border-slate-800 bg-white dark:bg-slate-950 text-gray-800 dark:text-slate-100 focus:border-[#005EB8] dark:focus:border-blue-500 font-mono"
