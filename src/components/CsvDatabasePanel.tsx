@@ -18,6 +18,7 @@ import {
 } from "../utils/csvParser";
 import { safeLocalStorage } from "../utils/safeLocalStorage";
 import { isSupabaseConfigured } from "../lib/supabase";
+import { useLoading } from "../contexts/LoadingContext";
 
 // Helper to format string to Title Case (capitalize each word)
 function toTitleCase(str: string): string {
@@ -152,6 +153,8 @@ export const CsvDatabasePanel = forwardRef<CsvDatabasePanelHandle, CsvDatabasePa
     return "Vouchers.csv";
   });
 
+  const { showLoading, hideLoading, updateProgress } = useLoading();
+
   const [localSearchQuery, setLocalSearchQuery] = useState("");
   const isControlledSearch = searchQueryProp !== undefined;
   const searchQuery = isControlledSearch ? searchQueryProp : localSearchQuery;
@@ -234,13 +237,24 @@ export const CsvDatabasePanel = forwardRef<CsvDatabasePanelHandle, CsvDatabasePa
       return;
     }
 
+    showLoading("Uploading spreadsheet...", 15);
     const reader = new FileReader();
+
+    reader.onprogress = (event) => {
+      if (event.lengthComputable) {
+        const progress = Math.min(85, Math.round((event.loaded / event.total) * 70) + 15);
+        updateProgress(progress);
+      }
+    };
+
     reader.onload = (event) => {
       try {
+        updateProgress(90);
         const arrayBuffer = event.target?.result as ArrayBuffer;
         const records = parsePermitExcel(arrayBuffer);
         
         if (records.length === 0) {
+          hideLoading();
           setFeedbackMsg({
             type: "error",
             text: "No valid permit records found. Please ensure headers match like VRM, Driver, Hospital, Ward."
@@ -252,17 +266,29 @@ export const CsvDatabasePanel = forwardRef<CsvDatabasePanelHandle, CsvDatabasePa
         onDatabaseChange(sorted);
         setUploadedFileName(file.name);
         safeLocalStorage.setItem("concessions_uploaded_file_name", file.name);
+        updateProgress(100);
+        setTimeout(hideLoading, 350);
         setFeedbackMsg({
           type: "success",
           text: `Processed ${sorted.length} records. Database appended/updated successfully!`
         });
       } catch (e: any) {
+        hideLoading();
         setFeedbackMsg({
           type: "error",
           text: `Concessions failed: ${e.message || "Unknown error"}`
         });
       }
     };
+
+    reader.onerror = () => {
+      hideLoading();
+      setFeedbackMsg({
+        type: "error",
+        text: "Failed to read file."
+      });
+    };
+
     reader.readAsArrayBuffer(file);
   };
 
@@ -300,13 +326,24 @@ export const CsvDatabasePanel = forwardRef<CsvDatabasePanelHandle, CsvDatabasePa
       return;
     }
 
+    showLoading("Uploading voucher codes...", 15);
     const reader = new FileReader();
+
+    reader.onprogress = (event) => {
+      if (event.lengthComputable) {
+        const progress = Math.min(85, Math.round((event.loaded / event.total) * 70) + 15);
+        updateProgress(progress);
+      }
+    };
+
     reader.onload = (event) => {
       try {
+        updateProgress(90);
         const arrayBuffer = event.target?.result as ArrayBuffer;
         const vouchers = parseVoucherFile(arrayBuffer, file.name);
         
         if (vouchers.length === 0) {
+          hideLoading();
           setFeedbackMsg({
             type: "error",
             text: "No valid voucher codes found. Ensure the file contains voucher codes under a 'Voucher' column or is a single-column list."
@@ -317,17 +354,29 @@ export const CsvDatabasePanel = forwardRef<CsvDatabasePanelHandle, CsvDatabasePa
         onVouchersDatabaseChange(vouchers);
         setUploadedVouchersFileName(file.name);
         safeLocalStorage.setItem("concessions_uploaded_vouchers_file_name", file.name);
+        updateProgress(100);
+        setTimeout(hideLoading, 350);
         setFeedbackMsg({
           type: "success",
           text: `Processed ${vouchers.length} voucher codes. Database appended/updated successfully!`
         });
       } catch (e: any) {
+        hideLoading();
         setFeedbackMsg({
           type: "error",
           text: `Vouchers failed: ${e.message || "Unknown error"}`
         });
       }
     };
+
+    reader.onerror = () => {
+      hideLoading();
+      setFeedbackMsg({
+        type: "error",
+        text: "Failed to read vouchers file."
+      });
+    };
+
     reader.readAsArrayBuffer(file);
   };
 

@@ -48,6 +48,7 @@ import {
 } from "../utils/csvParser";
 import { checkIsRecordDispatched, getRecordKeys } from "../utils/dispatchUtils";
 import { isVrmSilentBlockedSync } from "../lib/blocklist";
+import { useLoading } from "../contexts/LoadingContext";
 
 interface DispatchCentreProps {
   database: CsvPermitRecord[];
@@ -132,6 +133,7 @@ export function DispatchCentre({
   onBrowseVouchers
 }: DispatchCentreProps) {
   const [internalSearchQuery, setInternalSearchQuery] = useState("");
+  const { showLoading, hideLoading, updateProgress } = useLoading();
   const isControlled = searchQueryProp !== undefined;
   const searchQuery = isControlled ? searchQueryProp : internalSearchQuery;
   const handleSearchChange = (val: string) => {
@@ -264,7 +266,7 @@ export function DispatchCentre({
   const [sortDirection, setSortDirection] = useState<SortDirection>(null);
 
   // Dropdown filter states
-  const [statusFilter, setStatusFilter] = useState<"ALL" | "PENDING" | "SENT" | "UNSENT" | "BLOCKED">("ALL");
+  const [statusFilter, setStatusFilter] = useState<"ALL" | "PENDING" | "SENT" | "CANCELLED" | "BLOCKED">("ALL");
   const [hospitalFilter, setHospitalFilter] = useState<string>("ALL");
   const [wardFilter, setWardFilter] = useState<string>("ALL");
   const [dateFilter, setDateFilter] = useState<"ALL" | "TODAY" | "THIS_WEEK" | "THIS_MONTH" | "CUSTOM">("THIS_WEEK");
@@ -355,6 +357,8 @@ export function DispatchCentre({
 
   const getStatusStr = (record: CsvPermitRecord, idx: number) => {
     if (isVrmSilentBlockedSync(record.vrm)) return "BLOCKED";
+    const reqDate = getRequestedPermitDateISO(record, processingDate);
+    if (isRecordCancelled(record, reqDate, database) || (record.status && record.status.trim().toUpperCase() === "CANCELLED")) return "CANCELLED";
     if (isReplacementPending(record)) return "REPLACEMENT";
     const isDispatched = checkIsRecordDispatched(record, record.vrm, record.driverName, record.dateRequired, dispatchedKeys, unsentKeys);
     const rowKey = String(record.formId ?? record.id ?? record.vrm ?? idx);
@@ -558,7 +562,7 @@ export function DispatchCentre({
         const status = getStatusStr(record, idx);
         if (statusFilter === "PENDING" && status !== "PENDING") return false;
         if (statusFilter === "SENT" && status !== "SENT") return false;
-        if (statusFilter === "UNSENT" && status !== "UNSENT") return false;
+        if (statusFilter === "CANCELLED" && status.toUpperCase() !== "CANCELLED") return false;
         if (statusFilter === "BLOCKED" && status !== "BLOCKED") return false;
       }
 
@@ -780,7 +784,15 @@ export function DispatchCentre({
   };
 
   const handleExportZip = () => {
-    exportToExcel(filteredRecords, "Concessions_Permits_Export.xlsx");
+    showLoading("Preparing your export file...", 30);
+    try {
+      updateProgress(60);
+      exportToExcel(filteredRecords, "Concessions_Permits_Export.xlsx");
+      updateProgress(100);
+      setTimeout(hideLoading, 400);
+    } catch (e) {
+      hideLoading();
+    }
   };
 
   const handleGoToPage = (e?: React.FormEvent) => {
@@ -913,7 +925,7 @@ export function DispatchCentre({
                 <option value="ALL">Status: All</option>
                 <option value="PENDING">PENDING</option>
                 <option value="SENT">SENT</option>
-                <option value="UNSENT">UNSENT</option>
+                <option value="CANCELLED">CANCELLED</option>
                 <option value="BLOCKED">BLOCKED</option>
               </select>
               <ChevronDown className="w-3.5 h-3.5 text-slate-400 pointer-events-none absolute right-3 top-1/2 -translate-y-1/2" />
@@ -1281,6 +1293,10 @@ export function DispatchCentre({
                       {isBlocked ? (
                         <span className="border border-rose-300 dark:border-rose-800/60 bg-rose-50 dark:bg-rose-950/30 text-rose-700 dark:text-rose-300 font-bold px-2.5 py-0.5 rounded text-[10px] tracking-wider uppercase inline-flex items-center justify-center whitespace-nowrap">
                           BLOCKED
+                        </span>
+                      ) : (isCancelled || (record.status && record.status.trim().toUpperCase() === "CANCELLED")) ? (
+                        <span className="border border-red-300 dark:border-red-800/60 bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-400 font-bold px-2.5 py-0.5 rounded text-[10px] tracking-wider uppercase inline-flex items-center justify-center whitespace-nowrap">
+                          CANCELLED
                         </span>
                       ) : replacementPending ? (
                         <span className="border border-purple-300 dark:border-[#a855f7]/40 bg-purple-50 dark:bg-[#a855f7]/15 text-purple-700 dark:text-[#c084fc] font-bold px-2.5 py-0.5 rounded text-[10px] tracking-wider uppercase inline-flex items-center justify-center whitespace-nowrap">

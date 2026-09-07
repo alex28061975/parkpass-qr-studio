@@ -8,6 +8,7 @@ import { DispatchCentre } from "./components/DispatchCentre";
 import { RefreshCw, Sparkles, Database } from "lucide-react";
 import { safeLocalStorage } from "./utils/safeLocalStorage";
 import { isMobileDevice } from "./utils/device";
+import { useLoading } from "./contexts/LoadingContext";
 import { 
   getRecordKeys, 
   getRecordPrimaryKey,
@@ -291,6 +292,7 @@ export function enrichRecordsWithVouchers(
 }
 
 export default function App() {
+  const { showLoading, hideLoading, updateProgress } = useLoading();
   const [currentUserName] = useState<string>(() => safeLocalStorage.getItem("realtime_user_name") || "Colleague_" + Math.floor(1000 + Math.random() * 9000));
 
   const [darkMode, setDarkMode] = useState<boolean>(() => {
@@ -812,7 +814,10 @@ export default function App() {
     const filterToUse = overrideFilter || dateRangeFilterRef.current;
     const daysLimit = filterToUse === '7days' ? 7 : filterToUse === '30days' ? 30 : null;
 
-    if (!silent) setIsLoadingHistory(true);
+    if (!silent) {
+      setIsLoadingHistory(true);
+      showLoading("Loading permits from cloud...", 20);
+    }
     isSilentRefetchRef.current = silent;
 
     try {
@@ -821,6 +826,8 @@ export default function App() {
         fetchVouchersFromSupabase(),
         fetchDispatchedFromSupabase()
       ]);
+
+      if (!silent) updateProgress(80);
 
       if (dbPermits) {
         const currentDb = databaseRef.current;
@@ -893,7 +900,11 @@ export default function App() {
     } catch (err) {
       console.warn("Real-time database fetch error:", err);
     } finally {
-      if (!silent) setIsLoadingHistory(false);
+      if (!silent) {
+        setIsLoadingHistory(false);
+        updateProgress(100);
+        setTimeout(hideLoading, 300);
+      }
     }
   };
 
@@ -901,10 +912,15 @@ export default function App() {
   const handleManualSync = async () => {
     if (storageModeRef.current !== "cloud") return;
     setIsSyncing(true);
+    showLoading("Syncing with cloud database...", 25);
     try {
+      updateProgress(50);
       await refreshDatabase(undefined, false);
+      updateProgress(100);
+      setTimeout(hideLoading, 300);
       showToast("Database successfully synced with Supabase cloud!", "success");
     } catch (err: any) {
+      hideLoading();
       showToast(`Sync failed: ${err?.message || 'Network error'}`, "error");
     } finally {
       setIsSyncing(false);
@@ -943,6 +959,7 @@ export default function App() {
       storageModeRef.current = "cloud";
       safeLocalStorage.setItem("app_storage_mode", "cloud");
       setIsSyncing(true);
+      showLoading("Syncing to cloud database...", 15);
       showToast("Reconnected to Cloud. Synchronizing local records to Supabase...", "info");
 
       try {
@@ -966,16 +983,19 @@ export default function App() {
 
         // 1. Bulk sync local permits to Supabase if any exist
         if (localPermits.length > 0) {
+          updateProgress(35);
           await syncPermitsToSupabase(localPermits, false);
         }
 
         // 2. Bulk sync local vouchers to Supabase if any exist
         if (localVouchers.length > 0) {
+          updateProgress(60);
           await syncVouchersToSupabase(localVouchers, false);
         }
 
         // 3. Bulk sync local dispatched keys to Supabase
         if (localDispatchedKeys.length > 0) {
+          updateProgress(80);
           const itemsToSync = localDispatchedKeys.map(k => ({
             key: k,
             dispatchedDate: localDates[k] || getTodayISO(),
@@ -985,9 +1005,13 @@ export default function App() {
         }
 
         // 4. Refresh full state from cloud
+        updateProgress(90);
         await refreshDatabase(undefined, false);
+        updateProgress(100);
+        setTimeout(hideLoading, 350);
         showToast("Auto-sync complete! All offline records updated to Supabase Cloud.", "success");
       } catch (syncErr: any) {
+        hideLoading();
         console.error("Auto-re-sync error:", syncErr);
         showToast(`Auto-sync warning: ${syncErr?.message || 'Could not sync all records'}`, "warning");
       } finally {
@@ -1005,11 +1029,16 @@ export default function App() {
   };
 
   const handleCleanDatabase = async () => {
+    showLoading("Cleaning database records...", 25);
     showToast("Cleaning database...", "info");
     try {
+      updateProgress(60);
       await handlePurgeCorruptedKeys();
+      updateProgress(100);
+      setTimeout(hideLoading, 350);
       showToast("Database cleaned and synchronized successfully!", "success");
     } catch (e: any) {
+      hideLoading();
       console.warn("Failed to clean database:", e);
       showToast("Failed to clean database.", "error");
     }
@@ -1017,14 +1046,23 @@ export default function App() {
 
   const handleDateRangeFilterChange = async (newFilter: '7days' | '30days' | 'all') => {
     setDateRangeFilter(newFilter);
-    await refreshDatabase(newFilter);
+    showLoading("Loading permits...", 20);
+    try {
+      await refreshDatabase(newFilter);
+      updateProgress(100);
+      setTimeout(hideLoading, 300);
+    } catch (e) {
+      hideLoading();
+    }
   };
 
   const handleExportExcel = async () => {
+    showLoading("Preparing your export file...", 25);
     let recordsToExport = database;
     if (isSupabaseConfigured() && !hasFullHistoryLoaded) {
       setIsLoadingHistory(true);
       try {
+        updateProgress(50);
         const allPermits = await fetchPermitsFromSupabase({ daysLimit: null });
         if (allPermits && allPermits.length > 0) {
           recordsToExport = allPermits;
@@ -1037,7 +1075,15 @@ export default function App() {
         setIsLoadingHistory(false);
       }
     }
-    exportToExcel(recordsToExport, "Concessions_Permits_Export.xlsx", customVouchers, formData.todayDate || getTodayISO());
+    updateProgress(85);
+    try {
+      exportToExcel(recordsToExport, "Concessions_Permits_Export.xlsx", customVouchers, formData.todayDate || getTodayISO());
+      updateProgress(100);
+      setTimeout(hideLoading, 350);
+    } catch (e) {
+      hideLoading();
+      showToast("Export failed.", "error");
+    }
   };
 
   useEffect(() => {
@@ -1691,7 +1737,11 @@ export default function App() {
         darkMode={darkMode}
         onToggleDarkMode={() => setDarkMode(!darkMode)}
         activeTab={activeTab}
-        onActiveTabChange={setActiveTab}
+        onActiveTabChange={(tab) => {
+          showLoading("Loading view...");
+          setActiveTab(tab);
+          setTimeout(hideLoading, 250);
+        }}
         onExportExcel={handleExportExcel}
         onCleanDatabase={handleCleanDatabase}
         onOpenBlocklist={() => setShowBlocklist(true)}
@@ -1771,27 +1821,6 @@ export default function App() {
             />
           </div>
         </main>
-      )}
-
-      {activeTab === "table" && (
-        <TableView
-          database={enrichedDatabase}
-          totalRecordsCount={totalRecordsCount > 0 ? totalRecordsCount : enrichedDatabase.length}
-          vouchersDatabase={vouchersDatabase}
-          dispatchedKeys={dispatchedKeys}
-          unsentKeys={unsentKeys}
-          dispatchDates={dispatchDates}
-          processingDate={formData.todayDate || getTodayISO()}
-          onSelectRecord={handleSelectRecordQuickSearch}
-          onProcessingDateChange={handleProcessingDateChange}
-          onSwitchToDispatcher={() => setActiveTab("dispatcher")}
-          onExportExcel={handleExportExcel}
-          dateRangeFilter={dateRangeFilter}
-          onDateRangeFilterChange={handleDateRangeFilterChange}
-          isLoadingHistory={isLoadingHistory}
-          onCleanDatabase={handlePurgeCorruptedKeys}
-          customVouchersMap={customVouchers}
-        />
       )}
 
       {/* Blocklist Management Modal Panel */}
