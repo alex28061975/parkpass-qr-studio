@@ -1375,6 +1375,8 @@ export function DispatchCentre({
                 const expiresIso = recordIso ? addDays(recordIso, 6) : "";
 
                 const reqDate = getRequestedPermitDateISO(record, processingDate);
+                // BLOCKED is determined only by the Manage Blocklist / VRM blocklist.
+// CANCELLED is a separate permit state and must not itself make isBlocked true.
                 const isBlocked = isVrmSilentBlockedSync(record.vrm);
                 const isCancelled = isRecordCancelled(record, reqDate, database);
                 const recordKey = String(record.formId ?? record.id ?? index);

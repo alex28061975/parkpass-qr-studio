@@ -912,7 +912,8 @@ function PermitCardInner({
       record.todayDate = recTodayDate;
     }
 
-    // Check if the permit would be cancelled by the system
+    // CANCELLED records are dispatchable. The existing targetIsCancelled
+    // workflow below prepares the cancellation email and opens Outlook.
     const recordToCheck = {
       ...record,
       todayDate: record.todayDate,
@@ -922,10 +923,6 @@ function PermitCardInner({
     };
     const isCancelled = isRecordCancelled(record, record.todayDate, database) ||
                         isRecordCancelled(recordToCheck, record.todayDate, database);
-    if (isCancelled) {
-      showToast("Cannot send: This permit has been cancelled.", "error");
-      return;
-    }
 
     const isCancelledRec = Boolean(
       (rec ? isRecordCancelled(rec, recTodayDate, database) : isCancelled) ||
@@ -1901,7 +1898,9 @@ function PermitCardInner({
     }
     const targetDateRequired = targetRec.dateRequired || targetRec.validFrom || (targetRecord ? "" : data.dateRequired) || "";
     
-    // Check if the permit would be cancelled by the system
+    // CANCELLED records are intentionally allowed through to the email composer.
+    // targetIsCancelled below selects the existing cancellation-email template
+    // and suppresses QR generation for these records.
     const targetToCheck = {
       ...targetRec,
       todayDate: targetTodayDate,
@@ -1909,12 +1908,6 @@ function PermitCardInner({
       voucherCodesText: targetRec.voucherCodesText === "CANCELLED" ? "CANCELLED" : "-",
       prePaidCode: targetRec.prePaidCode === "CANCELLED" ? "CANCELLED" : "-",
     };
-    const isCancelledOutlook = isRecordCancelled(targetRec, targetTodayDate, database) ||
-                               isRecordCancelled(targetToCheck, targetTodayDate, database);
-    if (isCancelledOutlook) {
-      showToast("Cannot send: This permit has been cancelled.", "error");
-      return false;
-    }
 
     const targetIsCancelled = Boolean(
       (targetRecord ? isRecordCancelled(targetRec, targetTodayDate, database) : isCancelled) ||
