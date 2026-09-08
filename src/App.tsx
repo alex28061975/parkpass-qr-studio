@@ -26,6 +26,7 @@ import { isVrmSilentBlockedSync } from "./lib/blocklist";
 import { CsvPermitRecord, parsePermitCsv, parseDateToISO, addDays, formatPhoneNumber, ParsedVoucherData, addDaysSafe, parseDateRange, getDatesInRange, cleanVoucherCodeValue, exportToExcel, isVoucherCodeMatch, sortRecordsByFormIdDesc, getMatchingPermits, isDateRequiredOutsideValidWindow, getTodayISO, checkIsBlockedDuplicate, parseFullDateTimeMs, normalizeVouchersList, isRecordCancelled, getRequestedPermitDateISO, isVoucherExactPeriodEligible, isVoucherAvailableStatus, isVoucherVrmCompatible, getDefaultSampleVouchers } from "./utils/csvParser";
 import { CsvDatabasePanel, type CsvDatabasePanelHandle } from "./components/CsvDatabasePanel";
 import { BlocklistPanel } from "./components/BlocklistPanel";
+import { EditRecordModal } from "./components/EditRecordModal";
 import { 
   isSupabaseConfigured, 
   initSupabaseConfig,
@@ -412,6 +413,8 @@ export default function App() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [showBlocklist, setShowBlocklist] = useState<boolean>(false);
   const [syncToast, setSyncToast] = useState<{ message: string; type: "success" | "info" | "warning" | "error" } | null>(null);
+  const [editingRecord, setEditingRecord] = useState<CsvPermitRecord | null>(null);
+  const [isEditModalOpen, setIsEditModalOpen] = useState<boolean>(false);
 
   const showToast = (message: string, type: "success" | "info" | "warning" | "error" = "success") => {
     setSyncToast({ message, type });
@@ -1551,27 +1554,150 @@ export default function App() {
     }));
   };
 
+  const handleEditRecord = (record: CsvPermitRecord) => {
+    const recId = record.id !== undefined && record.id !== null ? String(record.id).trim() : "";
+    const recFormId = record.formId !== undefined && record.formId !== null ? String(record.formId).trim() : "";
+
+    const target = database.find(r => {
+      const rId = r.id !== undefined && r.id !== null ? String(r.id).trim() : "";
+      const rFormId = r.formId !== undefined && r.formId !== null ? String(r.formId).trim() : "";
+      return Boolean((recFormId && rFormId === recFormId) || (recId && rId === recId));
+    }) || record;
+
+    setEditingRecord(target);
+    setIsEditModalOpen(true);
+  };
+
+  const handleSaveRecord = async (updatedRecord: CsvPermitRecord) => {
+    const recId = updatedRecord.id !== undefined && updatedRecord.id !== null ? String(updatedRecord.id).trim() : "";
+    const recFormId = updatedRecord.formId !== undefined && updatedRecord.formId !== null ? String(updatedRecord.formId).trim() : "";
+
+    let recordFound = false;
+    const updatedDb = (database || []).map(item => {
+      const itemId = item.id !== undefined && item.id !== null ? String(item.id).trim() : "";
+      const itemFormId = item.formId !== undefined && item.formId !== null ? String(item.formId).trim() : "";
+
+      const isMatch = Boolean(
+        (recFormId && (itemFormId === recFormId || itemId === recFormId)) ||
+        (recId && (itemId === recId || itemFormId === recId))
+      );
+
+      if (isMatch) {
+        recordFound = true;
+        return { ...item, ...updatedRecord };
+      }
+      return item;
+    });
+
+    if (!recordFound) {
+      updatedDb.push(updatedRecord);
+    }
+
+    const sorted = sortRecordsByFormIdDesc(updatedDb);
+    setDatabase(sorted);
+    databaseRef.current = sorted;
+    setTotalRecordsCount(prev => Math.max(prev, sorted.length));
+
+    safeLocalStorage.setItem("concessions_permit_db", JSON.stringify(sorted));
+    const nowTimestamp = Date.now();
+    safeLocalStorage.setItem("concessions_permit_db_last_modified", String(nowTimestamp));
+
+    // Persist custom voucher override if edited
+    if (updatedRecord.voucherCode !== undefined) {
+      const cleanVrm = updatedRecord.vrm ? updatedRecord.vrm.toUpperCase().replace(/\s+/g, "") : "";
+      const dateISO = parseDateToISO(updatedRecord.dateRequired || "") || getTodayISO();
+      const codeVal = updatedRecord.voucherCode || "-";
+
+      const nextCustom = { ...customVouchers };
+      if (updatedRecord.formId) nextCustom[String(updatedRecord.formId)] = codeVal;
+      if (updatedRecord.id) nextCustom[String(updatedRecord.id)] = codeVal;
+      if (cleanVrm && dateISO) nextCustom[`${cleanVrm}_${dateISO}`] = codeVal;
+      if (cleanVrm) nextCustom[cleanVrm] = codeVal;
+
+      setCustomVouchers(nextCustom);
+      safeLocalStorage.setItem("concessions_custom_vouchers", JSON.stringify(nextCustom));
+    }
+
+    // Sync status with dispatch state
+    const pk = getRecordPrimaryKey(updatedRecord);
+    const keys = Array.from(new Set([pk, ...getRecordKeys(updatedRecord)].filter(Boolean)));
+    if (updatedRecord.status === "SENT") {
+      setDispatchedKeys(prev => Array.from(new Set([...prev, ...keys])));
+      setUnsentKeys(prev => prev.filter(k => !keys.includes(k)));
+    } else if (updatedRecord.status === "UNSENT") {
+      setUnsentKeys(prev => Array.from(new Set([...prev, ...keys])));
+      setDispatchedKeys(prev => prev.filter(k => !keys.includes(k)));
+    } else if (updatedRecord.status === "PENDING") {
+      setUnsentKeys(prev => prev.filter(k => !keys.includes(k)));
+      setDispatchedKeys(prev => prev.filter(k => !keys.includes(k)));
+    }
+
+    // Update active permit formData if this edited record is currently loaded
+    const activeFormId = String(formData.formId || formData.id || "").trim();
+    const updatedFormId = String(updatedRecord.formId || updatedRecord.id || "").trim();
+    if (activeFormId && activeFormId === updatedFormId) {
+      setFormData(prev => ({
+        ...prev,
+        site: updatedRecord.hospital,
+        name: updatedRecord.driverName ? toTitleCase(updatedRecord.driverName) : "",
+        vrm: updatedRecord.vrm ? updatedRecord.vrm.toUpperCase() : "",
+        ward: updatedRecord.ward ? toTitleCase(updatedRecord.ward) : "",
+        validFrom: updatedRecord.validFrom || updatedRecord.dateRequired || prev.validFrom,
+        validTo: updatedRecord.validTo || updatedRecord.dateExpiry || prev.validTo,
+        phone: formatPhoneNumber(updatedRecord.phone || ""),
+        email: (updatedRecord.email || "").toLowerCase(),
+        voucherCodesText: updatedRecord.voucherCode || prev.voucherCodesText,
+        status: updatedRecord.status
+      }));
+    }
+
+    if (storageModeRef.current === "cloud" && isSupabaseConfigured()) {
+      await syncPermitsToSupabase(sorted, false);
+      await refreshDatabase(undefined, true);
+    }
+
+    showToast("Permit record updated successfully.", "success");
+    setIsEditModalOpen(false);
+    setEditingRecord(null);
+  };
+
   const handleDatabaseChange = async (incomingDb: CsvPermitRecord[]) => {
     safeLocalStorage.removeItem("concessions_unsent_keys");
     
-    const recordMap = new Map<number | string, CsvPermitRecord>();
-    
+    // Build lookup maps for existing database records:
+    const recordMap = new Map<string, CsvPermitRecord>();
+    const formIdMap = new Map<string, CsvPermitRecord>();
+    const idMap = new Map<string, CsvPermitRecord>();
+
     (database || []).forEach(item => {
-      const key = item.formId !== undefined ? item.formId : item.id;
-      if (key !== undefined && key !== null) {
-        recordMap.set(key, { ...item });
+      const idKey = item.id !== undefined && item.id !== null ? String(item.id).trim() : "";
+      const formIdKey = item.formId !== undefined && item.formId !== null ? String(item.formId).trim() : "";
+      const primaryKey = formIdKey || idKey;
+      if (primaryKey) {
+        recordMap.set(primaryKey, { ...item });
       }
+      if (idKey) idMap.set(idKey, item);
+      if (formIdKey) formIdMap.set(formIdKey, item);
     });
 
+    // Merge logic:
+    // For each record in the new file, check if it already exists in the database.
+    // If it exists (by ID or Form ID), KEEP the existing (edited) version.
+    // If it doesn't exist, ADD the new record.
+    // Existing records not in the new file must remain unchanged.
     (incomingDb || []).forEach(item => {
-      const key = item.formId !== undefined ? item.formId : item.id;
-      if (key !== undefined && key !== null) {
-        const existing = recordMap.get(key);
-        if (existing) {
-          recordMap.set(key, { ...existing, ...item });
-        } else {
-          recordMap.set(key, { ...item });
-        }
+      const idKey = item.id !== undefined && item.id !== null ? String(item.id).trim() : "";
+      const formIdKey = item.formId !== undefined && item.formId !== null ? String(item.formId).trim() : "";
+
+      const existing = (formIdKey && formIdMap.get(formIdKey)) || (idKey && idMap.get(idKey));
+      if (existing) {
+        // KEEP the existing (edited) version! Do not overwrite.
+      } else {
+        // If it doesn't exist, ADD the new record.
+        const primaryKey = formIdKey || idKey || `row_${Date.now()}_${Math.random()}`;
+        recordMap.set(primaryKey, { ...item });
+        if (idKey) idMap.set(idKey, item);
+        if (formIdKey) formIdMap.set(formIdKey, item);
       }
     });
 
@@ -1809,6 +1935,7 @@ export default function App() {
             isLoadingHistory={isLoadingHistory}
             onBrowseConcessions={() => csvPanelRef.current?.browseConcessions()}
             onBrowseVouchers={() => csvPanelRef.current?.browseVouchers()}
+            onEditRecord={handleEditRecord}
           />
 
           <div id="print-card-wrapper" className="permit-card-engine" aria-hidden="true">
@@ -1834,6 +1961,17 @@ export default function App() {
         isOpen={showBlocklist} 
         onClose={() => setShowBlocklist(false)} 
         database={enrichedDatabase}
+      />
+
+      {/* Edit Permit Record Modal */}
+      <EditRecordModal
+        isOpen={isEditModalOpen}
+        record={editingRecord}
+        onClose={() => {
+          setIsEditModalOpen(false);
+          setEditingRecord(null);
+        }}
+        onSave={handleSaveRecord}
       />
     </div>
   );
