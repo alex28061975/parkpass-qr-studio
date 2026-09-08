@@ -175,87 +175,56 @@ export function DispatchCentre({
   const [actionsOpen, setActionsOpen] = useState(false);
   const [wardDropdownOpen, setWardDropdownOpen] = useState(false);
 
-  // Target ISO for Active Date Codes dropdown
-  const targetIso = useMemo(() => {
-    if (formData) {
-      const permitIso = getRequestedPermitDateISO(formData as any);
-      if (permitIso && /^\d{4}-\d{2}-\d{2}$/.test(permitIso)) {
-        return permitIso;
-      }
-      const formDateIso = formData.todayDate ? parseDateToISO(String(formData.todayDate)) : "";
-      if (formDateIso && /^\d{4}-\d{2}-\d{2}$/.test(formDateIso)) {
-        return formDateIso;
+  // ⭐ CRITICAL FIX: Get the CURRENT permit's validFrom date from formData
+  // This MUST update when a new permit is selected via search
+  const currentPermitValidFromIso = useMemo(() => {
+    // First priority: formData.validFrom (set when selecting a record)
+    if (formData?.validFrom) {
+      const iso = parseDateToISO(String(formData.validFrom));
+      if (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso)) {
+        return iso;
       }
     }
+    // Second priority: formData.dateRequired
+    if (formData?.dateRequired) {
+      const iso = parseDateToISO(String(formData.dateRequired));
+      if (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso)) {
+        return iso;
+      }
+    }
+    // Third priority: formData.todayDate
+    if (formData?.todayDate) {
+      const iso = parseDateToISO(String(formData.todayDate));
+      if (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso)) {
+        return iso;
+      }
+    }
+    // Fallback: processingDate
     const procIso = processingDate ? parseDateToISO(processingDate) : "";
     if (procIso && /^\d{4}-\d{2}-\d{2}$/.test(procIso)) {
       return procIso;
     }
     return getTodayISO();
-  }, [formData?.validFrom, formData?.dateRequired, formData?.startTime, formData?.createdAt, formData?.todayDate, processingDate]);
-
-  // Matching permits for the active date
-  const matchingPermits = useMemo(() => {
-    if (!targetIso) return [];
-    return getMatchingPermits(database, targetIso);
-  }, [database, targetIso]);
-
-  // Current permit exact validFrom and validTo ISO matching
-  const currentPermitValidFromIso = useMemo(() => {
-    if (formData?.validFrom) {
-      const iso = parseDateToISO(String(formData.validFrom));
-      if (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso;
-    }
-    if (formData?.dateRequired) {
-      const iso = parseDateToISO(String(formData.dateRequired));
-      if (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso;
-    }
-    if (matchingPermits && matchingPermits.length > 0) {
-      const candidate = (formData?.vrm && matchingPermits.find(p => p.vrm && p.vrm.toUpperCase().replace(/\s+/g, "") === formData.vrm.toUpperCase().replace(/\s+/g, ""))) || matchingPermits[0];
-      const raw = candidate?.validFrom || candidate?.dateRequired;
-      if (raw) {
-        const iso = parseDateToISO(String(raw));
-        if (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso;
-      }
-    }
-    if (targetIso && /^\d{4}-\d{2}-\d{2}$/.test(targetIso)) {
-      return targetIso;
-    }
-    return "";
-  }, [formData?.validFrom, formData?.dateRequired, formData?.vrm, matchingPermits, targetIso]);
+  }, [formData?.validFrom, formData?.dateRequired, formData?.todayDate, processingDate]);
 
   const currentPermitValidToIso = useMemo(() => {
     if (formData?.validTo) {
       const iso = parseDateToISO(String(formData.validTo));
       if (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso;
     }
-    if (matchingPermits && matchingPermits.length > 0) {
-      const candidate = (formData?.vrm && matchingPermits.find(p => p.vrm && p.vrm.toUpperCase().replace(/\s+/g, "") === formData.vrm.toUpperCase().replace(/\s+/g, ""))) || matchingPermits[0];
-      const rawTo = candidate?.validTo || candidate?.dateExpiry;
-      if (rawTo) {
-        const iso = parseDateToISO(String(rawTo));
-        if (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso;
-      }
-      const rawFrom = candidate?.validFrom || candidate?.dateRequired;
-      if (rawFrom) {
-        const isoFrom = parseDateToISO(String(rawFrom));
-        if (isoFrom && /^\d{4}-\d{2}-\d{2}$/.test(isoFrom)) {
-          return addDays(isoFrom, 6);
-        }
-      }
-    }
     if (currentPermitValidFromIso) {
       return addDays(currentPermitValidFromIso, 6);
     }
     return "";
-  }, [formData?.validTo, formData?.vrm, matchingPermits, currentPermitValidFromIso]);
+  }, [formData?.validTo, currentPermitValidFromIso]);
+
+  // Matching permits for the active date
+  const matchingPermits = useMemo(() => {
+    if (!currentPermitValidFromIso) return [];
+    return getMatchingPermits(database, currentPermitValidFromIso);
+  }, [database, currentPermitValidFromIso]);
 
   // Helper to check if a voucher matches the permit's validity period
-  const hasDatedVouchersForDate = useMemo(() => {
-    if (!vouchersDatabase || vouchersDatabase.length === 0 || !currentPermitValidFromIso) return false;
-    return vouchersDatabase.some(v => getVoucherValidFromISO(v) === currentPermitValidFromIso);
-  }, [vouchersDatabase, currentPermitValidFromIso]);
-
   const isVoucherMatchingPeriod = useCallback((v: ParsedVoucherData | undefined | null): boolean => {
     if (!v || !v.code) return false;
     if (!currentPermitValidFromIso) return false;
@@ -277,108 +246,57 @@ export function DispatchCentre({
     }
 
     // If voucher is undated, allow it if no dated vouchers exist for this date
+    const hasDatedVouchersForDate = vouchersDatabase.some(v => getVoucherValidFromISO(v) === currentPermitValidFromIso);
     return !hasDatedVouchersForDate;
-  }, [currentPermitValidFromIso, currentPermitValidToIso, hasDatedVouchersForDate]);
+  }, [currentPermitValidFromIso, currentPermitValidToIso, vouchersDatabase]);
 
-  // Live global assigned codes set to track real-time voucher allocation across permits
+  // ⭐ LIVE ASSIGNED CODES SET - Reactive to database changes
   const liveAssignedCodesSet = useMemo(() => {
-    const set = new Set<string>();
-    const add = (code?: any) => {
-      if (!code) return;
-      const clean = cleanVoucherCodeValue(String(code)).toUpperCase();
-      if (
-        clean &&
-        clean !== "-" &&
-        clean !== "CANCELLED" &&
-        clean !== "PENDING" &&
-        clean !== "N/A" &&
-        clean !== "NA" &&
-        clean !== "NONE" &&
-        clean !== "NULL" &&
-        clean !== "UNDEFINED" &&
-        clean !== "BLOCKED"
-      ) {
-        set.add(clean);
-      }
-    };
-
-    const currentId = String(formData?.id || "").trim();
-    const currentFormId = String(formData?.formId || "").trim();
-
-    (database || []).forEach(rec => {
-      const isCancelled = rec.isCancelled === true || String(rec.status || "").toUpperCase() === "CANCELLED" || rec.voucherCode === "CANCELLED" || isVrmSilentBlockedSync(rec.vrm);
-      if (isCancelled) return;
-
-      const pId = String(rec.id || "").trim();
-      const pFormId = String(rec.formId || "").trim();
-      const isCurrentRec = Boolean(
-        (currentId && (pId === currentId || pFormId === currentId)) ||
-        (currentFormId && (pFormId === currentFormId || pId === currentFormId))
-      );
-
-      if (isCurrentRec && formData) {
-        add(formData.voucherCode || formData.voucherCodesText || formData.prePaidCode);
-      } else {
-        add(rec.voucherCode);
-        add(rec.prePaidCode);
-        add(rec.qrCode);
-        add(rec.voucherCodesText);
+    const assigned = new Set<string>();
+    
+    // Check all database records for assigned codes
+    database.forEach(rec => {
+      const code = rec.voucherCode || rec.prePaidCode || rec.qrCode || rec.serialNumber || "";
+      if (code && code !== "-" && code !== "CANCELLED") {
+        // Handle comma/space separated codes
+        const parts = String(code).split(/[\n,;\s]+/).map(s => s.trim().toUpperCase()).filter(Boolean);
+        parts.forEach(p => {
+          if (p !== "-" && p !== "CANCELLED" && p !== "BLOCKED") {
+            assigned.add(p);
+          }
+        });
       }
     });
-
+    
+    // Also check customVouchers
     if (customVouchers) {
-      Object.values(customVouchers).forEach(val => add(val));
+      Object.values(customVouchers).forEach(code => {
+        if (code && code !== "-" && code !== "CANCELLED" && code !== "BLOCKED") {
+          assigned.add(code.toUpperCase());
+        }
+      });
     }
+    
+    return assigned;
+  }, [database, customVouchers]);
 
-    if (formData && !formData.isCancelled && String(formData.status || "").toUpperCase() !== "CANCELLED") {
-      add(formData.voucherCode || formData.voucherCodesText || formData.prePaidCode);
-    }
-
-    return set;
-  }, [
-    database,
-    customVouchers,
-    formData?.voucherCode,
-    formData?.voucherCodesText,
-    formData?.prePaidCode,
-    formData?.status,
-    formData?.isCancelled,
-    formData?.id,
-    formData?.formId
-  ]);
-
-  // Unused vouchers computation for the active date with exact validFrom/validTo matching
+  // ⭐ UNUSED VOUCHERS - Reactive to liveAssignedCodesSet
   const unusedVouchersForDay = useMemo<ParsedVoucherData[]>(() => {
-    if (!currentPermitValidFromIso) return [];
+    if (!currentPermitValidFromIso || !vouchersDatabase || vouchersDatabase.length === 0) return [];
 
-    const vouchers = getUnusedVouchersForDate(
-      vouchersDatabase,
-      database,
-      currentPermitValidFromIso,
-      formData?.vrm,
-      formData,
-      matchingPermits,
-      customVouchers
-    );
+    // Filter vouchers that match this permit's date range
+    const dateFiltered = vouchersDatabase.filter(isVoucherMatchingPeriod);
 
-    return vouchers.filter(isVoucherMatchingPeriod);
-  }, [
-    vouchersDatabase,
-    database,
-    customVouchers,
-    currentPermitValidFromIso,
-    isVoucherMatchingPeriod,
-    formData?.vrm,
-    formData?.voucherCodesText,
-    formData?.voucherCode,
-    formData?.prePaidCode,
-    formData?.status,
-    formData?.id,
-    formData?.formId,
-    matchingPermits
-  ]);
+    // Filter out assigned codes
+    const finalFiltered = dateFiltered.filter(v => {
+      const codeUpper = (v.code || "").trim().toUpperCase();
+      return !liveAssignedCodesSet.has(codeUpper);
+    });
 
-  // Exact range voucher stock metrics for Active Date Codes dropdown badge
+    return finalFiltered;
+  }, [vouchersDatabase, currentPermitValidFromIso, isVoucherMatchingPeriod, liveAssignedCodesSet]);
+
+  // ⭐ TOTAL VOUCHERS FOR THIS RANGE
   const totalForThisRange = useMemo(() => {
     if (!currentPermitValidFromIso || !vouchersDatabase || vouchersDatabase.length === 0) {
       return 0;
@@ -398,20 +316,49 @@ export function DispatchCentre({
       return;
     }
 
-    const formId = String(formData?.id || formData?.formId || "").trim();
-    const activeRec = formId
-      ? (database || []).find(r => String(r.id || "").trim() === formId || String(r.formId || "").trim() === formId)
-      : (formData?.vrm 
-          ? (database || []).find(r => r.vrm && r.vrm.toUpperCase().replace(/\s+/g, "") === formData.vrm.toUpperCase().replace(/\s+/g, ""))
-          : matchingPermits[0]);
+    const codeFields = [
+      "voucherCode",
+      "prePaidCode",
+      "qrCode",
+      "voucherCodesText",
+      "serialNumber",
+      "voucher",
+      "code",
+      "qrOverride",
+      "Voucher Code",
+      "VOUCHER CODE",
+      "Pre-Paid Code",
+      "Pre Paid Code",
+      "QR Code",
+      "QR CODE"
+    ];
+
+    const isCodeAssigned = (record: any) => {
+      if (!record) return false;
+
+      return codeFields.some((field) => {
+        const raw = record[field];
+        if (raw === undefined || raw === null) return false;
+
+        return String(raw)
+          .split(/[\n,;\s]+/)
+          .map((part) => cleanVoucherCodeValue(part).toUpperCase())
+          .some((code) => code && code !== "-" && isVoucherCodeMatch(code, selectedCode));
+      });
+    };
+
+    const alreadyAssigned =
+      (database || []).some(isCodeAssigned) || (formData && isCodeAssigned(formData));
+
+    if (alreadyAssigned) {
+      console.warn(
+        `🚫 Voucher ${selectedCode} is already assigned and cannot be reused.`
+      );
+      return;
+    }
 
     onChangeFormData?.({
-      id: activeRec?.id || formData?.id,
-      formId: activeRec?.formId || formData?.formId,
-      vrm: activeRec?.vrm || formData?.vrm,
       voucherCodesText: selectedCode,
-      voucherCode: selectedCode,
-      prePaidCode: selectedCode,
       status: "Pending",
       emailType: "RESEND_CONCESSION",
       isResend: true,
@@ -985,7 +932,7 @@ export function DispatchCentre({
 
   return (
     <section className="w-full bg-white dark:bg-[#07172b] border border-slate-200 dark:border-[#183a5e] rounded-2xl p-4 md:p-6 shadow-sm dark:shadow-2xl text-slate-800 dark:text-slate-200 transition-colors">
-      {/* Top Header Section - EVERYTHING IN A SINGLE LINE */}
+      {/* Top Header Section */}
       <div className="flex flex-col gap-3 pb-4 border-b border-slate-200 dark:border-[#143252]">
         <div className="flex items-center gap-3 w-full flex-nowrap overflow-x-auto">
           {/* Left: Title + Record Counts */}
@@ -1004,7 +951,7 @@ export function DispatchCentre({
             </span>
           </div>
 
-          {/* Center: Browse Buttons - TRULY CENTERED */}
+          {/* Center: Browse Buttons */}
           <div className="flex-1 flex items-center justify-center gap-3 min-w-0 overflow-x-auto">
             <button
               type="button"
@@ -1407,8 +1354,6 @@ export function DispatchCentre({
                 const expiresIso = recordIso ? addDays(recordIso, 6) : "";
 
                 const reqDate = getRequestedPermitDateISO(record, processingDate);
-                // BLOCKED is determined only by the Manage Blocklist / VRM blocklist.
-// CANCELLED is a separate permit state and must not itself make isBlocked true.
                 const isBlocked = isVrmSilentBlockedSync(record.vrm);
                 const isCancelled = isRecordCancelled(record, reqDate, database);
                 const recordKey = String(record.formId ?? record.id ?? index);
@@ -1443,7 +1388,7 @@ export function DispatchCentre({
 
                 const hospitalDisplay = getHospital(record);
 
-                // ⭐ LIVE CODES COLUMN - Per-row voucher count with RED when ≤ 5 remaining
+                // ⭐ CODES COLUMN - Uses liveAssignedCodesSet
                 const permitFrom = record.validFrom || record.dateRequired || "";
                 const permitFromISO = parseDateToISO(permitFrom);
                 
@@ -1455,8 +1400,9 @@ export function DispatchCentre({
                 
                 const totalForRow = matchingVouchersForRow.length;
                 
+                // Count remaining (unassigned) vouchers for this row
                 const remainingForRow = matchingVouchersForRow.filter(v => {
-                  const code = cleanVoucherCodeValue(v.code).toUpperCase();
+                  const code = (v.code || "").toUpperCase();
                   return !liveAssignedCodesSet.has(code);
                 }).length;
                 
@@ -1464,7 +1410,6 @@ export function DispatchCentre({
                   ? (remainingForRow / totalForRow) * 100
                   : 0;
                 
-                // 🔴 RED if: total=0 OR remaining≤5 OR percentage≤5%
                 const isRowStockLow = totalForRow === 0 || remainingForRow <= 5 || percentRemainingRow <= 5;
 
                 return (
@@ -1509,7 +1454,7 @@ export function DispatchCentre({
                       )}
                     </td>
 
-                    {/* ⭐ FIXED CODES COLUMN - Per-row voucher count with RED when ≤ 5 remaining */}
+                    {/* ⭐ CODES COLUMN - Reactive to liveAssignedCodesSet */}
                     <td className="py-3 px-3 border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-center">
                       <div className="flex flex-col items-center justify-center gap-1 mx-auto w-[74px]">
                         <div 
