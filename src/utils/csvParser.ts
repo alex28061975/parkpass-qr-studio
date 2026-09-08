@@ -2174,7 +2174,6 @@ export function isVoucherExactPeriodEligible(
 
 export function isRecordCancelledCanonical(record: any, todayDateOrReference?: string, database?: CsvPermitRecord[]): boolean {
   if (!record) return false;
-  if (isVrmSilentBlockedSync(record.vrm)) return true;
   if (record.isCancelled === true) return true;
   if (typeof record.status === "string" && record.status.trim().toLowerCase().includes("cancel")) return true;
   if (
@@ -2230,7 +2229,7 @@ export function getSpreadsheetMatchingAllocationsMap(
     const reqDate = getRequestedPermitDateISO(r, processingDate);
 
     if (isVrmSilentBlockedSync(r.vrm)) {
-      map.set(recordKey, "CANCELLED");
+      map.set(recordKey, "BLOCKED");
       return;
     }
 
@@ -2978,8 +2977,6 @@ export function isRecordCancelled(
   database?: CsvPermitRecord[]
 ): boolean {
   if (!record) return false;
-
-  if (isVrmSilentBlockedSync(record.vrm)) return true;
 
   if (record.isCancelled === true) return true;
   if (typeof record.status === "string" && record.status.trim().toLowerCase().includes("cancel")) return true;

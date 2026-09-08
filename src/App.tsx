@@ -199,12 +199,17 @@ export function enrichRecordsWithVouchers(
     const cleanVrm = record.vrm ? record.vrm.toUpperCase().replace(/[^A-Z0-9]/g, "") : "";
     const reqDateD = getRequestedPermitDateISO(record, fallbackDateStr);
 
-    // Any VRM on the actual security blocklist is always blocked
+    // Any VRM on the actual security blocklist is always blocked.
+    // NOTE: this must use the "BLOCKED" marker (matching the convention used
+    // elsewhere, e.g. getSpreadsheetMatchingAllocationsMap in csvParser.ts),
+    // not "CANCELLED" — writing "CANCELLED" here previously caused blocked
+    // records to be misidentified as cancelled by every isCancelled/
+    // isRecordCancelled check that inspects voucherCode/prePaidCode.
     if (isVrmSilentBlockedSync(record.vrm)) {
       enrichedByIndex.set(index, {
         ...record,
-        voucherCode: "CANCELLED",
-        prePaidCode: "CANCELLED",
+        voucherCode: "BLOCKED",
+        prePaidCode: "BLOCKED",
         hasOriginalVoucher: false
       });
       return;

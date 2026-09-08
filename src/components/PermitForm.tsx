@@ -17,6 +17,7 @@ import {
   isSamePermitRecord,
   cleanVoucherCodeValue,
   isVoucherCodeMatch,
+  isVoucherExactPeriodEligible,
   isRecordCancelledCanonical as isCancelled
 } from "../utils/csvParser";
 import { 
@@ -117,10 +118,11 @@ export function PermitForm({
       matchingPermits
     );
 
-    // Filter to vouchers matching targetIso (or generic pool)
+    // Use the same inclusive ValidFrom..ValidTo window as getUnusedVouchersForDate
+    // rather than an exact-start-date match (see PermitCard.tsx for the same fix).
     const dateFiltered = vouchers.filter(v => {
       const vIso = getVoucherDateISO(v);
-      return !vIso || vIso === targetIso;
+      return !vIso || isVoucherExactPeriodEligible(v, targetIso);
     });
 
     const spreadsheetAssignedCodes = getSpreadsheetMatchingAssignedCodes(

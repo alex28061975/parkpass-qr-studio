@@ -20,7 +20,8 @@ import {
   resolvePermitDate,
   isRecordCancelled,
   getRequestedPermitDateISO,
-  getVoucherDateISO
+  getVoucherDateISO,
+  isVoucherExactPeriodEligible
 } from "../utils/csvParser";
 import { getRecordKeys, checkIsRecordDispatched, getRecordPrimaryKey } from "../utils/dispatchUtils";
 import { 
@@ -227,9 +228,12 @@ function PermitCardInner({
       matchingPermits
     );
 
+    // Use the same inclusive ValidFrom..ValidTo window as getUnusedVouchersForDate
+    // (isVoucherExactPeriodEligible) rather than an exact-start-date match, which
+    // would silently discard vouchers still valid for targetIso later in their week.
     const dateFiltered = vouchers.filter(v => {
       const vIso = getVoucherDateISO(v);
-      return !vIso || vIso === targetIso;
+      return !vIso || isVoucherExactPeriodEligible(v, targetIso);
     });
 
     const spreadsheetAssignedCodes = getSpreadsheetMatchingAssignedCodes(
@@ -684,15 +688,12 @@ function PermitCardInner({
       prePaidCode: resendTargetRecord.prePaidCode === "CANCELLED" ? "CANCELLED" : "-",
     };
 
-    // Check if the permit would be cancelled by the system
+    // CANCELLED records are intentionally allowed through to the email composer.
+    // Route cancelled records to handleSendClick to prepare the cancellation email and open Outlook.
     const isCancelledCheck = isRecordCancelled(resendTargetRecord, recTodayDate, database) ||
                              isRecordCancelled(recordToCheck, recTodayDate, database);
-    if (isCancelledCheck) {
-      showToast("Cannot send: This permit has been cancelled.", "error");
-      return;
-    }
 
-    if (isCancelled) {
+    if (isCancelled || isCancelledCheck) {
       return handleSendClick();
     }
     // Kick off the clipboard write synchronously, right here at the top, so the call is
@@ -2564,20 +2565,20 @@ function PermitCardInner({
                     handleSendClick();
                   }
                 }}
-                disabled={!isCancelled && !qrUrl}
+                disabled={isSilentBlocked || (!isCancelled && !qrUrl)}
                 className={`flex-1 h-9 flex items-center justify-center gap-1.5 rounded-xl transition-all duration-250 ease-in-out font-bold text-xs shadow-xs hover:shadow-md hover:scale-[1.01] active:scale-[0.98] ${
-                  !isCancelled && !qrUrl
+                  isSilentBlocked || (!isCancelled && !qrUrl)
                     ? "bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 border border-slate-200 dark:border-slate-700 cursor-not-allowed hover:scale-100 hover:shadow-xs active:scale-100"
                     : isCancelled
                       ? "bg-rose-600 hover:bg-rose-700 text-white cursor-pointer"
                       : "bg-[#005EB8] hover:bg-blue-700 text-white cursor-pointer"
                 }`}
-                title={!isCancelled && !qrUrl ? "A valid QR code is required before sending." : ""}
+                title={isSilentBlocked ? "This vehicle is on the blocklist — dispatch is disabled." : (!isCancelled && !qrUrl ? "A valid QR code is required before sending." : "")}
               >
                 {isCancelled ? (
                   <ShieldAlert className="w-3.5 h-3.5 shrink-0 text-white/90" />
                 ) : (
-                  <Mail className={`w-3.5 h-3.5 shrink-0 ${!isCancelled && !qrUrl ? "text-slate-400 dark:text-slate-500" : "text-white/90"}`} />
+                  <Mail className={`w-3.5 h-3.5 shrink-0 ${isSilentBlocked || (!isCancelled && !qrUrl) ? "text-slate-400 dark:text-slate-500" : "text-white/90"}`} />
                 )}
                 <span>
                   {isCancelled

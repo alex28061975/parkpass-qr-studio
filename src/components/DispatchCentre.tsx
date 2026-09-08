@@ -44,6 +44,8 @@ import {
   getUnusedVouchersForDate,
   getSpreadsheetMatchingAssignedCodes,
   getVoucherDateISO,
+  getVoucherValidToISO,
+  isVoucherExactPeriodEligible,
   cleanVoucherCodeValue,
   isVoucherCodeMatch
 } from "../utils/csvParser";
@@ -95,29 +97,12 @@ const formatDate = (dateStr?: string) => {
   return dateStr;
 };
 
-const getVoucherValidFromISO = (v: ParsedVoucherData | undefined | null): string => {
-  if (!v) return "";
-  const raw = v.validFrom || v.valid_from || v.ValidFrom || v.startDate || v.start_date || v.date || v.dateRequired || v.uploadDate;
-  if (raw) {
-    const iso = parseDateToISO(String(raw));
-    if (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso;
-  }
-  return getVoucherDateISO(v) || "";
-};
-
-const getVoucherValidToISO = (v: ParsedVoucherData | undefined | null): string => {
-  if (!v) return "";
-  const raw = v.validTo || v.valid_to || v.ValidTo || v.endDate || v.end_date || v.expires || v.expiryDate;
-  if (raw) {
-    const iso = parseDateToISO(String(raw));
-    if (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso;
-  }
-  const fromIso = getVoucherValidFromISO(v);
-  if (fromIso) {
-    return addDays(fromIso, 6);
-  }
-  return "";
-};
+// NOTE: voucher ValidFrom/ValidTo parsing and eligibility used to be
+// re-implemented locally in this file (duplicated business logic — see
+// the canonical getVoucherDateISO / getVoucherValidToISO / isVoucherExactPeriodEligible
+// in csvParser.ts). These now delegate to the shared helpers so date-range
+// eligibility can never drift out of sync between components.
+const getVoucherValidFromISO = (v: ParsedVoucherData | undefined | null): string => getVoucherDateISO(v) || "";
 
 export type SortKey = 
   | "id" 
@@ -261,24 +246,16 @@ export function DispatchCentre({
     if (!currentPermitValidFromIso) return false;
 
     const vFrom = getVoucherValidFromISO(v);
-    const vTo = getVoucherValidToISO(v);
 
     if (vFrom) {
-      if (vFrom !== currentPermitValidFromIso) return false;
-      if (vTo && currentPermitValidToIso) {
-        if (vTo === currentPermitValidToIso) return true;
-        const expectedPlus6 = addDays(currentPermitValidFromIso, 6);
-        const expectedPlus7 = addDays(currentPermitValidFromIso, 7);
-        if (vTo === expectedPlus6 || vTo === expectedPlus7) return true;
-        if (vTo >= currentPermitValidFromIso) return true;
-        return false;
-      }
-      return true;
+      // Delegate to the single canonical ValidFrom..ValidTo eligibility rule
+      // (inclusive range) rather than re-deriving it here.
+      return isVoucherExactPeriodEligible(v, currentPermitValidFromIso);
     }
 
     // If voucher is undated, allow it if no dated vouchers exist for this date
     return !hasDatedVouchersForDate;
-  }, [currentPermitValidFromIso, currentPermitValidToIso, hasDatedVouchersForDate]);
+  }, [currentPermitValidFromIso, hasDatedVouchersForDate]);
 
   // Unused vouchers computation for the active date with exact validFrom/validTo matching
   const unusedVouchersForDay = useMemo<ParsedVoucherData[]>(() => {
@@ -478,7 +455,10 @@ export function DispatchCentre({
   };
 
   const getIsCancelled = (record: CsvPermitRecord, idx?: number) => {
-    if (isVrmSilentBlockedSync(record.vrm)) return true;
+    // NOTE: BLOCKED and CANCELLED are separate states. A blocklisted VRM must
+    // never be reported as CANCELLED here — callers that need "is this record
+    // blocked OR cancelled for display purposes" check isVrmSilentBlockedSync
+    // separately (see getStatusStr below).
     if (record.isCancelled === true) return true;
     if (typeof record.status === "string" && record.status.trim().toLowerCase().includes("cancel")) return true;
     if (
