@@ -176,30 +176,25 @@ export function DispatchCentre({
   const [wardDropdownOpen, setWardDropdownOpen] = useState(false);
 
   // ⭐ CRITICAL FIX: Get the CURRENT permit's validFrom date from formData
-  // This MUST update when a new permit is selected via search
   const currentPermitValidFromIso = useMemo(() => {
-    // First priority: formData.validFrom (set when selecting a record)
     if (formData?.validFrom) {
       const iso = parseDateToISO(String(formData.validFrom));
       if (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso)) {
         return iso;
       }
     }
-    // Second priority: formData.dateRequired
     if (formData?.dateRequired) {
       const iso = parseDateToISO(String(formData.dateRequired));
       if (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso)) {
         return iso;
       }
     }
-    // Third priority: formData.todayDate
     if (formData?.todayDate) {
       const iso = parseDateToISO(String(formData.todayDate));
       if (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso)) {
         return iso;
       }
     }
-    // Fallback: processingDate
     const procIso = processingDate ? parseDateToISO(processingDate) : "";
     if (procIso && /^\d{4}-\d{2}-\d{2}$/.test(procIso)) {
       return procIso;
@@ -218,7 +213,6 @@ export function DispatchCentre({
     return "";
   }, [formData?.validTo, currentPermitValidFromIso]);
 
-  // Matching permits for the active date
   const matchingPermits = useMemo(() => {
     if (!currentPermitValidFromIso) return [];
     return getMatchingPermits(database, currentPermitValidFromIso);
@@ -245,20 +239,17 @@ export function DispatchCentre({
       return true;
     }
 
-    // If voucher is undated, allow it if no dated vouchers exist for this date
     const hasDatedVouchersForDate = vouchersDatabase.some(v => getVoucherValidFromISO(v) === currentPermitValidFromIso);
     return !hasDatedVouchersForDate;
   }, [currentPermitValidFromIso, currentPermitValidToIso, vouchersDatabase]);
 
-  // ⭐ LIVE ASSIGNED CODES SET - Reactive to database changes
+  // ⭐ LIVE ASSIGNED CODES SET - Reactive to database AND voucher changes
   const liveAssignedCodesSet = useMemo(() => {
     const assigned = new Set<string>();
     
-    // Check all database records for assigned codes
     database.forEach(rec => {
-      const code = rec.voucherCode || rec.prePaidCode || rec.qrCode || rec.serialNumber || "";
-      if (code && code !== "-" && code !== "CANCELLED") {
-        // Handle comma/space separated codes
+      const code = rec.voucherCode || rec.prePaidCode || rec.qrCode || rec.serialNumber || rec.voucherCodesText || "";
+      if (code && code !== "-" && code !== "CANCELLED" && code !== "BLOCKED") {
         const parts = String(code).split(/[\n,;\s]+/).map(s => s.trim().toUpperCase()).filter(Boolean);
         parts.forEach(p => {
           if (p !== "-" && p !== "CANCELLED" && p !== "BLOCKED") {
@@ -268,7 +259,6 @@ export function DispatchCentre({
       }
     });
     
-    // Also check customVouchers
     if (customVouchers) {
       Object.values(customVouchers).forEach(code => {
         if (code && code !== "-" && code !== "CANCELLED" && code !== "BLOCKED") {
@@ -278,16 +268,14 @@ export function DispatchCentre({
     }
     
     return assigned;
-  }, [database, customVouchers]);
+  }, [database, customVouchers, vouchersDatabase]); // ⭐ Added vouchersDatabase dependency
 
-  // ⭐ UNUSED VOUCHERS - Reactive to liveAssignedCodesSet
+  // ⭐ UNUSED VOUCHERS - Filters by date range AND assigned codes
   const unusedVouchersForDay = useMemo<ParsedVoucherData[]>(() => {
     if (!currentPermitValidFromIso || !vouchersDatabase || vouchersDatabase.length === 0) return [];
 
-    // Filter vouchers that match this permit's date range
     const dateFiltered = vouchersDatabase.filter(isVoucherMatchingPeriod);
 
-    // Filter out assigned codes
     const finalFiltered = dateFiltered.filter(v => {
       const codeUpper = (v.code || "").trim().toUpperCase();
       return !liveAssignedCodesSet.has(codeUpper);
@@ -1388,19 +1376,21 @@ export function DispatchCentre({
 
                 const hospitalDisplay = getHospital(record);
 
-                // ⭐ CODES COLUMN - Uses liveAssignedCodesSet
+                // ⭐ CODES COLUMN - Uses the SAME logic as unusedVouchersForDay
                 const permitFrom = record.validFrom || record.dateRequired || "";
                 const permitFromISO = parseDateToISO(permitFrom);
                 
-                // Filter vouchers that match this permit's date range
+                // Match vouchers using the same logic as the badge
                 const matchingVouchersForRow = vouchersDatabase.filter(v => {
                   const vFrom = getVoucherValidFromISO(v);
-                  return vFrom && permitFromISO && vFrom === permitFromISO;
+                  // Match if voucher has no date OR matches the permit's date
+                  if (!vFrom) return true;
+                  return vFrom === permitFromISO;
                 });
                 
                 const totalForRow = matchingVouchersForRow.length;
                 
-                // Count remaining (unassigned) vouchers for this row
+                // Use liveAssignedCodesSet for remaining count
                 const remainingForRow = matchingVouchersForRow.filter(v => {
                   const code = (v.code || "").toUpperCase();
                   return !liveAssignedCodesSet.has(code);
