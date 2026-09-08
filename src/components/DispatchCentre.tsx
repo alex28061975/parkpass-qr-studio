@@ -44,8 +44,6 @@ import {
   getUnusedVouchersForDate,
   getSpreadsheetMatchingAssignedCodes,
   getVoucherDateISO,
-  getVoucherValidToISO,
-  isVoucherExactPeriodEligible,
   cleanVoucherCodeValue,
   isVoucherCodeMatch
 } from "../utils/csvParser";
@@ -97,12 +95,29 @@ const formatDate = (dateStr?: string) => {
   return dateStr;
 };
 
-// NOTE: voucher ValidFrom/ValidTo parsing and eligibility used to be
-// re-implemented locally in this file (duplicated business logic — see
-// the canonical getVoucherDateISO / getVoucherValidToISO / isVoucherExactPeriodEligible
-// in csvParser.ts). These now delegate to the shared helpers so date-range
-// eligibility can never drift out of sync between components.
-const getVoucherValidFromISO = (v: ParsedVoucherData | undefined | null): string => getVoucherDateISO(v) || "";
+const getVoucherValidFromISO = (v: ParsedVoucherData | undefined | null): string => {
+  if (!v) return "";
+  const raw = v.validFrom || v.valid_from || v.ValidFrom || v.startDate || v.start_date || v.date || v.dateRequired || v.uploadDate;
+  if (raw) {
+    const iso = parseDateToISO(String(raw));
+    if (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso;
+  }
+  return getVoucherDateISO(v) || "";
+};
+
+const getVoucherValidToISO = (v: ParsedVoucherData | undefined | null): string => {
+  if (!v) return "";
+  const raw = v.validTo || v.valid_to || v.ValidTo || v.endDate || v.end_date || v.expires || v.expiryDate;
+  if (raw) {
+    const iso = parseDateToISO(String(raw));
+    if (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso;
+  }
+  const fromIso = getVoucherValidFromISO(v);
+  if (fromIso) {
+    return addDays(fromIso, 6);
+  }
+  return "";
+};
 
 export type SortKey = 
   | "id" 
@@ -246,16 +261,91 @@ export function DispatchCentre({
     if (!currentPermitValidFromIso) return false;
 
     const vFrom = getVoucherValidFromISO(v);
+    const vTo = getVoucherValidToISO(v);
 
     if (vFrom) {
-      // Delegate to the single canonical ValidFrom..ValidTo eligibility rule
-      // (inclusive range) rather than re-deriving it here.
-      return isVoucherExactPeriodEligible(v, currentPermitValidFromIso);
+      if (vFrom !== currentPermitValidFromIso) return false;
+      if (vTo && currentPermitValidToIso) {
+        if (vTo === currentPermitValidToIso) return true;
+        const expectedPlus6 = addDays(currentPermitValidFromIso, 6);
+        const expectedPlus7 = addDays(currentPermitValidFromIso, 7);
+        if (vTo === expectedPlus6 || vTo === expectedPlus7) return true;
+        if (vTo >= currentPermitValidFromIso) return true;
+        return false;
+      }
+      return true;
     }
 
     // If voucher is undated, allow it if no dated vouchers exist for this date
     return !hasDatedVouchersForDate;
-  }, [currentPermitValidFromIso, hasDatedVouchersForDate]);
+  }, [currentPermitValidFromIso, currentPermitValidToIso, hasDatedVouchersForDate]);
+
+  // Live global assigned codes set to track real-time voucher allocation across permits
+  const liveAssignedCodesSet = useMemo(() => {
+    const set = new Set<string>();
+    const add = (code?: any) => {
+      if (!code) return;
+      const clean = cleanVoucherCodeValue(String(code)).toUpperCase();
+      if (
+        clean &&
+        clean !== "-" &&
+        clean !== "CANCELLED" &&
+        clean !== "PENDING" &&
+        clean !== "N/A" &&
+        clean !== "NA" &&
+        clean !== "NONE" &&
+        clean !== "NULL" &&
+        clean !== "UNDEFINED" &&
+        clean !== "BLOCKED"
+      ) {
+        set.add(clean);
+      }
+    };
+
+    const currentId = String(formData?.id || "").trim();
+    const currentFormId = String(formData?.formId || "").trim();
+
+    (database || []).forEach(rec => {
+      const isCancelled = rec.isCancelled === true || String(rec.status || "").toUpperCase() === "CANCELLED" || rec.voucherCode === "CANCELLED" || isVrmSilentBlockedSync(rec.vrm);
+      if (isCancelled) return;
+
+      const pId = String(rec.id || "").trim();
+      const pFormId = String(rec.formId || "").trim();
+      const isCurrentRec = Boolean(
+        (currentId && (pId === currentId || pFormId === currentId)) ||
+        (currentFormId && (pFormId === currentFormId || pId === currentFormId))
+      );
+
+      if (isCurrentRec && formData) {
+        add(formData.voucherCode || formData.voucherCodesText || formData.prePaidCode);
+      } else {
+        add(rec.voucherCode);
+        add(rec.prePaidCode);
+        add(rec.qrCode);
+        add(rec.voucherCodesText);
+      }
+    });
+
+    if (customVouchers) {
+      Object.values(customVouchers).forEach(val => add(val));
+    }
+
+    if (formData && !formData.isCancelled && String(formData.status || "").toUpperCase() !== "CANCELLED") {
+      add(formData.voucherCode || formData.voucherCodesText || formData.prePaidCode);
+    }
+
+    return set;
+  }, [
+    database,
+    customVouchers,
+    formData?.voucherCode,
+    formData?.voucherCodesText,
+    formData?.prePaidCode,
+    formData?.status,
+    formData?.isCancelled,
+    formData?.id,
+    formData?.formId
+  ]);
 
   // Unused vouchers computation for the active date with exact validFrom/validTo matching
   const unusedVouchersForDay = useMemo<ParsedVoucherData[]>(() => {
@@ -267,30 +357,24 @@ export function DispatchCentre({
       currentPermitValidFromIso,
       formData?.vrm,
       formData,
-      matchingPermits
-    );
-
-    const dateFiltered = vouchers.filter(isVoucherMatchingPeriod);
-
-    const spreadsheetAssignedCodes = getSpreadsheetMatchingAssignedCodes(
       matchingPermits,
-      database,
-      currentPermitValidFromIso,
-      vouchersDatabase
+      customVouchers
     );
-    const finalFiltered = dateFiltered.filter(v => {
-      const codeUpper = (v.code || "").trim().toUpperCase();
-      return !spreadsheetAssignedCodes.has(codeUpper);
-    });
 
-    return finalFiltered;
+    return vouchers.filter(isVoucherMatchingPeriod);
   }, [
     vouchersDatabase,
     database,
+    customVouchers,
     currentPermitValidFromIso,
     isVoucherMatchingPeriod,
     formData?.vrm,
-    formData,
+    formData?.voucherCodesText,
+    formData?.voucherCode,
+    formData?.prePaidCode,
+    formData?.status,
+    formData?.id,
+    formData?.formId,
     matchingPermits
   ]);
 
@@ -314,49 +398,20 @@ export function DispatchCentre({
       return;
     }
 
-    const codeFields = [
-      "voucherCode",
-      "prePaidCode",
-      "qrCode",
-      "voucherCodesText",
-      "serialNumber",
-      "voucher",
-      "code",
-      "qrOverride",
-      "Voucher Code",
-      "VOUCHER CODE",
-      "Pre-Paid Code",
-      "Pre Paid Code",
-      "QR Code",
-      "QR CODE"
-    ];
-
-    const isCodeAssigned = (record: any) => {
-      if (!record) return false;
-
-      return codeFields.some((field) => {
-        const raw = record[field];
-        if (raw === undefined || raw === null) return false;
-
-        return String(raw)
-          .split(/[\n,;\s]+/)
-          .map((part) => cleanVoucherCodeValue(part).toUpperCase())
-          .some((code) => code && code !== "-" && isVoucherCodeMatch(code, selectedCode));
-      });
-    };
-
-    const alreadyAssigned =
-      (database || []).some(isCodeAssigned) || (formData && isCodeAssigned(formData));
-
-    if (alreadyAssigned) {
-      console.warn(
-        `🚫 Voucher ${selectedCode} is already assigned and cannot be reused.`
-      );
-      return;
-    }
+    const formId = String(formData?.id || formData?.formId || "").trim();
+    const activeRec = formId
+      ? (database || []).find(r => String(r.id || "").trim() === formId || String(r.formId || "").trim() === formId)
+      : (formData?.vrm 
+          ? (database || []).find(r => r.vrm && r.vrm.toUpperCase().replace(/\s+/g, "") === formData.vrm.toUpperCase().replace(/\s+/g, ""))
+          : matchingPermits[0]);
 
     onChangeFormData?.({
+      id: activeRec?.id || formData?.id,
+      formId: activeRec?.formId || formData?.formId,
+      vrm: activeRec?.vrm || formData?.vrm,
       voucherCodesText: selectedCode,
+      voucherCode: selectedCode,
+      prePaidCode: selectedCode,
       status: "Pending",
       emailType: "RESEND_CONCESSION",
       isResend: true,
@@ -455,10 +510,7 @@ export function DispatchCentre({
   };
 
   const getIsCancelled = (record: CsvPermitRecord, idx?: number) => {
-    // NOTE: BLOCKED and CANCELLED are separate states. A blocklisted VRM must
-    // never be reported as CANCELLED here — callers that need "is this record
-    // blocked OR cancelled for display purposes" check isVrmSilentBlockedSync
-    // separately (see getStatusStr below).
+    if (isVrmSilentBlockedSync(record.vrm)) return true;
     if (record.isCancelled === true) return true;
     if (typeof record.status === "string" && record.status.trim().toLowerCase().includes("cancel")) return true;
     if (
@@ -1391,7 +1443,7 @@ export function DispatchCentre({
 
                 const hospitalDisplay = getHospital(record);
 
-                // ⭐ FIXED CODES COLUMN - Per-row voucher count with RED when ≤ 5 remaining
+                // ⭐ LIVE CODES COLUMN - Per-row voucher count with RED when ≤ 5 remaining
                 const permitFrom = record.validFrom || record.dateRequired || "";
                 const permitFromISO = parseDateToISO(permitFrom);
                 
@@ -1403,18 +1455,9 @@ export function DispatchCentre({
                 
                 const totalForRow = matchingVouchersForRow.length;
                 
-                // Check which vouchers are already used/assigned
-                const usedCodesSet = new Set<string>();
-                database.forEach(rec => {
-                  const code = rec.voucherCode || rec.prePaidCode || "";
-                  if (code && code !== "-" && code !== "CANCELLED") {
-                    usedCodesSet.add(code.toUpperCase());
-                  }
-                });
-                
                 const remainingForRow = matchingVouchersForRow.filter(v => {
-                  const code = (v.code || "").toUpperCase();
-                  return !usedCodesSet.has(code);
+                  const code = cleanVoucherCodeValue(v.code).toUpperCase();
+                  return !liveAssignedCodesSet.has(code);
                 }).length;
                 
                 const percentRemainingRow = totalForRow > 0

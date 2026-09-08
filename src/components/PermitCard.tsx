@@ -20,8 +20,7 @@ import {
   resolvePermitDate,
   isRecordCancelled,
   getRequestedPermitDateISO,
-  getVoucherDateISO,
-  isVoucherExactPeriodEligible
+  getVoucherDateISO
 } from "../utils/csvParser";
 import { getRecordKeys, checkIsRecordDispatched, getRecordPrimaryKey } from "../utils/dispatchUtils";
 import { 
@@ -228,30 +227,22 @@ function PermitCardInner({
       matchingPermits
     );
 
-    // Use the same inclusive ValidFrom..ValidTo window as getUnusedVouchersForDate
-    // (isVoucherExactPeriodEligible) rather than an exact-start-date match, which
-    // would silently discard vouchers still valid for targetIso later in their week.
-    const dateFiltered = vouchers.filter(v => {
+    return vouchers.filter(v => {
       const vIso = getVoucherDateISO(v);
-      return !vIso || isVoucherExactPeriodEligible(v, targetIso);
-    });
-
-    const spreadsheetAssignedCodes = getSpreadsheetMatchingAssignedCodes(
-      matchingPermits,
-      database,
-      targetIso,
-      vouchersDatabase
-    );
-
-    return dateFiltered.filter(v => {
-      const codeUpper = (v.code || "").trim().toUpperCase();
-      return !spreadsheetAssignedCodes.has(codeUpper);
+      return !vIso || vIso === targetIso;
     });
   }, [
     vouchersDatabase, 
     database, 
     matchingPermits,
     targetIso,
+    data.vrm,
+    data.voucherCodesText,
+    data.voucherCode,
+    data.prePaidCode,
+    data.id,
+    data.formId,
+    data.status,
     data
   ]);
 
@@ -2565,20 +2556,20 @@ function PermitCardInner({
                     handleSendClick();
                   }
                 }}
-                disabled={isSilentBlocked || (!isCancelled && !qrUrl)}
+                disabled={!isCancelled && !qrUrl}
                 className={`flex-1 h-9 flex items-center justify-center gap-1.5 rounded-xl transition-all duration-250 ease-in-out font-bold text-xs shadow-xs hover:shadow-md hover:scale-[1.01] active:scale-[0.98] ${
-                  isSilentBlocked || (!isCancelled && !qrUrl)
+                  !isCancelled && !qrUrl
                     ? "bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 border border-slate-200 dark:border-slate-700 cursor-not-allowed hover:scale-100 hover:shadow-xs active:scale-100"
                     : isCancelled
                       ? "bg-rose-600 hover:bg-rose-700 text-white cursor-pointer"
                       : "bg-[#005EB8] hover:bg-blue-700 text-white cursor-pointer"
                 }`}
-                title={isSilentBlocked ? "This vehicle is on the blocklist — dispatch is disabled." : (!isCancelled && !qrUrl ? "A valid QR code is required before sending." : "")}
+                title={!isCancelled && !qrUrl ? "A valid QR code is required before sending." : ""}
               >
                 {isCancelled ? (
                   <ShieldAlert className="w-3.5 h-3.5 shrink-0 text-white/90" />
                 ) : (
-                  <Mail className={`w-3.5 h-3.5 shrink-0 ${isSilentBlocked || (!isCancelled && !qrUrl) ? "text-slate-400 dark:text-slate-500" : "text-white/90"}`} />
+                  <Mail className={`w-3.5 h-3.5 shrink-0 ${!isCancelled && !qrUrl ? "text-slate-400 dark:text-slate-500" : "text-white/90"}`} />
                 )}
                 <span>
                   {isCancelled

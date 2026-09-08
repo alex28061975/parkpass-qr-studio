@@ -199,17 +199,12 @@ export function enrichRecordsWithVouchers(
     const cleanVrm = record.vrm ? record.vrm.toUpperCase().replace(/[^A-Z0-9]/g, "") : "";
     const reqDateD = getRequestedPermitDateISO(record, fallbackDateStr);
 
-    // Any VRM on the actual security blocklist is always blocked.
-    // NOTE: this must use the "BLOCKED" marker (matching the convention used
-    // elsewhere, e.g. getSpreadsheetMatchingAllocationsMap in csvParser.ts),
-    // not "CANCELLED" — writing "CANCELLED" here previously caused blocked
-    // records to be misidentified as cancelled by every isCancelled/
-    // isRecordCancelled check that inspects voucherCode/prePaidCode.
+    // Any VRM on the actual security blocklist is always blocked
     if (isVrmSilentBlockedSync(record.vrm)) {
       enrichedByIndex.set(index, {
         ...record,
-        voucherCode: "BLOCKED",
-        prePaidCode: "BLOCKED",
+        voucherCode: "CANCELLED",
+        prePaidCode: "CANCELLED",
         hasOriginalVoucher: false
       });
       return;
@@ -1333,6 +1328,12 @@ export default function App() {
         next.phone = formatPhoneNumber(updates.phone);
       }
 
+      if (updates.voucherCodesText !== undefined) {
+        next.voucherCodesText = updates.voucherCodesText;
+        next.voucherCode = updates.voucherCodesText;
+        next.prePaidCode = updates.voucherCodesText;
+      }
+
       if (updates.vrm !== undefined && updates.name === undefined) {
         const cleanVrm = updates.vrm.toUpperCase().replace(/\s+/g, "");
         if (cleanVrm) {
@@ -1390,7 +1391,8 @@ export default function App() {
         safeLocalStorage.setItem("concessions_custom_vouchers_last_modified", String(nowTimestamp));
 
         setDatabase((prevDb) => {
-          return prevDb.map((rec) => {
+          let found = false;
+          const nextDb = prevDb.map((rec) => {
             const recId = String(rec.id ?? "").trim();
             const recFormId = String(rec.formId ?? "").trim();
 
@@ -1400,7 +1402,13 @@ export default function App() {
             );
 
             if (isTarget) {
-              return { ...rec, voucherCode: updates.voucherCodesText || "" };
+              found = true;
+              return { 
+                ...rec, 
+                voucherCode: updates.voucherCodesText || "",
+                prePaidCode: updates.voucherCodesText || "",
+                voucherCodesText: updates.voucherCodesText || ""
+              };
             }
 
             // Fallback only if no target ID or formId is available
@@ -1408,12 +1416,44 @@ export default function App() {
               const recVrmClean = rec.vrm ? rec.vrm.toUpperCase().replace(/\s+/g, "") : "";
               const recDateISO = parseDateToISO(rec.dateRequired || "") || "";
               if (recVrmClean === cleanVrm && (!recDateISO || !activeDateISO || recDateISO === activeDateISO)) {
-                return { ...rec, voucherCode: updates.voucherCodesText || "" };
+                found = true;
+                return { 
+                  ...rec, 
+                  voucherCode: updates.voucherCodesText || "",
+                  prePaidCode: updates.voucherCodesText || "",
+                  voucherCodesText: updates.voucherCodesText || ""
+                };
               }
             }
 
             return rec;
           });
+
+          if (!found && (targetFormId || targetId || cleanVrm)) {
+            const newRecord: CsvPermitRecord = {
+              id: targetId || `permit_${Date.now()}`,
+              formId: targetFormId || targetId || `form_${Date.now()}`,
+              vrm: cleanVrm,
+              driverName: updates.name || formData.name || "",
+              hospital: updates.site || formData.site || "Whipps Cross Hospital",
+              ward: updates.ward || formData.ward || "",
+              dateRequired: activeDateISO,
+              validFrom: activeDateISO,
+              validTo: addDays(activeDateISO, 6),
+              phone: updates.phone || formData.phone || "",
+              email: updates.email || formData.email || "",
+              voucherCode: updates.voucherCodesText || "",
+              prePaidCode: updates.voucherCodesText || "",
+              voucherCodesText: updates.voucherCodesText || "",
+              status: "PENDING"
+            };
+            nextDb.unshift(newRecord);
+          }
+
+          databaseRef.current = nextDb;
+          safeLocalStorage.setItem("concessions_permit_db", JSON.stringify(nextDb));
+          safeLocalStorage.setItem("concessions_permit_db_last_modified", String(Date.now()));
+          return nextDb;
         });
 
         // When a voucher code is changed or selected from Active Date Codes, reset this permit's STATUS to Pending
@@ -1576,6 +1616,7 @@ export default function App() {
   const handleSaveRecord = async (updatedRecord: CsvPermitRecord) => {
     const recId = updatedRecord.id !== undefined && updatedRecord.id !== null ? String(updatedRecord.id).trim() : "";
     const recFormId = updatedRecord.formId !== undefined && updatedRecord.formId !== null ? String(updatedRecord.formId).trim() : "";
+    const codeVal = updatedRecord.voucherCode !== undefined ? (updatedRecord.voucherCode || "") : undefined;
 
     let recordFound = false;
     const updatedDb = (database || []).map(item => {
@@ -1589,13 +1630,28 @@ export default function App() {
 
       if (isMatch) {
         recordFound = true;
-        return { ...item, ...updatedRecord };
+        return { 
+          ...item, 
+          ...updatedRecord,
+          ...(codeVal !== undefined ? {
+            voucherCode: codeVal,
+            prePaidCode: codeVal,
+            voucherCodesText: codeVal
+          } : {})
+        };
       }
       return item;
     });
 
     if (!recordFound) {
-      updatedDb.push(updatedRecord);
+      updatedDb.push({
+        ...updatedRecord,
+        ...(codeVal !== undefined ? {
+          voucherCode: codeVal,
+          prePaidCode: codeVal,
+          voucherCodesText: codeVal
+        } : {})
+      });
     }
 
     const sorted = sortRecordsByFormIdDesc(updatedDb);
