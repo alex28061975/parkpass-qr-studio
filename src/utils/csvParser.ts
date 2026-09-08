@@ -2358,8 +2358,7 @@ export function getUnusedVouchersForDate(
   targetISO: string,
   currentVrm: string = "",
   currentRecord: any = null,
-  spreadsheetMatches?: any[],
-  customVouchersMap?: Record<string, string>
+  spreadsheetMatches?: any[]
 ): ParsedVoucherData[] {
   if (!vouchersDatabase || vouchersDatabase.length === 0 || !targetISO) {
     return [];
@@ -2424,8 +2423,7 @@ export function getUnusedVouchersForDate(
         clean === "NA" ||
         clean === "NONE" ||
         clean === "NULL" ||
-        clean === "UNDEFINED" ||
-        clean === "BLOCKED"
+        clean === "UNDEFINED"
       ) {
         continue;
       }
@@ -2435,14 +2433,6 @@ export function getUnusedVouchersForDate(
 
   const collectAssignedCodesFromRecord = (permit: any) => {
     if (!permit) return;
-    if (
-      permit.isCancelled === true ||
-      String(permit.status || "").toUpperCase() === "CANCELLED" ||
-      permit.voucherCode === "CANCELLED" ||
-      isVrmSilentBlockedSync(permit.vrm)
-    ) {
-      return;
-    }
 
     consumeAssignedCode(permit.voucherCode);
     consumeAssignedCode(permit.prePaidCode);
@@ -2460,47 +2450,33 @@ export function getUnusedVouchersForDate(
     consumeAssignedCode(permit["QR CODE"]);
   };
 
-  const currentId = String(currentRecord?.id || "").trim();
-  const currentFormId = String(currentRecord?.formId || "").trim();
-
-  // Process database records, skipping the currentRecord's database row if present (so replaced code is freed)
-  (database || []).forEach((permit) => {
-    const pId = String(permit?.id || "").trim();
-    const pFormId = String(permit?.formId || "").trim();
-    const isCurrentRec = Boolean(
-      (currentId && (pId === currentId || pFormId === currentId)) ||
-      (currentFormId && (pFormId === currentFormId || pId === currentFormId))
-    );
-    if (!isCurrentRec) {
-      collectAssignedCodesFromRecord(permit);
-    }
-  });
+  (database || []).forEach(collectAssignedCodesFromRecord);
 
   if (Array.isArray(spreadsheetMatches)) {
-    spreadsheetMatches.forEach((permit) => {
-      const pId = String(permit?.id || "").trim();
-      const pFormId = String(permit?.formId || "").trim();
-      const isCurrentRec = Boolean(
-        (currentId && (pId === currentId || pFormId === currentId)) ||
-        (currentFormId && (pFormId === currentFormId || pId === currentFormId))
-      );
-      if (!isCurrentRec) {
-        collectAssignedCodesFromRecord(permit);
-      }
-    });
+    spreadsheetMatches.forEach(collectAssignedCodesFromRecord);
   }
 
-  // Collect from currentRecord (the active permit being viewed or edited)
   if (currentRecord) {
     collectAssignedCodesFromRecord(currentRecord);
   }
 
-  // Collect any explicitly saved custom voucher overrides
-  if (customVouchersMap) {
-    Object.values(customVouchersMap).forEach((val) => {
-      consumeAssignedCode(val);
-    });
-  }
+  const spreadsheetAssigned = getSpreadsheetMatchingAssignedCodes(
+    spreadsheetMatches || [],
+    database,
+    targetDateISO,
+    vouchersDatabase
+  );
+  spreadsheetAssigned.forEach((code) => {
+    const clean = cleanVoucherCodeValue(code).toUpperCase();
+    if (
+      clean &&
+      clean !== "-" &&
+      clean !== "CANCELLED" &&
+      clean !== "PENDING"
+    ) {
+      allAssignedCodesSet.add(clean);
+    }
+  });
 
   const activeUnassignedCodes: ParsedVoucherData[] = [];
   const seenCodes = new Set<string>();

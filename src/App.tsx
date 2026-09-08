@@ -1328,12 +1328,6 @@ export default function App() {
         next.phone = formatPhoneNumber(updates.phone);
       }
 
-      if (updates.voucherCodesText !== undefined) {
-        next.voucherCodesText = updates.voucherCodesText;
-        next.voucherCode = updates.voucherCodesText;
-        next.prePaidCode = updates.voucherCodesText;
-      }
-
       if (updates.vrm !== undefined && updates.name === undefined) {
         const cleanVrm = updates.vrm.toUpperCase().replace(/\s+/g, "");
         if (cleanVrm) {
@@ -1391,8 +1385,7 @@ export default function App() {
         safeLocalStorage.setItem("concessions_custom_vouchers_last_modified", String(nowTimestamp));
 
         setDatabase((prevDb) => {
-          let found = false;
-          const nextDb = prevDb.map((rec) => {
+          return prevDb.map((rec) => {
             const recId = String(rec.id ?? "").trim();
             const recFormId = String(rec.formId ?? "").trim();
 
@@ -1402,13 +1395,7 @@ export default function App() {
             );
 
             if (isTarget) {
-              found = true;
-              return { 
-                ...rec, 
-                voucherCode: updates.voucherCodesText || "",
-                prePaidCode: updates.voucherCodesText || "",
-                voucherCodesText: updates.voucherCodesText || ""
-              };
+              return { ...rec, voucherCode: updates.voucherCodesText || "" };
             }
 
             // Fallback only if no target ID or formId is available
@@ -1416,44 +1403,12 @@ export default function App() {
               const recVrmClean = rec.vrm ? rec.vrm.toUpperCase().replace(/\s+/g, "") : "";
               const recDateISO = parseDateToISO(rec.dateRequired || "") || "";
               if (recVrmClean === cleanVrm && (!recDateISO || !activeDateISO || recDateISO === activeDateISO)) {
-                found = true;
-                return { 
-                  ...rec, 
-                  voucherCode: updates.voucherCodesText || "",
-                  prePaidCode: updates.voucherCodesText || "",
-                  voucherCodesText: updates.voucherCodesText || ""
-                };
+                return { ...rec, voucherCode: updates.voucherCodesText || "" };
               }
             }
 
             return rec;
           });
-
-          if (!found && (targetFormId || targetId || cleanVrm)) {
-            const newRecord: CsvPermitRecord = {
-              id: targetId || `permit_${Date.now()}`,
-              formId: targetFormId || targetId || `form_${Date.now()}`,
-              vrm: cleanVrm,
-              driverName: updates.name || formData.name || "",
-              hospital: updates.site || formData.site || "Whipps Cross Hospital",
-              ward: updates.ward || formData.ward || "",
-              dateRequired: activeDateISO,
-              validFrom: activeDateISO,
-              validTo: addDays(activeDateISO, 6),
-              phone: updates.phone || formData.phone || "",
-              email: updates.email || formData.email || "",
-              voucherCode: updates.voucherCodesText || "",
-              prePaidCode: updates.voucherCodesText || "",
-              voucherCodesText: updates.voucherCodesText || "",
-              status: "PENDING"
-            };
-            nextDb.unshift(newRecord);
-          }
-
-          databaseRef.current = nextDb;
-          safeLocalStorage.setItem("concessions_permit_db", JSON.stringify(nextDb));
-          safeLocalStorage.setItem("concessions_permit_db_last_modified", String(Date.now()));
-          return nextDb;
         });
 
         // When a voucher code is changed or selected from Active Date Codes, reset this permit's STATUS to Pending
@@ -1616,7 +1571,6 @@ export default function App() {
   const handleSaveRecord = async (updatedRecord: CsvPermitRecord) => {
     const recId = updatedRecord.id !== undefined && updatedRecord.id !== null ? String(updatedRecord.id).trim() : "";
     const recFormId = updatedRecord.formId !== undefined && updatedRecord.formId !== null ? String(updatedRecord.formId).trim() : "";
-    const codeVal = updatedRecord.voucherCode !== undefined ? (updatedRecord.voucherCode || "") : undefined;
 
     let recordFound = false;
     const updatedDb = (database || []).map(item => {
@@ -1630,28 +1584,13 @@ export default function App() {
 
       if (isMatch) {
         recordFound = true;
-        return { 
-          ...item, 
-          ...updatedRecord,
-          ...(codeVal !== undefined ? {
-            voucherCode: codeVal,
-            prePaidCode: codeVal,
-            voucherCodesText: codeVal
-          } : {})
-        };
+        return { ...item, ...updatedRecord };
       }
       return item;
     });
 
     if (!recordFound) {
-      updatedDb.push({
-        ...updatedRecord,
-        ...(codeVal !== undefined ? {
-          voucherCode: codeVal,
-          prePaidCode: codeVal,
-          voucherCodesText: codeVal
-        } : {})
-      });
+      updatedDb.push(updatedRecord);
     }
 
     const sorted = sortRecordsByFormIdDesc(updatedDb);
@@ -1722,107 +1661,61 @@ export default function App() {
     setEditingRecord(null);
   };
 
-  // ⭐ FIXED: handleDatabaseChange - Proper merge logic for Excel uploads
   const handleDatabaseChange = async (incomingDb: CsvPermitRecord[]) => {
     safeLocalStorage.removeItem("concessions_unsent_keys");
     
-    // ⭐ If no incoming data, show warning and return
-    if (!incomingDb || incomingDb.length === 0) {
-      showToast("⚠️ No records found in the uploaded file.", "warning");
-      return;
-    }
-
-    // ⭐ Build lookup maps for existing database records by ID and Form ID
+    // Build lookup maps for existing database records:
+    const recordMap = new Map<string, CsvPermitRecord>();
     const formIdMap = new Map<string, CsvPermitRecord>();
     const idMap = new Map<string, CsvPermitRecord>();
 
     (database || []).forEach(item => {
       const idKey = item.id !== undefined && item.id !== null ? String(item.id).trim() : "";
       const formIdKey = item.formId !== undefined && item.formId !== null ? String(item.formId).trim() : "";
+      const primaryKey = formIdKey || idKey;
+      if (primaryKey) {
+        recordMap.set(primaryKey, { ...item });
+      }
       if (idKey) idMap.set(idKey, item);
       if (formIdKey) formIdMap.set(formIdKey, item);
     });
 
-    // ⭐ MERGE LOGIC: Combine existing records with incoming records
-    const mergedMap = new Map<string, CsvPermitRecord>();
-
-    // First, add all existing records to the map (preserve existing data)
-    (database || []).forEach(item => {
-      const idKey = item.id !== undefined && item.id !== null ? String(item.id).trim() : "";
-      const formIdKey = item.formId !== undefined && item.formId !== null ? String(item.formId).trim() : "";
-      const primaryKey = formIdKey || idKey || `existing_${Date.now()}_${Math.random()}`;
-      mergedMap.set(primaryKey, { ...item });
-    });
-
-    // Then, add/update with incoming records from the uploaded file
+    // Merge logic:
+    // For each record in the new file, check if it already exists in the database.
+    // If it exists (by ID or Form ID), KEEP the existing (edited) version.
+    // If it doesn't exist, ADD the new record.
+    // Existing records not in the new file must remain unchanged.
     (incomingDb || []).forEach(item => {
       const idKey = item.id !== undefined && item.id !== null ? String(item.id).trim() : "";
       const formIdKey = item.formId !== undefined && item.formId !== null ? String(item.formId).trim() : "";
-      
-      // Check if this record already exists in the database
+
       const existing = (formIdKey && formIdMap.get(formIdKey)) || (idKey && idMap.get(idKey));
-      
-      // Determine primary key
-      const primaryKey = formIdKey || idKey || `row_${Date.now()}_${Math.random()}`;
-      
       if (existing) {
-        // ⭐ If the record exists, merge the new data with the existing
-        // Preserve the existing record's data if it was manually edited
-        const mergedRecord = { 
-          ...existing,
-          // Override with incoming data for fields that should be updated
-          vrm: item.vrm || existing.vrm,
-          driverName: item.driverName || existing.driverName,
-          hospital: item.hospital || existing.hospital,
-          ward: item.ward || existing.ward,
-          dateRequired: item.dateRequired || existing.dateRequired,
-          validFrom: item.validFrom || existing.validFrom,
-          validTo: item.validTo || existing.validTo,
-          phone: item.phone || existing.phone,
-          email: item.email || existing.email,
-          // Preserve any manual voucher codes that were assigned
-          voucherCode: existing.voucherCode !== "-" ? existing.voucherCode : (item.voucherCode || "-"),
-          prePaidCode: existing.prePaidCode !== "-" ? existing.prePaidCode : (item.prePaidCode || "-"),
-          voucherCodesText: existing.voucherCodesText !== "-" ? existing.voucherCodesText : (item.voucherCodesText || "-"),
-          // Preserve status if it was manually set
-          status: existing.status || item.status || "PENDING"
-        };
-        mergedMap.set(primaryKey, mergedRecord);
+        // KEEP the existing (edited) version! Do not overwrite.
       } else {
-        // ⭐ Add new record from the uploaded file
-        mergedMap.set(primaryKey, { ...item });
+        // If it doesn't exist, ADD the new record.
+        const primaryKey = formIdKey || idKey || `row_${Date.now()}_${Math.random()}`;
+        recordMap.set(primaryKey, { ...item });
+        if (idKey) idMap.set(idKey, item);
+        if (formIdKey) formIdMap.set(formIdKey, item);
       }
     });
 
-    // Convert map to array and sort
-    const combinedDb = Array.from(mergedMap.values());
+    const combinedDb = Array.from(recordMap.values());
     const sorted = sortRecordsByFormIdDesc(combinedDb);
 
-    // ⭐ Update state
     setDatabase(sorted);
-    databaseRef.current = sorted;
-    setTotalRecordsCount(sorted.length);
+    setTotalRecordsCount(prev => Math.max(prev, sorted.length));
 
-    // ⭐ Persist to localStorage
     safeLocalStorage.setItem("concessions_permit_db", JSON.stringify(sorted));
     const nowTimestamp = Date.now();
     safeLocalStorage.setItem("concessions_permit_db_last_modified", String(nowTimestamp));
 
-    // ⭐ Sync to Supabase if in cloud mode
     if (storageModeRef.current === "cloud" && isSupabaseConfigured()) {
-      try {
-        await syncPermitsToSupabase(sorted, false);
-        await refreshDatabase(undefined, true);
-        showToast(`✅ Successfully processed ${sorted.length} records from the uploaded file.`, "success");
-      } catch (err) {
-        console.error("Supabase sync error:", err);
-        showToast("⚠️ Records saved locally but cloud sync failed.", "warning");
-      }
-    } else {
-      showToast(`✅ Successfully processed ${sorted.length} records from the uploaded file.`, "success");
+      await syncPermitsToSupabase(sorted, false);
+      await refreshDatabase(undefined, true);
     }
 
-    // ⭐ Auto-select the first record if available
     if (incomingDb && incomingDb.length > 0) {
       const firstRecord = incomingDb[0];
       const fromISO = parseDateToISO(firstRecord.dateRequired) || getTodayISO();
@@ -1830,15 +1723,15 @@ export default function App() {
       
       setFormData((prev) => ({
         ...prev,
-        site: firstRecord.hospital || prev.site,
-        name: firstRecord.driverName ? toTitleCase(firstRecord.driverName) : prev.name,
-        vrm: firstRecord.vrm ? firstRecord.vrm.toUpperCase() : prev.vrm,
-        ward: firstRecord.ward ? toTitleCase(firstRecord.ward) : prev.ward,
-        validFrom: fromISO || prev.validFrom,
-        validTo: toISO || prev.validTo,
+        site: firstRecord.hospital,
+        name: firstRecord.driverName ? toTitleCase(firstRecord.driverName) : "",
+        vrm: firstRecord.vrm ? firstRecord.vrm.toUpperCase() : "",
+        ward: firstRecord.ward ? toTitleCase(firstRecord.ward) : "",
+        validFrom: fromISO,
+        validTo: toISO,
         phone: formatPhoneNumber(firstRecord.phone || prev.phone || ""),
         email: (firstRecord.email || prev.email || "").toLowerCase(),
-        voucherCodesText: firstRecord.voucherCode || prev.voucherCodesText || "-"
+        voucherCodesText: firstRecord.voucherCode || prev.voucherCodesText || ""
       }));
     }
   };

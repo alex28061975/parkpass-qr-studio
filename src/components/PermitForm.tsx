@@ -118,25 +118,40 @@ export function PermitForm({
     );
 
     // Filter to vouchers matching targetIso (or generic pool)
-    const finalFiltered = vouchers.filter(v => {
+    const dateFiltered = vouchers.filter(v => {
       const vIso = getVoucherDateISO(v);
       return !vIso || vIso === targetIso;
     });
 
+    const spreadsheetAssignedCodes = getSpreadsheetMatchingAssignedCodes(
+      matchingPermits,
+      database,
+      targetIso,
+      vouchersDatabase
+    );
+    const finalFiltered = dateFiltered.filter(v => {
+      const codeUpper = (v.code || "").trim().toUpperCase();
+      return !spreadsheetAssignedCodes.has(codeUpper);
+    });
+
+    // Total vouchers for the selected target date
+    const dailyVouchers = (vouchersDatabase || []).filter(v => {
+      const vIso = getVoucherDateISO(v);
+      return vIso === targetIso;
+    });
+    const totalForDate = dailyVouchers.length > 0 ? dailyVouchers.length : (vouchersDatabase?.length || 0);
+    const assignedCount = Math.max(0, totalForDate - finalFiltered.length);
+
+    console.log('🔍 Unused Codes Debug:', {
+      targetISO: targetIso,
+      totalVouchers: totalForDate,
+      assignedCount: assignedCount,
+      unusedCount: finalFiltered.length,
+      unusedCodes: finalFiltered.map(v => v.code)
+    });
+
     return finalFiltered;
-  }, [
-    vouchersDatabase,
-    database,
-    targetIso,
-    data.vrm,
-    data.voucherCodesText,
-    data.voucherCode,
-    data.prePaidCode,
-    data.id,
-    data.formId,
-    data.status,
-    matchingPermits
-  ]);
+  }, [vouchersDatabase, database, matchingPermits, targetIso, data]);
 
   // The form only ever holds ONE mutable, shared editable state (`data`), which can
   // carry stale fields (e.g. dateRequired) left over from a previously-loaded record.
@@ -513,12 +528,7 @@ export function PermitForm({
                 }
 
                 onChange({
-                  id: data.id,
-                  formId: data.formId,
-                  vrm: data.vrm,
                   voucherCodesText: selectedCode,
-                  voucherCode: selectedCode,
-                  prePaidCode: selectedCode,
                   status: "Pending",
                   emailType: "RESEND_CONCESSION",
                   isResend: true,

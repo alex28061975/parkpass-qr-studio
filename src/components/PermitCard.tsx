@@ -227,22 +227,27 @@ function PermitCardInner({
       matchingPermits
     );
 
-    return vouchers.filter(v => {
+    const dateFiltered = vouchers.filter(v => {
       const vIso = getVoucherDateISO(v);
       return !vIso || vIso === targetIso;
+    });
+
+    const spreadsheetAssignedCodes = getSpreadsheetMatchingAssignedCodes(
+      matchingPermits,
+      database,
+      targetIso,
+      vouchersDatabase
+    );
+
+    return dateFiltered.filter(v => {
+      const codeUpper = (v.code || "").trim().toUpperCase();
+      return !spreadsheetAssignedCodes.has(codeUpper);
     });
   }, [
     vouchersDatabase, 
     database, 
     matchingPermits,
     targetIso,
-    data.vrm,
-    data.voucherCodesText,
-    data.voucherCode,
-    data.prePaidCode,
-    data.id,
-    data.formId,
-    data.status,
     data
   ]);
 
