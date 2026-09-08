@@ -97,7 +97,10 @@ export function cleanVoucherCodeValue(val: any): string {
 }
 
 export function findValidFromColumn(headers: string[]): number {
-  const exactTargets = ["validfrom", "valid_from", "valid from", "startdate", "start_date", "start date"];
+  const exactTargets = [
+    "validfrom", "valid_from", "valid from", "startdate", "start_date", "start date",
+    "from", "start", "from date", "from_date", "valid from date", "effective date", "date required"
+  ];
   let idx = headers.findIndex(h => exactTargets.includes(h));
   if (idx !== -1) return idx;
 
@@ -112,7 +115,7 @@ export function findValidFromColumn(headers: string[]): number {
 
   idx = headers.findIndex(h => 
     (h === "date" || h.includes("date") || h.includes("day")) && 
-    !h.includes("to") && !h.includes("end") && !h.includes("expire") && !h.includes("expiry")
+    !h.includes("to") && !h.includes("end") && !h.includes("expire") && !h.includes("expiry") && !h.includes("until")
   );
   if (idx !== -1) return idx;
 
@@ -120,7 +123,12 @@ export function findValidFromColumn(headers: string[]): number {
 }
 
 export function findValidToColumn(headers: string[]): number {
-  const exactTargets = ["validto", "valid_to", "valid to", "enddate", "end_date", "end date", "expire", "expiry"];
+  const exactTargets = [
+    "validto", "valid_to", "valid to", "enddate", "end_date", "end date", 
+    "expire", "expiry", "to", "until", "expiration", "validuntil", 
+    "valid_until", "valid until", "expirydate", "expiry_date", "expiry date",
+    "valid to date", "end date", "end_date", "end"
+  ];
   let idx = headers.findIndex(h => exactTargets.includes(h));
   if (idx !== -1) return idx;
 
@@ -128,9 +136,16 @@ export function findValidToColumn(headers: string[]): number {
     h.includes("validto") || 
     h.includes("valid_to") || 
     h.includes("valid to") || 
+    h.includes("validuntil") ||
+    h.includes("valid_until") ||
+    h.includes("valid until") ||
     h.includes("end") || 
     h.includes("expire") || 
-    h.includes("expiry")
+    h.includes("expiry") ||
+    h.includes("until") ||
+    h === "to" ||
+    h.endsWith(" to") ||
+    h.startsWith("to ")
   );
   if (idx !== -1) return idx;
 
@@ -1614,6 +1629,10 @@ export interface ParsedVoucherData {
   [key: string]: any;
 }
 
+/**
+ * ⭐ FIXED: Clean and normalize voucher dates from various formats
+ * Now properly handles ISO 8601 with time: "2026-09-02T00:00:00"
+ */
 export function cleanVoucherDate(val: any): string {
   if (val === undefined || val === null) return "";
   
@@ -1627,8 +1646,18 @@ export function cleanVoucherDate(val: any): string {
   const s = String(val).trim();
   if (!s || s === "-" || s === "—" || s === "N/A" || s === "NA") return "";
 
+  // ⭐ KEY FIX: Handle ISO 8601 with time: "2026-09-02T00:00:00" → "2026-09-02"
+  if (s.includes('T')) {
+    const datePart = s.split('T')[0];
+    if (/^\d{4}-\d{2}-\d{2}$/.test(datePart)) {
+      return datePart;
+    }
+  }
+
+  // Already in YYYY-MM-DD format
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
 
+  // Handle Excel serial numbers
   if (!isNaN(Number(s)) && Number(s) > 30000 && Number(s) < 60000) {
     const d = new Date((Number(s) - 25569) * 86400 * 1000);
     if (!isNaN(d.getTime())) {
@@ -1639,11 +1668,13 @@ export function cleanVoucherDate(val: any): string {
     }
   }
 
+  // Handle date ranges like "02/09/2026 - 12/09/2026"
   const range = parseDateRange(s);
   if (range && range.startISO) {
     return range.startISO;
   }
 
+  // Handle DD/MM/YYYY or other formats
   const parsedIso = parseDateToISO(s);
   if (parsedIso && /^\d{4}-\d{2}-\d{2}$/.test(parsedIso)) {
     return parsedIso;
@@ -1706,12 +1737,12 @@ export function normalizeVouchersList(vouchers: any[]): ParsedVoucherData[] {
 
 export function parseVoucherFile(arrayBuffer: ArrayBuffer, fileName?: string): ParsedVoucherData[] {
   try {
-    const workbook = XLSX.read(arrayBuffer, { type: "array" });
+    const workbook = XLSX.read(arrayBuffer, { type: "array", raw: true });
     const firstSheetName = workbook.SheetNames[0];
     if (!firstSheetName) return [];
     
     const worksheet = workbook.Sheets[firstSheetName];
-    const rawRows = XLSX.utils.sheet_to_json<any[]>(worksheet, { header: 1 });
+    const rawRows = XLSX.utils.sheet_to_json<any[]>(worksheet, { header: 1, raw: true });
     if (rawRows.length === 0) return [];
 
     let fileDate = "";
@@ -1720,13 +1751,31 @@ export function parseVoucherFile(arrayBuffer: ArrayBuffer, fileName?: string): P
       if (matchRange && matchRange.startISO) {
         fileDate = matchRange.startISO;
       } else {
-        const single = parseDateToISO(fileName);
-        if (single && /^\d{4}-\d{2}-\d{2}$/.test(single)) {
-          fileDate = single;
+        const ymd = fileName.match(/(\d{4})[\/\-_\.](\d{1,2})[\/\-_\.](\d{1,2})/);
+        if (ymd) {
+          const y = ymd[1];
+          const m = String(parseInt(ymd[2], 10)).padStart(2, '0');
+          const d = String(parseInt(ymd[3], 10)).padStart(2, '0');
+          fileDate = `${y}-${m}-${d}`;
+        } else {
+          const dmy = fileName.match(/(\d{1,2})[\/\-_\.](\d{1,2})[\/\-_\.](\d{4})/);
+          if (dmy) {
+            const p1 = parseInt(dmy[1], 10);
+            const p2 = parseInt(dmy[2], 10);
+            const y = dmy[3];
+            const d = String(p1).padStart(2, '0');
+            const m = String(p2).padStart(2, '0');
+            fileDate = `${y}-${m}-${d}`;
+          } else {
+            const single = parseDateToISO(fileName);
+            if (single && /^\d{4}-\d{2}-\d{2}$/.test(single)) {
+              fileDate = single;
+            }
+          }
         }
       }
     }
-    const defaultDate = fileDate || getTodayISO();
+    const defaultDate = fileDate || "";
 
     const firstRow = rawRows[0] as unknown[];
     if (!firstRow || firstRow.length === 0) return [];
@@ -1851,7 +1900,9 @@ export function parseVoucherFile(arrayBuffer: ArrayBuffer, fileName?: string): P
         const range = parseDateRange(rawFromStr);
         if (range && range.startISO) {
           validFrom = range.startISO;
-          if (!validTo && range.endISO) validTo = range.endISO;
+          if (!validTo && range.endISO && range.endISO !== range.startISO) {
+            validTo = range.endISO;
+          }
         } else {
           validFrom = cleanVoucherDate(row[validFromIdx]);
         }
@@ -1866,7 +1917,9 @@ export function parseVoucherFile(arrayBuffer: ArrayBuffer, fileName?: string): P
             const range = parseDateRange(rawCellStr);
             if (range && range.startISO) {
               validFrom = range.startISO;
-              if (!validTo && range.endISO) validTo = range.endISO;
+              if (!validTo && range.endISO && range.endISO !== range.startISO) {
+                validTo = range.endISO;
+              }
               break;
             }
             const parsedDate = cleanVoucherDate(cellVal);
@@ -1882,16 +1935,20 @@ export function parseVoucherFile(arrayBuffer: ArrayBuffer, fileName?: string): P
         validTo = cleanVoucherDate(row[validToIdx]);
       }
       
+      const effectiveValidFrom = validFrom || defaultDate || undefined;
+      const effectiveValidTo = validTo || (effectiveValidFrom ? addDaysSafe(effectiveValidFrom, 6) : undefined);
+      const effectiveUploadDate = defaultDate || getTodayISO();
+
       result.push({
         vrm: parsedVrm,
         code: upperCode,
         status: status || "active",
         isUsed: isUsed !== undefined ? isUsed : false,
-        validFrom: validFrom || defaultDate,
-        validTo: validTo || undefined,
-        valid_from: validFrom || defaultDate,
-        valid_to: validTo || undefined,
-        uploadDate: defaultDate
+        validFrom: effectiveValidFrom,
+        validTo: effectiveValidTo,
+        valid_from: effectiveValidFrom,
+        valid_to: effectiveValidTo,
+        uploadDate: effectiveUploadDate
       });
     }
     
@@ -2131,7 +2188,6 @@ export function isRecordCancelledCanonical(record: any, todayDateOrReference?: s
     return true;
   }
 
-  // Priority for reference date (completionTime Column C -> startTime Column B -> createdAt):
   const rawRefDate = record.completionTime || record.startTime || record.createdAt || todayDateOrReference || record.todayDate || record.processingDate || record.submissionDate;
   const referenceDate = rawRefDate 
     ? (parseDateToISO(String(rawRefDate)) || "") 
@@ -2886,7 +2942,6 @@ export function checkIsBlockedDuplicate(
       isDateRequiredOutsideValidWindow(earlierDateRequired, earlierRefDate) ||
       checkIsBlockedDuplicate(earlier, database, earlierRefDate, currentVisited);
 
-    // Skip cancelled records - they shouldn't block new ones!
     if (earlierIsCancelled) {
       continue;
     }
@@ -2939,7 +2994,6 @@ export function isRecordCancelled(
     return true;
   }
 
-  // Priority for reference date (completionTime Column C -> startTime Column B -> createdAt):
   const rawRefDate = record.completionTime || record.startTime || record.createdAt || todayDateOrReference || record.todayDate || record.processingDate || record.submissionDate;
   const referenceDate = rawRefDate 
     ? (parseDateToISO(String(rawRefDate)) || "") 

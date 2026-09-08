@@ -1627,20 +1627,26 @@ export default function App() {
       const cleanKey = cleanVoucherCodeValue(v.code).toUpperCase();
       if (cleanKey && cleanKey !== "-") {
         const existing = mergedMap.get(cleanKey);
-        const effectiveValidFrom = v.validFrom || (existing ? existing.validFrom : todayISO);
+        const effectiveValidFrom = v.validFrom || (existing ? existing.validFrom : undefined);
+        const effectiveValidTo = v.validTo || (existing ? existing.validTo : undefined) || (effectiveValidFrom ? addDaysSafe(effectiveValidFrom, 6) : undefined);
         if (existing) {
           mergedMap.set(cleanKey, {
             ...existing,
             ...v,
             vrm: v.vrm || existing.vrm,
             validFrom: effectiveValidFrom,
-            validTo: v.validTo || existing.validTo,
+            validTo: effectiveValidTo,
+            valid_from: effectiveValidFrom,
+            valid_to: effectiveValidTo,
             uploadDate: v.uploadDate || existing.uploadDate || todayISO
           });
         } else {
           mergedMap.set(cleanKey, {
             ...v,
             validFrom: effectiveValidFrom,
+            validTo: effectiveValidTo,
+            valid_from: effectiveValidFrom,
+            valid_to: effectiveValidTo,
             uploadDate: v.uploadDate || todayISO
           });
         }

@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect } from "react";
+import React, { useMemo, useState, useEffect, useCallback } from "react";
 import { 
   ChevronDown, 
   ChevronLeft,
@@ -93,6 +93,30 @@ const formatDate = (dateStr?: string) => {
   return dateStr;
 };
 
+const getVoucherValidFromISO = (v: ParsedVoucherData | undefined | null): string => {
+  if (!v) return "";
+  const raw = v.validFrom || v.valid_from || v.ValidFrom || v.startDate || v.start_date || v.date || v.dateRequired || v.uploadDate;
+  if (raw) {
+    const iso = parseDateToISO(String(raw));
+    if (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso;
+  }
+  return getVoucherDateISO(v) || "";
+};
+
+const getVoucherValidToISO = (v: ParsedVoucherData | undefined | null): string => {
+  if (!v) return "";
+  const raw = v.validTo || v.valid_to || v.ValidTo || v.endDate || v.end_date || v.expires || v.expiryDate;
+  if (raw) {
+    const iso = parseDateToISO(String(raw));
+    if (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso;
+  }
+  const fromIso = getVoucherValidFromISO(v);
+  if (fromIso) {
+    return addDays(fromIso, 6);
+  }
+  return "";
+};
+
 export type SortKey = 
   | "id" 
   | "submitted"
@@ -173,28 +197,105 @@ export function DispatchCentre({
     return getMatchingPermits(database, targetIso);
   }, [database, targetIso]);
 
-  // Unused vouchers computation for the active date
+  // Current permit exact validFrom and validTo ISO matching
+  const currentPermitValidFromIso = useMemo(() => {
+    if (formData?.validFrom) {
+      const iso = parseDateToISO(String(formData.validFrom));
+      if (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso;
+    }
+    if (formData?.dateRequired) {
+      const iso = parseDateToISO(String(formData.dateRequired));
+      if (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso;
+    }
+    if (matchingPermits && matchingPermits.length > 0) {
+      const candidate = (formData?.vrm && matchingPermits.find(p => p.vrm && p.vrm.toUpperCase().replace(/\s+/g, "") === formData.vrm.toUpperCase().replace(/\s+/g, ""))) || matchingPermits[0];
+      const raw = candidate?.validFrom || candidate?.dateRequired;
+      if (raw) {
+        const iso = parseDateToISO(String(raw));
+        if (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso;
+      }
+    }
+    if (targetIso && /^\d{4}-\d{2}-\d{2}$/.test(targetIso)) {
+      return targetIso;
+    }
+    return "";
+  }, [formData?.validFrom, formData?.dateRequired, formData?.vrm, matchingPermits, targetIso]);
+
+  const currentPermitValidToIso = useMemo(() => {
+    if (formData?.validTo) {
+      const iso = parseDateToISO(String(formData.validTo));
+      if (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso;
+    }
+    if (matchingPermits && matchingPermits.length > 0) {
+      const candidate = (formData?.vrm && matchingPermits.find(p => p.vrm && p.vrm.toUpperCase().replace(/\s+/g, "") === formData.vrm.toUpperCase().replace(/\s+/g, ""))) || matchingPermits[0];
+      const rawTo = candidate?.validTo || candidate?.dateExpiry;
+      if (rawTo) {
+        const iso = parseDateToISO(String(rawTo));
+        if (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso;
+      }
+      const rawFrom = candidate?.validFrom || candidate?.dateRequired;
+      if (rawFrom) {
+        const isoFrom = parseDateToISO(String(rawFrom));
+        if (isoFrom && /^\d{4}-\d{2}-\d{2}$/.test(isoFrom)) {
+          return addDays(isoFrom, 6);
+        }
+      }
+    }
+    if (currentPermitValidFromIso) {
+      return addDays(currentPermitValidFromIso, 6);
+    }
+    return "";
+  }, [formData?.validTo, formData?.vrm, matchingPermits, currentPermitValidFromIso]);
+
+  // Helper to check if a voucher matches the permit's validity period
+  const hasDatedVouchersForDate = useMemo(() => {
+    if (!vouchersDatabase || vouchersDatabase.length === 0 || !currentPermitValidFromIso) return false;
+    return vouchersDatabase.some(v => getVoucherValidFromISO(v) === currentPermitValidFromIso);
+  }, [vouchersDatabase, currentPermitValidFromIso]);
+
+  const isVoucherMatchingPeriod = useCallback((v: ParsedVoucherData | undefined | null): boolean => {
+    if (!v || !v.code) return false;
+    if (!currentPermitValidFromIso) return false;
+
+    const vFrom = getVoucherValidFromISO(v);
+    const vTo = getVoucherValidToISO(v);
+
+    if (vFrom) {
+      if (vFrom !== currentPermitValidFromIso) return false;
+      if (vTo && currentPermitValidToIso) {
+        if (vTo === currentPermitValidToIso) return true;
+        const expectedPlus6 = addDays(currentPermitValidFromIso, 6);
+        const expectedPlus7 = addDays(currentPermitValidFromIso, 7);
+        if (vTo === expectedPlus6 || vTo === expectedPlus7) return true;
+        if (vTo >= currentPermitValidFromIso) return true;
+        return false;
+      }
+      return true;
+    }
+
+    // If voucher is undated, allow it if no dated vouchers exist for this date
+    return !hasDatedVouchersForDate;
+  }, [currentPermitValidFromIso, currentPermitValidToIso, hasDatedVouchersForDate]);
+
+  // Unused vouchers computation for the active date with exact validFrom/validTo matching
   const unusedVouchersForDay = useMemo<ParsedVoucherData[]>(() => {
-    if (!targetIso) return [];
+    if (!currentPermitValidFromIso) return [];
 
     const vouchers = getUnusedVouchersForDate(
       vouchersDatabase,
       database,
-      targetIso,
+      currentPermitValidFromIso,
       formData?.vrm,
       formData,
       matchingPermits
     );
 
-    const dateFiltered = vouchers.filter(v => {
-      const vIso = getVoucherDateISO(v);
-      return !vIso || vIso === targetIso;
-    });
+    const dateFiltered = vouchers.filter(isVoucherMatchingPeriod);
 
     const spreadsheetAssignedCodes = getSpreadsheetMatchingAssignedCodes(
       matchingPermits,
       database,
-      targetIso,
+      currentPermitValidFromIso,
       vouchersDatabase
     );
     const finalFiltered = dateFiltered.filter(v => {
@@ -203,7 +304,29 @@ export function DispatchCentre({
     });
 
     return finalFiltered;
-  }, [vouchersDatabase, database, targetIso, formData?.vrm, formData, matchingPermits]);
+  }, [
+    vouchersDatabase,
+    database,
+    currentPermitValidFromIso,
+    isVoucherMatchingPeriod,
+    formData?.vrm,
+    formData,
+    matchingPermits
+  ]);
+
+  // Exact range voucher stock metrics for Active Date Codes dropdown badge
+  const totalForThisRange = useMemo(() => {
+    if (!currentPermitValidFromIso || !vouchersDatabase || vouchersDatabase.length === 0) {
+      return 0;
+    }
+    return vouchersDatabase.filter(isVoucherMatchingPeriod).length;
+  }, [vouchersDatabase, currentPermitValidFromIso, isVoucherMatchingPeriod]);
+
+  const remainingForThisRange = unusedVouchersForDay.length;
+  const percentRemaining = totalForThisRange > 0
+    ? (remainingForThisRange / totalForThisRange) * 100
+    : 0;
+  const isRangeStockLow = totalForThisRange === 0 || remainingForThisRange <= 5 || percentRemaining <= 5;
 
   const handleActiveDateCodeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const selectedCode = cleanVoucherCodeValue(e.target.value).toUpperCase();
@@ -779,6 +902,11 @@ export function DispatchCentre({
   const count = filteredRecords.length;
   const totalDbCount = totalRecordsCount && totalRecordsCount > 0 ? totalRecordsCount : (database.length || 889);
   const totalVouchersCount = vouchersDatabase.length > 0 ? vouchersDatabase.length : 174;
+  const unusedVouchersCount = unusedVouchersForDay.length;
+  const remainingVoucherPercent = totalVouchersCount > 0 
+    ? (unusedVouchersCount / totalVouchersCount) * 100 
+    : 0;
+  const isVoucherStockLow = remainingVoucherPercent <= 5;
 
   const validFromDisplay = formData?.validFrom || processingDate || "07/07/2026";
   const validToDisplay = formData?.validTo || (processingDate ? addDays(processingDate, 6) : "13/07/2026");
@@ -877,7 +1005,12 @@ export function DispatchCentre({
 
           {/* Right: Active Date Codes */}
           <div className="flex items-center gap-2 whitespace-nowrap shrink-0">
-            <label className="text-xs sm:text-sm font-semibold text-slate-700 dark:text-slate-300 whitespace-nowrap shrink-0">
+            <label 
+              className={`text-xs sm:text-sm font-semibold whitespace-nowrap shrink-0 transition-colors ${
+                isRangeStockLow ? "text-[#b91c1c]" : "text-[#15803d]"
+              }`}
+              style={{ color: isRangeStockLow ? "#b91c1c" : "#15803d" }}
+            >
               Active Date Codes ({unusedVouchersForDay.length}):
             </label>
             <select
@@ -885,12 +1018,24 @@ export function DispatchCentre({
               onChange={handleActiveDateCodeChange}
               disabled={unusedVouchersForDay.length === 0}
               className={`h-9 px-3 py-1.5 border rounded-md text-xs font-mono font-extrabold focus:outline-none transition-all shrink-0 whitespace-nowrap ${
-                unusedVouchersForDay.length > 0                  ? "border-gray-300 dark:border-slate-700 focus:border-[#005EB8] dark:focus:border-blue-500 bg-emerald-50/80 dark:bg-emerald-950/30 text-emerald-900 dark:text-emerald-200 cursor-pointer"
-                  : "border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-900 text-gray-400 dark:text-slate-500 cursor-not-allowed font-normal"
+                unusedVouchersForDay.length > 0 ? "cursor-pointer" : "cursor-not-allowed font-normal"
+              } ${
+                isRangeStockLow
+                  ? "border-[#dc2626] bg-[#fee2e2] text-[#b91c1c] focus:border-[#dc2626]"
+                  : "border-[#16a34a] bg-[#dcfce7] text-[#15803d] focus:border-[#16a34a]"
               }`}
+              style={{
+                borderColor: isRangeStockLow ? "#dc2626" : "#16a34a",
+                backgroundColor: isRangeStockLow ? "#fee2e2" : "#dcfce7",
+                color: isRangeStockLow ? "#b91c1c" : "#15803d"
+              }}
             >
-              <option value="" disabled className="font-mono font-normal">
-                -- Choose Code --
+              <option value="" disabled className="font-mono font-normal text-slate-500 bg-white dark:bg-slate-900">
+                {vouchersDatabase.length === 0
+                  ? "-- No Vouchers Uploaded --"
+                  : unusedVouchersForDay.length === 0
+                    ? "-- 0 Available --"
+                    : "-- Choose Code --"}
               </option>
               {unusedVouchersForDay.map((v, index) => (
                 <option
@@ -1128,6 +1273,15 @@ export function DispatchCentre({
 
                 <th 
                   scope="col" 
+                  className="py-3 px-3 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap text-center select-none w-[90px] min-w-[90px]"
+                >
+                  <div className="flex items-center justify-center">
+                    <span>CODES</span>
+                  </div>
+                </th>
+
+                <th 
+                  scope="col" 
                   onClick={() => handleSort("validFrom")}
                   className={`py-3 px-3 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none ${
                     sortKey === "validFrom" ? "bg-blue-50 text-blue-700 dark:bg-[#0c2847] dark:text-[#38bdf8] font-black" : "hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-[#0b2440] dark:hover:text-white"
@@ -1252,6 +1406,39 @@ export function DispatchCentre({
 
                 const hospitalDisplay = getHospital(record);
 
+                // ⭐ FIXED CODES COLUMN - Per-row voucher count with RED when ≤ 5 remaining
+                const permitFrom = record.validFrom || record.dateRequired || "";
+                const permitFromISO = parseDateToISO(permitFrom);
+                
+                // Filter vouchers that match this permit's date range
+                const matchingVouchersForRow = vouchersDatabase.filter(v => {
+                  const vFrom = getVoucherValidFromISO(v);
+                  return vFrom && permitFromISO && vFrom === permitFromISO;
+                });
+                
+                const totalForRow = matchingVouchersForRow.length;
+                
+                // Check which vouchers are already used/assigned
+                const usedCodesSet = new Set<string>();
+                database.forEach(rec => {
+                  const code = rec.voucherCode || rec.prePaidCode || "";
+                  if (code && code !== "-" && code !== "CANCELLED") {
+                    usedCodesSet.add(code.toUpperCase());
+                  }
+                });
+                
+                const remainingForRow = matchingVouchersForRow.filter(v => {
+                  const code = (v.code || "").toUpperCase();
+                  return !usedCodesSet.has(code);
+                }).length;
+                
+                const percentRemainingRow = totalForRow > 0
+                  ? (remainingForRow / totalForRow) * 100
+                  : 0;
+                
+                // 🔴 RED if: total=0 OR remaining≤5 OR percentage≤5%
+                const isRowStockLow = totalForRow === 0 || remainingForRow <= 5 || percentRemainingRow <= 5;
+
                 return (
                   <tr 
                     key={`dispatch_${rowKey}_${index}`}
@@ -1292,6 +1479,30 @@ export function DispatchCentre({
                           {displayCode || "-"}
                         </span>
                       )}
+                    </td>
+
+                    {/* ⭐ FIXED CODES COLUMN - Per-row voucher count with RED when ≤ 5 remaining */}
+                    <td className="py-3 px-3 border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-center">
+                      <div className="flex flex-col items-center justify-center gap-1 mx-auto w-[74px]">
+                        <div 
+                          className="w-[74px] h-[5px] rounded overflow-hidden"
+                          style={{ backgroundColor: isRowStockLow ? "#fee2e2" : "#dcfce7" }}
+                        >
+                          <div 
+                            className="h-full rounded transition-all duration-300"
+                            style={{ 
+                              width: `${Math.min(100, Math.max(0, percentRemainingRow))}%`,
+                              backgroundColor: isRowStockLow ? "#dc2626" : "#16a34a" 
+                            }} 
+                          />
+                        </div>
+                        <span 
+                          className="text-[10px] font-bold leading-none select-none tracking-tight"
+                          style={{ color: isRowStockLow ? "#b91c1c" : "#15803d" }}
+                        >
+                          {remainingForRow} left
+                        </span>
+                      </div>
                     </td>
 
                     <td className="py-3 px-3 font-mono text-slate-700 dark:text-slate-200 border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap">
@@ -1387,7 +1598,7 @@ export function DispatchCentre({
               })}
               {filteredRecords.length === 0 && (
                 <tr>
-                  <td colSpan={12} className="py-12 text-center text-slate-500 dark:text-slate-400 text-xs">
+                  <td colSpan={13} className="py-12 text-center text-slate-500 dark:text-slate-400 text-xs">
                     <div className="flex flex-col items-center justify-center gap-2">
                       <Filter className="w-6 h-6 text-slate-400 stroke-1" />
                       <p className="font-semibold text-sm text-slate-700 dark:text-slate-300">No matching permits found</p>
