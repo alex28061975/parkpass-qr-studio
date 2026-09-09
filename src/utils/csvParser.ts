@@ -1465,7 +1465,7 @@ export function isDateRequiredOutsideValidWindow(dateRequiredStr?: string, refer
   parkingDate.setHours(0, 0, 0, 0);
 
   const daysDiff = Math.floor((parkingDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-  return daysDiff < -6 || daysDiff > 1;
+  return daysDiff < -1 || daysDiff > 1;
 }
 
 export function parseUKDate(dateStr: string): string {
@@ -2188,21 +2188,24 @@ export function isVoucherInValidityPeriod(
   const vFrom = rawFrom ? (parseDateToISO(String(rawFrom)) || "") : "";
   const vTo = rawTo ? (parseDateToISO(String(rawTo)) || "") : "";
 
-  // Strict validity period matching:
-  // 1. If voucher has a start date (ValidFrom), it MUST match the permit's requested start date
-  if (vFrom) {
-    if (vFrom !== targetDateISO) {
-      return false;
-    }
-    return true;
+  // Range matching: validFrom <= targetDate <= validTo
+  // 1. Both bounds present: target date must fall within the range (inclusive)
+  if (vFrom && vTo) {
+    return targetDateISO >= vFrom && targetDateISO <= vTo;
   }
 
-  // 2. If voucher only has validTo, target date must be on or before validTo
+  // 2. Only validFrom present (open-ended): target date must be on or after validFrom
+  if (vFrom && !vTo) {
+    return targetDateISO >= vFrom;
+  }
+
+  // 3. Only validTo present (no defined start): target date must be on or before validTo
   if (!vFrom && vTo) {
     return targetDateISO <= vTo;
   }
 
-  return false;
+  // 4. Neither bound present: no date restriction
+  return true;
 }
 
 export function isVoucherExactPeriodEligible(
