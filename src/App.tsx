@@ -23,7 +23,7 @@ import {
 // CSV Database Imports
 import { INITIAL_DEMO_CSV } from "./data/defaultCsv";
 import { isVrmSilentBlockedSync } from "./lib/blocklist";
-import { CsvPermitRecord, parsePermitCsv, parseDateToISO, addDays, formatPhoneNumber, ParsedVoucherData, addDaysSafe, parseDateRange, getDatesInRange, cleanVoucherCodeValue, exportToExcel, isVoucherCodeMatch, sortRecordsByFormIdDesc, getMatchingPermits, isDateRequiredOutsideValidWindow, getTodayISO, checkIsBlockedDuplicate, parseFullDateTimeMs, normalizeVouchersList, isRecordCancelled, getRequestedPermitDateISO, isVoucherExactPeriodEligible, isVoucherAvailableStatus, isVoucherVrmCompatible, getDefaultSampleVouchers, isValidVRM, isLikelyDriverName, cleanVrm } from "./utils/csvParser";
+import { CsvPermitRecord, parsePermitCsv, parseDateToISO, addDays, formatPhoneNumber, ParsedVoucherData, addDaysSafe, parseDateRange, getDatesInRange, cleanVoucherCodeValue, exportToExcel, isVoucherCodeMatch, sortRecordsByFormIdDesc, getMatchingPermits, isDateRequiredOutsideValidWindow, getTodayISO, checkIsBlockedDuplicate, parseFullDateTimeMs, normalizeVouchersList, isRecordCancelled, getRequestedPermitDateISO, isVoucherExactPeriodEligible, isVoucherAvailableStatus, isVoucherVrmCompatible, getDefaultSampleVouchers } from "./utils/csvParser";
 import { CsvDatabasePanel, type CsvDatabasePanelHandle } from "./components/CsvDatabasePanel";
 import { BlocklistPanel } from "./components/BlocklistPanel";
 import { EditRecordModal } from "./components/EditRecordModal";
@@ -52,14 +52,14 @@ function toTitleCase(str: string): string {
     .replace(/(?:^|\s|-)\S/g, (char) => char.toUpperCase());
 }
 
-// ⭐ NEW: Auto-Cancel Duplicates (Keep First, Cancel Rest, but ONLY if SAME dates)
+// ⭐ NEW: Auto-Cancel Duplicates - GROUP BY VRM ONLY (not driver name)
 const autoCancelDuplicates = (records: CsvPermitRecord[]): CsvPermitRecord[] => {
   if (!records || records.length === 0) return records;
   
-  const driverMap = new Map<string, CsvPermitRecord[]>();
+  const vrmMap = new Map<string, CsvPermitRecord[]>();
   const results: CsvPermitRecord[] = [];
   
-  // Group by driver name + VRM (combined key)
+  // ⭐ Group by VRM ONLY (not driver name)
   for (const record of records) {
     // Skip if record is already cancelled
     if (record.isCancelled === true || record.status === "CANCELLED") {
@@ -67,23 +67,20 @@ const autoCancelDuplicates = (records: CsvPermitRecord[]): CsvPermitRecord[] => 
       continue;
     }
     
-    const driverKey = record.driverName?.trim().toLowerCase() || "";
     const vrmKey = record.vrm?.trim().toUpperCase() || "";
     
-    // If no driver name or VRM, keep as-is
-    if (!driverKey || !vrmKey) {
+    // If no VRM, keep as-is
+    if (!vrmKey) {
       results.push(record);
       continue;
     }
     
-    const key = `${driverKey}|${vrmKey}`;
-    
-    if (!driverMap.has(key)) driverMap.set(key, []);
-    driverMap.get(key)!.push(record);
+    if (!vrmMap.has(vrmKey)) vrmMap.set(vrmKey, []);
+    vrmMap.get(vrmKey)!.push(record);
   }
   
-  // For each group, check if they are duplicates
-  for (const [key, recordList] of driverMap) {
+  // For each VRM group, check if they are duplicates
+  for (const [vrm, recordList] of vrmMap) {
     if (recordList.length === 1) {
       results.push(recordList[0]);
     } else {
@@ -96,7 +93,7 @@ const autoCancelDuplicates = (records: CsvPermitRecord[]): CsvPermitRecord[] => 
         const first = recordList[0];
         results.push(first);
         for (let i = 1; i < recordList.length; i++) {
-          console.log(`🔄 Auto-cancelling duplicate for: ${recordList[i].driverName || "Unknown"} (${recordList[i].vrm}) - Same date as first`);
+          console.log(`🔄 Auto-cancelling duplicate for VRM: ${vrm} (same date)`);
           results.push({
             ...recordList[i],
             isCancelled: true,
@@ -108,7 +105,7 @@ const autoCancelDuplicates = (records: CsvPermitRecord[]): CsvPermitRecord[] => 
       } else {
         // ⭐ DIFFERENT DATES → NOT DUPLICATES (different weeks)
         // Keep ALL records (they're valid for different weeks)
-        console.log(`✅ Keeping ${recordList.length} records for ${key} - Different dates (different weeks)`);
+        console.log(`✅ Keeping ${recordList.length} records for VRM: ${vrm} - Different dates (different weeks)`);
         results.push(...recordList);
       }
     }
@@ -1736,11 +1733,11 @@ export default function App() {
     setEditingRecord(null);
   };
 
-  // ⭐ UPDATED: handleDatabaseChange with auto-cancel
+  // ⭐ UPDATED: handleDatabaseChange with auto-cancel (VRM-ONLY grouping)
   const handleDatabaseChange = async (incomingDb: CsvPermitRecord[]) => {
     safeLocalStorage.removeItem("concessions_unsent_keys");
     
-    // ⭐ STEP 1: Auto-cancel duplicates (keep first, cancel rest, but ONLY if SAME dates)
+    // ⭐ STEP 1: Auto-cancel duplicates (VRM-ONLY grouping)
     const processedRecords = autoCancelDuplicates(incomingDb);
     
     // ⭐ STEP 2: Count how many were cancelled
