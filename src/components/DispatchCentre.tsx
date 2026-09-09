@@ -244,6 +244,20 @@ export function DispatchCentre({
         return;
       }
 
+      // If this record is undergoing voucher replacement via active form data, release its old voucher back to the pool
+      const isReplacedByFormData = Boolean(
+        formData &&
+        (formData.emailType === "RESEND_CONCESSION" || formData.isResend === true || formData.emailTemplate === "replacement") &&
+        ((formData.formId !== undefined && rec.formId !== undefined && String(formData.formId) === String(rec.formId)) ||
+         (formData.id && rec.id && String(formData.id) === String(rec.id)) ||
+         (formData.vrm && rec.vrm && formData.vrm.toUpperCase().replace(/[^A-Z0-9]/g, "") === rec.vrm.toUpperCase().replace(/[^A-Z0-9]/g, "")))
+      );
+
+      if (isReplacedByFormData) {
+        // Old voucher is released back to the inventory pool
+        return;
+      }
+
       const raw = rec.voucherCode || rec.prePaidCode || "";
       if (raw && typeof raw === "string") {
         const clean = cleanVoucherCodeValue(raw).toUpperCase();
@@ -252,6 +266,15 @@ export function DispatchCentre({
         }
       }
     });
+
+    // If formData has an active replacement code, assign the newly chosen replacement code
+    if (formData?.voucherCodesText && (formData.emailType === "RESEND_CONCESSION" || formData.isResend === true || formData.emailTemplate === "replacement")) {
+      const cleanNew = cleanVoucherCodeValue(formData.voucherCodesText).toUpperCase();
+      if (cleanNew && cleanNew !== "-" && cleanNew !== "CANCELLED" && cleanNew !== "PENDING" && cleanNew !== "N/A") {
+        set.add(cleanNew);
+      }
+    }
+
     if (customVouchers) {
       Object.entries(customVouchers).forEach(([key, raw]) => {
         if (raw && typeof raw === "string") {
@@ -272,7 +295,7 @@ export function DispatchCentre({
       });
     }
     return set;
-  }, [database, customVouchers, processingDate]);
+  }, [database, customVouchers, processingDate, formData]);
 
   // Current permit exact validFrom and validTo ISO matching
   const currentPermitValidFromIso = useMemo(() => {
@@ -456,7 +479,9 @@ export function DispatchCentre({
       status: "Pending",
       emailType: "RESEND_CONCESSION",
       isResend: true,
-      emailTemplate: "replacement"
+      emailTemplate: "replacement",
+      originalVoucherCode: formData?.originalVoucherCode || formData?.voucherCode || formData?.voucherCodesText,
+      replacementCount: ((formData?.replacementCount || 0) + 1),
     });
   };
 
@@ -465,7 +490,7 @@ export function DispatchCentre({
   const [sortDirection, setSortDirection] = useState<SortDirection>(null);
 
   // Dropdown filter states
-  const [statusFilter, setStatusFilter] = useState<"ALL" | "PENDING" | "SENT" | "CANCELLED" | "BLOCKED">("ALL");
+  const [statusFilter, setStatusFilter] = useState<"ALL" | "PENDING" | "SENT" | "CANCELLED" | "BLOCKED" | "REPLACEMENT">("ALL");
   const [hospitalFilter, setHospitalFilter] = useState<string>("ALL");
   const [wardFilter, setWardFilter] = useState<string>("ALL");
   const [dateFilter, setDateFilter] = useState<"ALL" | "TODAY" | "THIS_WEEK" | "THIS_MONTH" | "CUSTOM">("THIS_WEEK");
@@ -535,8 +560,14 @@ export function DispatchCentre({
   };
 
   const isReplacementPending = (record: CsvPermitRecord) =>
-    isSameSelectedRecord(record) &&
-    (formData?.emailType === "RESEND_CONCESSION" || formData?.isResend === true || formData?.emailTemplate === "replacement");
+    Boolean(
+      (isSameSelectedRecord(record) &&
+        (formData?.emailType === "RESEND_CONCESSION" || formData?.isResend === true || formData?.emailTemplate === "replacement")) ||
+      record.emailType === "RESEND_CONCESSION" ||
+      record.isResend === true ||
+      record.emailTemplate === "replacement" ||
+      (typeof record.status === "string" && record.status.trim().toUpperCase() === "REPLACEMENT")
+    );
 
   const getHospital = (record: CsvPermitRecord) => {
     const raw = (record.hospital || "").trim();
@@ -777,6 +808,7 @@ export function DispatchCentre({
         if (statusFilter === "SENT" && status !== "SENT") return false;
         if (statusFilter === "CANCELLED" && status.toUpperCase() !== "CANCELLED") return false;
         if (statusFilter === "BLOCKED" && status !== "BLOCKED") return false;
+        if (statusFilter === "REPLACEMENT" && status !== "REPLACEMENT") return false;
       }
 
       if (hospitalFilter !== "ALL") {
@@ -1160,6 +1192,7 @@ export function DispatchCentre({
                 <option value="ALL">Status: All</option>
                 <option value="PENDING">PENDING</option>
                 <option value="SENT">SENT</option>
+                <option value="REPLACEMENT">REPLACEMENT</option>
                 <option value="CANCELLED">CANCELLED</option>
                 <option value="BLOCKED">BLOCKED</option>
               </select>
@@ -1468,6 +1501,19 @@ export function DispatchCentre({
                 const recordKeys = getRecordKeys(record);
                 const isUnsent = Boolean(unsentKeys && unsentKeys.length > 0 && (unsentKeys.includes(rowKey) || recordKeys.some(k => unsentKeys.includes(k))));
                 const replacementPending = !isBlocked && isReplacementPending(record);
+                const isReplacementRow = replacementPending && !isBlocked && !isCancelled;
+                const replacementCount = record.replacementCount || (formData && isSameSelectedRecord(record) && formData.replacementCount) || 0;
+                const originalCode = record.originalVoucherCode || 
+                  (formData && isSameSelectedRecord(record) && formData.originalVoucherCode) ||
+                  recordCodeMap.get(recordKey);
+
+                if (replacementPending && formData?.voucherCodesText && isSameSelectedRecord(record)) {
+                  displayCode = formData.voucherCodesText;
+                }
+
+                if (isReplacementRow) {
+                  console.log(`[DispatchCentre] Replacement QR code detected for VRM ${record.vrm || record.id || rowKey}`);
+                }
 
                 const excelId = (() => {
                   if (record.formId !== undefined && record.formId !== null) {
@@ -1518,9 +1564,15 @@ export function DispatchCentre({
                   <tr 
                     key={`dispatch_${rowKey}_${index}`}
                     onClick={() => onSelectRecord(record)}
-                    className="hover:bg-blue-50/50 dark:hover:bg-[#0c233d]/70 transition-colors cursor-pointer text-slate-800 dark:text-slate-200"
+                    className={`hover:bg-blue-50/50 dark:hover:bg-[#0c233d]/70 transition-colors cursor-pointer text-slate-800 dark:text-slate-200 ${
+                      isReplacementRow ? 'bg-amber-50/70 dark:bg-amber-950/20 border-l-4 border-amber-400 dark:border-amber-500/60' : ''
+                    } ${
+                      isCancelled ? 'bg-rose-50/70 dark:bg-rose-950/20 border-l-4 border-rose-400 dark:border-rose-500/60' : ''
+                    }`}
                   >
-                    <td className="py-3 px-3 text-center text-slate-500 dark:text-slate-400 font-mono font-normal border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-[11px]">
+                    <td className={`py-3 px-3 text-center text-slate-500 dark:text-slate-400 font-mono font-normal border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-[11px] ${
+                      isReplacementRow ? 'border-l-4 border-l-amber-400 dark:border-l-amber-500/60' : isCancelled ? 'border-l-4 border-l-rose-400 dark:border-l-rose-500/60' : ''
+                    }`}>
                       {excelId}
                     </td>
 
@@ -1548,6 +1600,23 @@ export function DispatchCentre({
                       ) : (isCancelled || displayCode === "CANCELLED") ? (
                         <span className="text-red-600 dark:text-[#FF453A] font-normal">
                           CANCELLED
+                        </span>
+                      ) : replacementPending ? (
+                        <span className="text-amber-600 dark:text-amber-400 font-bold bg-amber-50 dark:bg-amber-950/30 px-2 py-0.5 rounded border border-amber-200 dark:border-amber-700/50 inline-flex items-center gap-1.5">
+                          <span className="inline-block animate-spin text-[10px]">⟳</span>
+                          {displayCode || "-"}
+                          {(() => {
+                            // Find and show original code if available
+                            if (originalCode && originalCode !== displayCode && originalCode !== "CANCELLED" && originalCode !== "BLOCKED" && originalCode !== "-") {
+                              return <span className="text-[9px] text-amber-500/70 dark:text-amber-400/60 line-through ml-1 font-normal">← {originalCode}</span>;
+                            }
+                            return null;
+                          })()}
+                          {replacementCount > 0 && (
+                            <span className="text-[9px] text-amber-500 dark:text-amber-400 ml-0.5 font-bold" title={`Replaced ${replacementCount} time${replacementCount > 1 ? "s" : ""}`}>
+                              ×{replacementCount}
+                            </span>
+                          )}
                         </span>
                       ) : (
                         <span className="text-slate-800 dark:text-slate-200 font-normal">
@@ -1606,7 +1675,8 @@ export function DispatchCentre({
                           CANCELLED
                         </span>
                       ) : replacementPending ? (
-                        <span className="border border-purple-300 dark:border-[#a855f7]/40 bg-purple-50 dark:bg-[#a855f7]/15 text-purple-700 dark:text-[#c084fc] font-bold px-2 py-0.5 rounded text-[10px] tracking-wider uppercase inline-flex items-center justify-center whitespace-nowrap">
+                        <span className="border border-amber-400 dark:border-amber-500/60 bg-amber-50 dark:bg-amber-950/30 text-amber-700 dark:text-amber-400 font-bold px-2 py-0.5 rounded text-[10px] tracking-wider uppercase inline-flex items-center justify-center gap-1.5 whitespace-nowrap animate-pulse">
+                          <span className="inline-block animate-spin text-[10px]">⟳</span>
                           REPLACEMENT
                         </span>
                       ) : isDispatched ? (
@@ -1648,12 +1718,14 @@ export function DispatchCentre({
                             type="button" 
                             disabled={busyKey === rowKey || isBlocked} 
                             onClick={() => { if (!isBlocked) handleAction(record, isDispatched, replacementPending); }} 
-                            title={isBlocked ? "This VRM is on the Manage Blocklist — dispatch disabled" : undefined}
+                            title={isBlocked ? "This VRM is on the Manage Blocklist — dispatch disabled" : 
+                                   replacementPending ? "Resend replacement QR code" : 
+                                   isDispatched ? "Unsend this permit" : "Send this permit"}
                             className={`flex items-center gap-1 px-2 py-0.5 text-white text-[10px] font-normal transition-colors disabled:opacity-50 whitespace-nowrap ${
                               isBlocked
                                 ? "bg-slate-400 dark:bg-slate-700 cursor-not-allowed opacity-60"
                                 : "cursor-pointer " + (replacementPending
-                                    ? "bg-[#7c3aed] hover:bg-[#6d28d9]"
+                                    ? "bg-amber-600 hover:bg-amber-700 dark:bg-amber-600 dark:hover:bg-amber-700"
                                     : isDispatched
                                       ? "bg-[#dc2626] hover:bg-[#b91c1c]"
                                       : "bg-[#1d75f2] hover:bg-[#1565d8]")
@@ -1662,7 +1734,11 @@ export function DispatchCentre({
                             {busyKey === rowKey ? (
                               <RefreshCw className="w-2.5 h-2.5 animate-spin" />
                             ) : (
-                              <Mail className="w-2.5 h-2.5" />
+                              replacementPending ? (
+                                <span className="inline-block animate-spin text-[10px]">⟳</span>
+                              ) : (
+                                <Mail className="w-2.5 h-2.5" />
+                              )
                             )}
                             <span>{isBlocked ? "Blocked" : (replacementPending ? "Resend" : (isDispatched ? "Unsend" : "Send"))}</span>
                           </button>
@@ -1674,12 +1750,12 @@ export function DispatchCentre({
                               isBlocked
                                 ? "bg-slate-500/80 dark:bg-slate-600/80 cursor-not-allowed opacity-60 border-l border-slate-600"
                                 : "cursor-pointer " + (replacementPending
-                                  ? "bg-[#6d28d9] hover:bg-[#5b21b6] border-l border-[#5b21b6]"
+                                  ? "bg-amber-700 hover:bg-amber-800 border-l border-amber-800"
                                   : isDispatched
                                     ? "bg-[#b91c1c] hover:bg-[#991b1b] border-l border-[#991b1b]"
                                     : "bg-[#1565d8] hover:bg-[#0f4eb0] border-l border-[#0f4eb0]")
                             }`}
-                            title={isBlocked ? "Disabled" : "Select Record"}
+                            title={isBlocked ? "Disabled" : (replacementPending ? "Resend options" : "Select Record")}
                           >
                             <ChevronDown className="w-2.5 h-2.5" />
                           </button>

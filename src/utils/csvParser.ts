@@ -237,6 +237,8 @@ export interface CsvPermitRecord {
   emailType?: "SEND_CONCESSION" | "RESEND_CONCESSION" | string;
   isResend?: boolean;
   emailTemplate?: "new" | "replacement";
+  originalVoucherCode?: string;
+  replacementCount?: number;
 }
 
 export function getNumericFormId(record: CsvPermitRecord): number {

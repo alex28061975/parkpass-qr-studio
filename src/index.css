@@ -43,6 +43,21 @@ input::placeholder, select::placeholder, textarea::placeholder {
 button { -webkit-tap-highlight-color: transparent; }
 .hidden { display:none !important; }
 
+/* Replacement pulse and spin animations */
+@keyframes pulse-replacement {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.replacement-pulse {
+  animation: pulse-replacement 2s ease-in-out infinite;
+}
+
+.rotate-icon {
+  display: inline-block;
+  animation: spin 2s linear infinite;
+}
+
 .park-app {
   min-height: 100vh;
   padding: 20px 20px 28px;
