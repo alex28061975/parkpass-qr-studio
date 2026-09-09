@@ -23,7 +23,7 @@ import {
 // CSV Database Imports
 import { INITIAL_DEMO_CSV } from "./data/defaultCsv";
 import { isVrmSilentBlockedSync } from "./lib/blocklist";
-import { CsvPermitRecord, parsePermitCsv, parseDateToISO, addDays, formatPhoneNumber, ParsedVoucherData, addDaysSafe, parseDateRange, getDatesInRange, cleanVoucherCodeValue, exportToExcel, isVoucherCodeMatch, sortRecordsByFormIdDesc, getMatchingPermits, isDateRequiredOutsideValidWindow, getTodayISO, checkIsBlockedDuplicate, parseFullDateTimeMs, normalizeVouchersList, isRecordCancelled, getRequestedPermitDateISO, isVoucherExactPeriodEligible, isVoucherAvailableStatus, isVoucherVrmCompatible, getDefaultSampleVouchers } from "./utils/csvParser";
+import { CsvPermitRecord, parsePermitCsv, parseDateToISO, addDays, formatPhoneNumber, ParsedVoucherData, addDaysSafe, parseDateRange, getDatesInRange, cleanVoucherCodeValue, exportToExcel, isVoucherCodeMatch, sortRecordsByFormIdDesc, getMatchingPermits, isDateRequiredOutsideValidWindow, getTodayISO, checkIsBlockedDuplicate, parseFullDateTimeMs, normalizeVouchersList, isRecordCancelled, getRequestedPermitDateISO, isVoucherExactPeriodEligible, isVoucherAvailableStatus, isVoucherVrmCompatible, getDefaultSampleVouchers, isValidVRM, isLikelyDriverName, cleanVrm } from "./utils/csvParser";
 import { CsvDatabasePanel, type CsvDatabasePanelHandle } from "./components/CsvDatabasePanel";
 import { BlocklistPanel } from "./components/BlocklistPanel";
 import { EditRecordModal } from "./components/EditRecordModal";
@@ -51,6 +51,71 @@ function toTitleCase(str: string): string {
     .toLowerCase()
     .replace(/(?:^|\s|-)\S/g, (char) => char.toUpperCase());
 }
+
+// ⭐ NEW: Auto-Cancel Duplicates (Keep First, Cancel Rest, but ONLY if SAME dates)
+const autoCancelDuplicates = (records: CsvPermitRecord[]): CsvPermitRecord[] => {
+  if (!records || records.length === 0) return records;
+  
+  const driverMap = new Map<string, CsvPermitRecord[]>();
+  const results: CsvPermitRecord[] = [];
+  
+  // Group by driver name + VRM (combined key)
+  for (const record of records) {
+    // Skip if record is already cancelled
+    if (record.isCancelled === true || record.status === "CANCELLED") {
+      results.push(record);
+      continue;
+    }
+    
+    const driverKey = record.driverName?.trim().toLowerCase() || "";
+    const vrmKey = record.vrm?.trim().toUpperCase() || "";
+    
+    // If no driver name or VRM, keep as-is
+    if (!driverKey || !vrmKey) {
+      results.push(record);
+      continue;
+    }
+    
+    const key = `${driverKey}|${vrmKey}`;
+    
+    if (!driverMap.has(key)) driverMap.set(key, []);
+    driverMap.get(key)!.push(record);
+  }
+  
+  // For each group, check if they are duplicates
+  for (const [key, recordList] of driverMap) {
+    if (recordList.length === 1) {
+      results.push(recordList[0]);
+    } else {
+      // ⭐ Check if they have the SAME dates
+      const dates = recordList.map(r => r.dateRequired || r.validFrom || "");
+      const uniqueDates = new Set(dates);
+      
+      if (uniqueDates.size === 1) {
+        // ⭐ SAME DATE → DUPLICATE! Keep first, cancel rest
+        const first = recordList[0];
+        results.push(first);
+        for (let i = 1; i < recordList.length; i++) {
+          console.log(`🔄 Auto-cancelling duplicate for: ${recordList[i].driverName || "Unknown"} (${recordList[i].vrm}) - Same date as first`);
+          results.push({
+            ...recordList[i],
+            isCancelled: true,
+            status: "CANCELLED",
+            voucherCode: "CANCELLED",
+            prePaidCode: "CANCELLED"
+          });
+        }
+      } else {
+        // ⭐ DIFFERENT DATES → NOT DUPLICATES (different weeks)
+        // Keep ALL records (they're valid for different weeks)
+        console.log(`✅ Keeping ${recordList.length} records for ${key} - Different dates (different weeks)`);
+        results.push(...recordList);
+      }
+    }
+  }
+  
+  return results;
+};
 
 // Helper to dynamically enrich database records with voucher codes from the voucher database or custom override vouchers
 export function enrichRecordsWithVouchers(
@@ -1671,8 +1736,20 @@ export default function App() {
     setEditingRecord(null);
   };
 
+  // ⭐ UPDATED: handleDatabaseChange with auto-cancel
   const handleDatabaseChange = async (incomingDb: CsvPermitRecord[]) => {
     safeLocalStorage.removeItem("concessions_unsent_keys");
+    
+    // ⭐ STEP 1: Auto-cancel duplicates (keep first, cancel rest, but ONLY if SAME dates)
+    const processedRecords = autoCancelDuplicates(incomingDb);
+    
+    // ⭐ STEP 2: Count how many were cancelled
+    const cancelledCount = processedRecords.filter(r => r.status === "CANCELLED").length;
+    
+    if (cancelledCount > 0) {
+      showToast(`✅ Processed ${processedRecords.length} records. ${cancelledCount} duplicate(s) auto-cancelled.`, "success");
+      console.log(`🔄 Auto-cancelled ${cancelledCount} duplicate records`);
+    }
     
     // Build lookup maps for existing database records:
     const recordMap = new Map<string, CsvPermitRecord>();
@@ -1690,12 +1767,8 @@ export default function App() {
       if (formIdKey) formIdMap.set(formIdKey, item);
     });
 
-    // Merge logic:
-    // For each record in the new file, check if it already exists in the database.
-    // If it exists (by ID or Form ID), KEEP the existing (edited) version.
-    // If it doesn't exist, ADD the new record.
-    // Existing records not in the new file must remain unchanged.
-    (incomingDb || []).forEach(item => {
+    // Merge logic using processedRecords instead of incomingDb
+    (processedRecords || []).forEach(item => {
       const idKey = item.id !== undefined && item.id !== null ? String(item.id).trim() : "";
       const formIdKey = item.formId !== undefined && item.formId !== null ? String(item.formId).trim() : "";
 
@@ -1726,8 +1799,8 @@ export default function App() {
       await refreshDatabase(undefined, true);
     }
 
-    if (incomingDb && incomingDb.length > 0) {
-      const firstRecord = incomingDb[0];
+    if (processedRecords && processedRecords.length > 0) {
+      const firstRecord = processedRecords[0];
       const fromISO = parseDateToISO(firstRecord.dateRequired) || getTodayISO();
       const toISO = addDays(fromISO, 6);
       
@@ -1985,5 +2058,4 @@ export default function App() {
       />
     </div>
   );
-
 }

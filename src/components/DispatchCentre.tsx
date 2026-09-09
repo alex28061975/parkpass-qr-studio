@@ -47,7 +47,10 @@ import {
   cleanVoucherCodeValue,
   isVoucherCodeMatch,
   isVoucherInValidityPeriod,
-  toTitleCase
+  toTitleCase,
+  isValidVRM,
+  isLikelyDriverName,
+  cleanVrm
 } from "../utils/csvParser";
 import { checkIsRecordDispatched, getRecordKeys } from "../utils/dispatchUtils";
 import { isVrmSilentBlockedSync } from "../lib/blocklist";
@@ -244,20 +247,6 @@ export function DispatchCentre({
         return;
       }
 
-      // If this record is undergoing voucher replacement via active form data, release its old voucher back to the pool
-      const isReplacedByFormData = Boolean(
-        formData &&
-        (formData.emailType === "RESEND_CONCESSION" || formData.isResend === true || formData.emailTemplate === "replacement") &&
-        ((formData.formId !== undefined && rec.formId !== undefined && String(formData.formId) === String(rec.formId)) ||
-         (formData.id && rec.id && String(formData.id) === String(rec.id)) ||
-         (formData.vrm && rec.vrm && formData.vrm.toUpperCase().replace(/[^A-Z0-9]/g, "") === rec.vrm.toUpperCase().replace(/[^A-Z0-9]/g, "")))
-      );
-
-      if (isReplacedByFormData) {
-        // Old voucher is released back to the inventory pool
-        return;
-      }
-
       const raw = rec.voucherCode || rec.prePaidCode || "";
       if (raw && typeof raw === "string") {
         const clean = cleanVoucherCodeValue(raw).toUpperCase();
@@ -266,15 +255,6 @@ export function DispatchCentre({
         }
       }
     });
-
-    // If formData has an active replacement code, assign the newly chosen replacement code
-    if (formData?.voucherCodesText && (formData.emailType === "RESEND_CONCESSION" || formData.isResend === true || formData.emailTemplate === "replacement")) {
-      const cleanNew = cleanVoucherCodeValue(formData.voucherCodesText).toUpperCase();
-      if (cleanNew && cleanNew !== "-" && cleanNew !== "CANCELLED" && cleanNew !== "PENDING" && cleanNew !== "N/A") {
-        set.add(cleanNew);
-      }
-    }
-
     if (customVouchers) {
       Object.entries(customVouchers).forEach(([key, raw]) => {
         if (raw && typeof raw === "string") {
@@ -295,7 +275,7 @@ export function DispatchCentre({
       });
     }
     return set;
-  }, [database, customVouchers, processingDate, formData]);
+  }, [database, customVouchers, processingDate]);
 
   // Current permit exact validFrom and validTo ISO matching
   const currentPermitValidFromIso = useMemo(() => {
@@ -479,9 +459,7 @@ export function DispatchCentre({
       status: "Pending",
       emailType: "RESEND_CONCESSION",
       isResend: true,
-      emailTemplate: "replacement",
-      originalVoucherCode: formData?.originalVoucherCode || formData?.voucherCode || formData?.voucherCodesText,
-      replacementCount: ((formData?.replacementCount || 0) + 1),
+      emailTemplate: "replacement"
     });
   };
 
@@ -560,14 +538,8 @@ export function DispatchCentre({
   };
 
   const isReplacementPending = (record: CsvPermitRecord) =>
-    Boolean(
-      (isSameSelectedRecord(record) &&
-        (formData?.emailType === "RESEND_CONCESSION" || formData?.isResend === true || formData?.emailTemplate === "replacement")) ||
-      record.emailType === "RESEND_CONCESSION" ||
-      record.isResend === true ||
-      record.emailTemplate === "replacement" ||
-      (typeof record.status === "string" && record.status.trim().toUpperCase() === "REPLACEMENT")
-    );
+    isSameSelectedRecord(record) &&
+    (formData?.emailType === "RESEND_CONCESSION" || formData?.isResend === true || formData?.emailTemplate === "replacement");
 
   const getHospital = (record: CsvPermitRecord) => {
     const raw = (record.hospital || "").trim();
@@ -1057,10 +1029,9 @@ export function DispatchCentre({
 
   return (
     <section className="w-full bg-white dark:bg-[#07172b] border border-slate-200 dark:border-[#183a5e] rounded-2xl p-4 md:p-6 shadow-sm dark:shadow-2xl text-slate-800 dark:text-slate-200 transition-colors">
-      {/* Top Header Section - EVERYTHING IN A SINGLE LINE */}
+      {/* Top Header Section */}
       <div className="flex flex-col gap-3 pb-4 border-b border-slate-200 dark:border-[#143252]">
         <div className="flex items-center gap-3 w-full flex-nowrap overflow-x-auto">
-          {/* Left: Title + Record Counts */}
           <div className="flex items-center gap-3 shrink-0">
             <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center shadow-md shadow-blue-500/20 text-white shrink-0">
               <Send className="w-4 h-4 -rotate-45" />
@@ -1076,7 +1047,6 @@ export function DispatchCentre({
             </span>
           </div>
 
-          {/* Center: Browse Buttons - TRULY CENTERED */}
           <div className="flex-1 flex items-center justify-center gap-3 min-w-0 overflow-x-auto">
             <button
               type="button"
@@ -1110,7 +1080,6 @@ export function DispatchCentre({
             </span>
           </div>
 
-          {/* Right: Active Date Codes */}
           <div className="flex items-center gap-2 whitespace-nowrap shrink-0">
             <label 
               className={`text-xs sm:text-sm font-semibold whitespace-nowrap shrink-0 transition-colors ${
@@ -1157,7 +1126,6 @@ export function DispatchCentre({
           </div>
         </div>
 
-        {/* Filter Controls Toolbar */}
         <div className="flex flex-col gap-2.5 pt-1">
           <div className="flex flex-wrap items-center gap-2.5">
             <div className="relative flex-1 min-w-[220px]">
@@ -1192,9 +1160,9 @@ export function DispatchCentre({
                 <option value="ALL">Status: All</option>
                 <option value="PENDING">PENDING</option>
                 <option value="SENT">SENT</option>
-                <option value="REPLACEMENT">REPLACEMENT</option>
                 <option value="CANCELLED">CANCELLED</option>
                 <option value="BLOCKED">BLOCKED</option>
+                <option value="REPLACEMENT">REPLACEMENT</option>
               </select>
               <ChevronDown className="w-3.5 h-3.5 text-slate-400 pointer-events-none absolute right-3 top-1/2 -translate-y-1/2" />
             </div>
@@ -1296,16 +1264,15 @@ export function DispatchCentre({
         </div>
       </div>
 
-      {/* Main Table Section */}
       <div className="w-full mt-4 border border-slate-200 dark:border-[#163657] rounded-xl bg-white dark:bg-[#061424] overflow-hidden shadow-xs dark:shadow-inner">
         <div className="overflow-x-auto w-full">
           <table className="min-w-[1180px] w-full text-xs text-left border-collapse table-auto">
-            <thead className="bg-slate-50 dark:bg-[#081b30] border-b border-slate-200 dark:border-[#163657] text-slate-600 dark:text-slate-300 font-bold uppercase tracking-wider text-[11px] sticky top-0 z-10 select-none">
+            <thead className="bg-slate-50 dark:bg-[#081b30] border-b border-slate-200 dark:border-[#163657] text-slate-600 dark:text-slate-300 font-bold uppercase tracking-wider text-[10px] sticky top-0 z-10 select-none">
               <tr>
                 <th 
                   scope="col" 
                   onClick={() => handleSort("id")}
-                  className={`py-3 px-3 text-center w-12 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none text-[11px] font-bold uppercase tracking-wider ${
+                  className={`py-3 px-3 text-center w-12 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none text-[10px] font-bold uppercase tracking-wider ${
                     sortKey === "id" ? "bg-blue-50 text-blue-700 dark:bg-[#0c2847] dark:text-[#38bdf8] font-bold" : "hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-[#0b2440] dark:hover:text-white"
                   }`}
                   title="Click to sort by Number"
@@ -1319,7 +1286,7 @@ export function DispatchCentre({
                 <th 
                   scope="col" 
                   onClick={() => handleSort("submitted")}
-                  className={`py-3 px-3 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none text-[11px] font-bold uppercase tracking-wider ${
+                  className={`py-3 px-3 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none text-[10px] font-bold uppercase tracking-wider ${
                     sortKey === "submitted" ? "bg-blue-50 text-blue-700 dark:bg-[#0c2847] dark:text-[#38bdf8] font-bold" : "hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-[#0b2440] dark:hover:text-white"
                   }`}
                   title="Click to sort by Submitted timestamp"
@@ -1333,7 +1300,7 @@ export function DispatchCentre({
                 <th 
                   scope="col" 
                   onClick={() => handleSort("driverName")}
-                  className={`py-3 px-3 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none text-[11px] font-bold uppercase tracking-wider ${
+                  className={`py-3 px-3 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none text-[10px] font-bold uppercase tracking-wider ${
                     sortKey === "driverName" ? "bg-blue-50 text-blue-700 dark:bg-[#0c2847] dark:text-[#38bdf8] font-bold" : "hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-[#0b2440] dark:hover:text-white"
                   }`}
                   title="Click to sort by Driver's Name"
@@ -1346,7 +1313,7 @@ export function DispatchCentre({
 
                 <th
                   scope="col"
-                  className="py-3 px-3 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap text-[11px] font-bold uppercase tracking-wider"
+                  className="py-3 px-3 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap text-[10px] font-bold uppercase tracking-wider"
                 >
                   PHONE
                 </th>
@@ -1354,7 +1321,7 @@ export function DispatchCentre({
                 <th 
                   scope="col" 
                   onClick={() => handleSort("vrm")}
-                  className={`py-3 px-3 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none text-[11px] font-bold uppercase tracking-wider ${
+                  className={`py-3 px-3 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none text-[10px] font-bold uppercase tracking-wider ${
                     sortKey === "vrm" ? "bg-blue-50 text-blue-700 dark:bg-[#0c2847] dark:text-[#38bdf8] font-bold" : "hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-[#0b2440] dark:hover:text-white"
                   }`}
                   title="Click to sort by VRM"
@@ -1368,7 +1335,7 @@ export function DispatchCentre({
                 <th 
                   scope="col" 
                   onClick={() => handleSort("voucherCode")}
-                  className={`py-3 px-3 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none text-[11px] font-bold uppercase tracking-wider ${
+                  className={`py-3 px-3 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none text-[10px] font-bold uppercase tracking-wider ${
                     sortKey === "voucherCode" ? "bg-blue-50 text-blue-700 dark:bg-[#0c2847] dark:text-[#38bdf8] font-bold" : "hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-[#0b2440] dark:hover:text-white"
                   }`}
                   title="Click to sort by Voucher Code"
@@ -1381,7 +1348,7 @@ export function DispatchCentre({
 
                 <th 
                   scope="col" 
-                  className="py-3 px-3 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap text-center select-none w-[90px] min-w-[90px] text-[11px] font-bold uppercase tracking-wider"
+                  className="py-3 px-3 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap text-center select-none w-[90px] min-w-[90px] text-[10px] font-bold uppercase tracking-wider"
                 >
                   <div className="flex items-center justify-center">
                     <span>CODES</span>
@@ -1391,7 +1358,7 @@ export function DispatchCentre({
                 <th 
                   scope="col" 
                   onClick={() => handleSort("validFrom")}
-                  className={`py-3 px-3 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none text-[11px] font-bold uppercase tracking-wider ${
+                  className={`py-3 px-3 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none text-[10px] font-bold uppercase tracking-wider ${
                     sortKey === "validFrom" ? "bg-blue-50 text-blue-700 dark:bg-[#0c2847] dark:text-[#38bdf8] font-bold" : "hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-[#0b2440] dark:hover:text-white"
                   }`}
                   title="Click to sort by Valid From date"
@@ -1405,7 +1372,7 @@ export function DispatchCentre({
                 <th 
                   scope="col" 
                   onClick={() => handleSort("validTo")}
-                  className={`py-3 px-3 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none text-[11px] font-bold uppercase tracking-wider ${
+                  className={`py-3 px-3 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none text-[10px] font-bold uppercase tracking-wider ${
                     sortKey === "validTo" ? "bg-blue-50 text-blue-700 dark:bg-[#0c2847] dark:text-[#38bdf8] font-bold" : "hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-[#0b2440] dark:hover:text-white"
                   }`}
                   title="Click to sort by Valid To date"
@@ -1419,7 +1386,7 @@ export function DispatchCentre({
                 <th 
                   scope="col" 
                   onClick={() => handleSort("ward")}
-                  className={`py-3 px-3 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none text-[11px] font-bold uppercase tracking-wider ${
+                  className={`py-3 px-3 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none text-[10px] font-bold uppercase tracking-wider ${
                     sortKey === "ward" ? "bg-blue-50 text-blue-700 dark:bg-[#0c2847] dark:text-[#38bdf8] font-bold" : "hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-[#0b2440] dark:hover:text-white"
                   }`}
                   title="Click to sort by Ward"
@@ -1433,7 +1400,7 @@ export function DispatchCentre({
                 <th 
                   scope="col" 
                   onClick={() => handleSort("hospital")}
-                  className={`py-3 px-3.5 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap min-w-[185px] cursor-pointer transition-colors group select-none text-[11px] font-bold uppercase tracking-wider ${
+                  className={`py-3 px-3.5 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap min-w-[185px] cursor-pointer transition-colors group select-none text-[10px] font-bold uppercase tracking-wider ${
                     sortKey === "hospital" ? "bg-blue-50 text-blue-700 dark:bg-[#0c2847] dark:text-[#38bdf8] font-bold" : "hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-[#0b2440] dark:hover:text-white"
                   }`}
                   title="Click to sort by Hospital Site"
@@ -1447,7 +1414,7 @@ export function DispatchCentre({
                 <th 
                   scope="col" 
                   onClick={() => handleSort("status")}
-                  className={`py-3 px-3 text-center border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none text-[11px] font-bold uppercase tracking-wider ${
+                  className={`py-3 px-3 text-center border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none text-[10px] font-bold uppercase tracking-wider ${
                     sortKey === "status" ? "bg-blue-50 text-blue-700 dark:bg-[#0c2847] dark:text-[#38bdf8] font-bold" : "hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-[#0b2440] dark:hover:text-white"
                   }`}
                   title="Click to sort by Status"
@@ -1461,7 +1428,7 @@ export function DispatchCentre({
                 <th 
                   scope="col" 
                   onClick={() => handleSort("actions")}
-                  className={`py-3 px-3 text-center whitespace-nowrap cursor-pointer transition-colors group select-none text-[11px] font-bold uppercase tracking-wider ${
+                  className={`py-3 px-3 text-center whitespace-nowrap cursor-pointer transition-colors group select-none text-[10px] font-bold uppercase tracking-wider ${
                     sortKey === "actions" ? "bg-blue-50 text-blue-700 dark:bg-[#0c2847] dark:text-[#38bdf8] font-bold" : "hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-[#0b2440] dark:hover:text-white"
                   }`}
                   title="Click to sort by Action state"
@@ -1480,8 +1447,6 @@ export function DispatchCentre({
                 const expiresIso = recordIso ? addDays(recordIso, 6) : "";
 
                 const reqDate = getRequestedPermitDateISO(record, processingDate);
-                // BLOCKED is determined only by the Manage Blocklist / VRM blocklist.
-// CANCELLED is a separate permit state and must not itself make isBlocked true.
                 const isBlocked = isVrmSilentBlockedSync(record.vrm);
                 const isCancelled = isRecordCancelled(record, reqDate, database);
                 const recordKey = String(record.formId ?? record.id ?? index);
@@ -1501,19 +1466,6 @@ export function DispatchCentre({
                 const recordKeys = getRecordKeys(record);
                 const isUnsent = Boolean(unsentKeys && unsentKeys.length > 0 && (unsentKeys.includes(rowKey) || recordKeys.some(k => unsentKeys.includes(k))));
                 const replacementPending = !isBlocked && isReplacementPending(record);
-                const isReplacementRow = replacementPending && !isBlocked && !isCancelled;
-                const replacementCount = record.replacementCount || (formData && isSameSelectedRecord(record) && formData.replacementCount) || 0;
-                const originalCode = record.originalVoucherCode || 
-                  (formData && isSameSelectedRecord(record) && formData.originalVoucherCode) ||
-                  recordCodeMap.get(recordKey);
-
-                if (replacementPending && formData?.voucherCodesText && isSameSelectedRecord(record)) {
-                  displayCode = formData.voucherCodesText;
-                }
-
-                if (isReplacementRow) {
-                  console.log(`[DispatchCentre] Replacement QR code detected for VRM ${record.vrm || record.id || rowKey}`);
-                }
 
                 const excelId = (() => {
                   if (record.formId !== undefined && record.formId !== null) {
@@ -1529,15 +1481,17 @@ export function DispatchCentre({
 
                 const hospitalDisplay = getHospital(record);
 
-                // ⭐ FIXED CODES COLUMN - Per-row voucher count with RED when ≤ 5 remaining
+                // ⭐ FIXED: CODES Column - Use Actual VRM and Show Count
                 const permitFromISO = getRequestedPermitDateISO(record) || parseDateToISO(record.validFrom || record.dateRequired) || "";
                 const permitToISO = record.validTo 
                   ? (parseDateToISO(record.validTo) || (permitFromISO ? addDays(permitFromISO, 6) : ""))
                   : (record.dateExpiry ? (parseDateToISO(record.dateExpiry) || (permitFromISO ? addDays(permitFromISO, 6) : "")) : (permitFromISO ? addDays(permitFromISO, 6) : ""));
                 
-                // Filter vouchers that match this permit's date range (ValidFrom - ValidTo)
+                // ⭐ FIX: Filter vouchers that match this permit's date range AND VRM
                 const matchingVouchersForRow = vouchersDatabase.filter(v => {
-                  return isVoucherForPermitDateRange(v, permitFromISO, permitToISO);
+                  const dateMatch = isVoucherForPermitDateRange(v, permitFromISO, permitToISO);
+                  const vrmMatch = !v.vrm || v.vrm.toUpperCase() === record.vrm?.toUpperCase();
+                  return dateMatch && vrmMatch;
                 });
                 
                 const totalForRow = matchingVouchersForRow.length;
@@ -1564,35 +1518,29 @@ export function DispatchCentre({
                   <tr 
                     key={`dispatch_${rowKey}_${index}`}
                     onClick={() => onSelectRecord(record)}
-                    className={`hover:bg-blue-50/50 dark:hover:bg-[#0c233d]/70 transition-colors cursor-pointer text-slate-800 dark:text-slate-200 ${
-                      isReplacementRow ? 'bg-amber-50/70 dark:bg-amber-950/20 border-l-4 border-amber-400 dark:border-amber-500/60' : ''
-                    } ${
-                      isCancelled ? 'bg-rose-50/70 dark:bg-rose-950/20 border-l-4 border-rose-400 dark:border-rose-500/60' : ''
-                    }`}
+                    className="hover:bg-blue-50/50 dark:hover:bg-[#0c233d]/70 transition-colors cursor-pointer text-slate-800 dark:text-slate-200"
                   >
-                    <td className={`py-3 px-3 text-center text-slate-500 dark:text-slate-400 font-mono font-normal border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-[11px] ${
-                      isReplacementRow ? 'border-l-4 border-l-amber-400 dark:border-l-amber-500/60' : isCancelled ? 'border-l-4 border-l-rose-400 dark:border-l-rose-500/60' : ''
-                    }`}>
+                    <td className="py-3 px-3 text-center text-slate-500 dark:text-slate-400 font-mono font-normal border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-[10px]">
                       {excelId}
                     </td>
 
-                    <td className="py-3 px-3 font-mono font-normal text-slate-700 dark:text-slate-200 border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-[11px]">
+                    <td className="py-3 px-3 font-mono font-normal text-slate-700 dark:text-slate-200 border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-[10px]">
                       {formatSubmittedDateTime(record)}
                     </td>
 
-                    <td className="py-3 px-3 font-normal text-slate-900 dark:text-white border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-[11px]">
+                    <td className="py-3 px-3 font-normal text-slate-900 dark:text-white border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-[10px]">
                       {record.driverName ? toTitleCase(record.driverName) : "-"}
                     </td>
 
-                    <td className="py-3 px-3 font-normal text-slate-700 dark:text-slate-200 border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-[11px]">
+                    <td className="py-3 px-3 font-normal text-slate-700 dark:text-slate-200 border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-[10px]">
                       {record.phone || "-"}
                     </td>
 
-                    <td className="py-3 px-3 font-mono font-normal text-slate-900 dark:text-white uppercase border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-[11px]">
+                    <td className="py-3 px-3 font-mono font-normal text-slate-900 dark:text-white uppercase border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-[10px]">
                       {record.vrm ? record.vrm.toUpperCase() : "-"}
                     </td>
 
-                    <td className="py-3 px-3 font-mono font-normal border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-[11px]">
+                    <td className="py-3 px-3 font-mono font-normal border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-[10px]">
                       {isBlocked ? (
                         <span className="text-rose-600 dark:text-rose-400 font-normal">
                           BLOCKED
@@ -1605,18 +1553,6 @@ export function DispatchCentre({
                         <span className="text-amber-600 dark:text-amber-400 font-bold bg-amber-50 dark:bg-amber-950/30 px-2 py-0.5 rounded border border-amber-200 dark:border-amber-700/50 inline-flex items-center gap-1.5">
                           <span className="inline-block animate-spin text-[10px]">⟳</span>
                           {displayCode || "-"}
-                          {(() => {
-                            // Find and show original code if available
-                            if (originalCode && originalCode !== displayCode && originalCode !== "CANCELLED" && originalCode !== "BLOCKED" && originalCode !== "-") {
-                              return <span className="text-[9px] text-amber-500/70 dark:text-amber-400/60 line-through ml-1 font-normal">← {originalCode}</span>;
-                            }
-                            return null;
-                          })()}
-                          {replacementCount > 0 && (
-                            <span className="text-[9px] text-amber-500 dark:text-amber-400 ml-0.5 font-bold" title={`Replaced ${replacementCount} time${replacementCount > 1 ? "s" : ""}`}>
-                              ×{replacementCount}
-                            </span>
-                          )}
                         </span>
                       ) : (
                         <span className="text-slate-800 dark:text-slate-200 font-normal">
@@ -1625,8 +1561,8 @@ export function DispatchCentre({
                       )}
                     </td>
 
-                    {/* ⭐ FIXED CODES COLUMN - Per-row voucher count with RED when ≤ 5 remaining */}
-                    <td className="py-3 px-3 border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-center text-[11px]">
+                    {/* ⭐ FIXED CODES COLUMN - Shows count, not VRM */}
+                    <td className="py-3 px-3 border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-center text-[10px]">
                       <div className="flex flex-col items-center justify-center gap-1 mx-auto w-[74px]">
                         <div 
                           className="w-[74px] h-[5px] rounded overflow-hidden"
@@ -1641,7 +1577,7 @@ export function DispatchCentre({
                           />
                         </div>
                         <span 
-                          className="text-[10px] font-bold leading-none select-none tracking-tight"
+                          className="text-[9px] font-medium leading-none select-none tracking-tight"
                           style={{ color: isRowStockLow ? "#b91c1c" : "#15803d" }}
                         >
                           {remainingForRow} left
@@ -1649,53 +1585,53 @@ export function DispatchCentre({
                       </div>
                     </td>
 
-                    <td className="py-3 px-3 font-mono font-normal text-slate-700 dark:text-slate-200 border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-[11px]">
+                    <td className="py-3 px-3 font-mono font-normal text-slate-700 dark:text-slate-200 border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-[10px]">
                       {formatDate(record.dateRequired || record.validFrom)}
                     </td>
 
-                    <td className="py-3 px-3 font-mono font-normal text-slate-700 dark:text-slate-200 border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-[11px]">
+                    <td className="py-3 px-3 font-mono font-normal text-slate-700 dark:text-slate-200 border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-[10px]">
                       {formatDate(expiresIso)}
                     </td>
 
-                    <td className="py-3 px-3 font-normal text-slate-700 dark:text-slate-200 border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-[11px]">
+                    <td className="py-3 px-3 font-normal text-slate-700 dark:text-slate-200 border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-[10px]">
                       {record.ward ? toTitleCase(record.ward) : "-"}
                     </td>
 
-                    <td className="py-3 px-3.5 font-normal text-slate-700 dark:text-slate-200 border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap min-w-[185px] text-[11px]">
+                    <td className="py-3 px-3.5 font-normal text-slate-700 dark:text-slate-200 border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap min-w-[185px] text-[10px]">
                       {hospitalDisplay}
                     </td>
 
-                    <td className="py-3 px-3 text-center border-r border-slate-100 dark:border-[#102947]/60 select-none whitespace-nowrap text-[11px]">
+                    <td className="py-3 px-3 text-center border-r border-slate-100 dark:border-[#102947]/60 select-none whitespace-nowrap text-[10px]">
                       {isBlocked ? (
-                        <span className="border border-rose-300 dark:border-rose-800/60 bg-rose-50 dark:bg-rose-950/30 text-rose-700 dark:text-rose-300 font-bold px-2 py-0.5 rounded text-[10px] tracking-wider uppercase inline-flex items-center justify-center whitespace-nowrap">
+                        <span className="border border-rose-300 dark:border-rose-800/60 bg-rose-50 dark:bg-rose-950/30 text-rose-700 dark:text-rose-300 font-bold px-2 py-0.5 rounded text-[9px] tracking-wider uppercase inline-flex items-center justify-center whitespace-nowrap">
                           BLOCKED
                         </span>
                       ) : (isCancelled || (record.status && record.status.trim().toUpperCase() === "CANCELLED")) ? (
-                        <span className="border border-red-300 dark:border-red-800/60 bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-400 font-bold px-2 py-0.5 rounded text-[10px] tracking-wider uppercase inline-flex items-center justify-center whitespace-nowrap">
+                        <span className="border border-red-300 dark:border-red-800/60 bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-400 font-bold px-2 py-0.5 rounded text-[9px] tracking-wider uppercase inline-flex items-center justify-center whitespace-nowrap">
                           CANCELLED
                         </span>
                       ) : replacementPending ? (
-                        <span className="border border-amber-400 dark:border-amber-500/60 bg-amber-50 dark:bg-amber-950/30 text-amber-700 dark:text-amber-400 font-bold px-2 py-0.5 rounded text-[10px] tracking-wider uppercase inline-flex items-center justify-center gap-1.5 whitespace-nowrap animate-pulse">
-                          <span className="inline-block animate-spin text-[10px]">⟳</span>
+                        <span className="border border-amber-400 dark:border-amber-500/60 bg-amber-50 dark:bg-amber-950/30 text-amber-700 dark:text-amber-400 font-bold px-2 py-0.5 rounded text-[9px] tracking-wider uppercase inline-flex items-center justify-center gap-1.5 whitespace-nowrap animate-pulse">
+                          <span className="inline-block animate-spin text-[9px]">⟳</span>
                           REPLACEMENT
                         </span>
                       ) : isDispatched ? (
-                        <span className="border border-emerald-300 dark:border-[#32D74B]/40 bg-emerald-50 dark:bg-[#32D74B]/15 text-emerald-700 dark:text-[#32D74B] font-bold px-2 py-0.5 rounded text-[10px] tracking-wider uppercase inline-flex items-center justify-center gap-1 whitespace-nowrap">
+                        <span className="border border-emerald-300 dark:border-[#32D74B]/40 bg-emerald-50 dark:bg-[#32D74B]/15 text-emerald-700 dark:text-[#32D74B] font-bold px-2 py-0.5 rounded text-[9px] tracking-wider uppercase inline-flex items-center justify-center gap-1 whitespace-nowrap">
                           <span>✅</span>
                           <span>SENT</span>
                         </span>
                       ) : isUnsent ? (
-                        <span className="border border-sky-300 dark:border-[#42A5F5]/40 bg-sky-50 dark:bg-[#42A5F5]/15 text-sky-700 dark:text-[#42A5F5] font-bold px-2 py-0.5 rounded text-[10px] tracking-wider uppercase inline-flex items-center justify-center whitespace-nowrap">
+                        <span className="border border-sky-300 dark:border-[#42A5F5]/40 bg-sky-50 dark:bg-[#42A5F5]/15 text-sky-700 dark:text-[#42A5F5] font-bold px-2 py-0.5 rounded text-[9px] tracking-wider uppercase inline-flex items-center justify-center whitespace-nowrap">
                           UNSENT
                         </span>
                       ) : (
-                        <span className="border border-amber-300 dark:border-[#FF9F0A]/40 bg-amber-50 dark:bg-[#FF9F0A]/15 text-amber-700 dark:text-[#FF9F0A] font-bold px-2 py-0.5 rounded text-[10px] tracking-wider uppercase inline-flex items-center justify-center whitespace-nowrap">
+                        <span className="border border-amber-300 dark:border-[#FF9F0A]/40 bg-amber-50 dark:bg-[#FF9F0A]/15 text-amber-700 dark:text-[#FF9F0A] font-bold px-2 py-0.5 rounded text-[9px] tracking-wider uppercase inline-flex items-center justify-center whitespace-nowrap">
                           PENDING
                         </span>
                       )}
                     </td>
 
-                    <td className="py-3 px-3 text-center whitespace-nowrap text-[11px]" onClick={e => e.stopPropagation()}>
+                    <td className="py-3 px-3 text-center whitespace-nowrap text-[10px]" onClick={e => e.stopPropagation()}>
                       <div className="inline-flex items-center justify-center gap-1.5 rounded-md">
                         <button
                           type="button"
@@ -1707,7 +1643,7 @@ export function DispatchCentre({
                               onSelectRecord(record);
                             }
                           }}
-                          className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-normal text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded shadow-xs hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-blue-600 dark:hover:text-blue-400 cursor-pointer transition-colors"
+                          className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded shadow-xs hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-blue-600 dark:hover:text-blue-400 cursor-pointer transition-colors"
                           title="Edit Record"
                         >
                           <Pencil className="w-2.5 h-2.5 text-slate-500 dark:text-slate-400" />
@@ -1718,10 +1654,8 @@ export function DispatchCentre({
                             type="button" 
                             disabled={busyKey === rowKey || isBlocked} 
                             onClick={() => { if (!isBlocked) handleAction(record, isDispatched, replacementPending); }} 
-                            title={isBlocked ? "This VRM is on the Manage Blocklist — dispatch disabled" : 
-                                   replacementPending ? "Resend replacement QR code" : 
-                                   isDispatched ? "Unsend this permit" : "Send this permit"}
-                            className={`flex items-center gap-1 px-2 py-0.5 text-white text-[10px] font-normal transition-colors disabled:opacity-50 whitespace-nowrap ${
+                            title={isBlocked ? "This VRM is on the Manage Blocklist — dispatch disabled" : undefined}
+                            className={`flex items-center gap-1 px-2 py-0.5 text-white text-[10px] font-medium transition-colors disabled:opacity-50 whitespace-nowrap ${
                               isBlocked
                                 ? "bg-slate-400 dark:bg-slate-700 cursor-not-allowed opacity-60"
                                 : "cursor-pointer " + (replacementPending
@@ -1750,12 +1684,12 @@ export function DispatchCentre({
                               isBlocked
                                 ? "bg-slate-500/80 dark:bg-slate-600/80 cursor-not-allowed opacity-60 border-l border-slate-600"
                                 : "cursor-pointer " + (replacementPending
-                                  ? "bg-amber-700 hover:bg-amber-800 border-l border-amber-800"
+                                  ? "bg-amber-700 hover:bg-amber-800 border-l border-amber-600"
                                   : isDispatched
                                     ? "bg-[#b91c1c] hover:bg-[#991b1b] border-l border-[#991b1b]"
                                     : "bg-[#1565d8] hover:bg-[#0f4eb0] border-l border-[#0f4eb0]")
                             }`}
-                            title={isBlocked ? "Disabled" : (replacementPending ? "Resend options" : "Select Record")}
+                            title={isBlocked ? "Disabled" : "Select Record"}
                           >
                             <ChevronDown className="w-2.5 h-2.5" />
                           </button>
@@ -1792,14 +1726,13 @@ export function DispatchCentre({
         </div>
       </div>
 
-      {/* Pagination Controls Bar */}
       <div className="flex flex-col sm:flex-row items-center justify-between gap-3.5 mt-3 px-1 text-xs text-slate-600 dark:text-slate-300">
         <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto justify-between sm:justify-start">
-          <div className="font-normal text-slate-700 dark:text-slate-300">
-            Showing <span className="font-medium text-slate-900 dark:text-white">{totalFilteredCount === 0 ? 0 : (startIndex + 1).toLocaleString()}</span>
+          <div className="font-medium text-slate-700 dark:text-slate-300">
+            Showing <span className="font-semibold text-slate-900 dark:text-white">{totalFilteredCount === 0 ? 0 : (startIndex + 1).toLocaleString()}</span>
             {" – "}
-            <span className="font-medium text-slate-900 dark:text-white">{endIndex.toLocaleString()}</span> of{" "}
-            <span className="font-medium text-slate-900 dark:text-white">{totalFilteredCount.toLocaleString()}</span> permits
+            <span className="font-semibold text-slate-900 dark:text-white">{endIndex.toLocaleString()}</span> of{" "}
+            <span className="font-semibold text-slate-900 dark:text-white">{totalFilteredCount.toLocaleString()}</span> permits
           </div>
 
           <div className="flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400">
@@ -1840,7 +1773,7 @@ export function DispatchCentre({
               {pageNumbers.map((p, idx) => {
                 if (typeof p === "string") {
                   return (
-                    <span key={`ellipsis-${idx}`} className="px-1 text-slate-400 font-normal select-none">
+                    <span key={`ellipsis-${idx}`} className="px-1 text-slate-400 font-medium select-none">
                       ...
                     </span>
                   );
@@ -1851,7 +1784,7 @@ export function DispatchCentre({
                     key={p}
                     type="button"
                     onClick={() => setCurrentPage(p)}
-                    className={`min-w-[32px] h-8 px-2 rounded-lg text-xs font-normal transition cursor-pointer ${
+                    className={`min-w-[32px] h-8 px-2 rounded-lg text-xs font-medium transition cursor-pointer ${
                       isActive
                         ? "bg-blue-600 text-white shadow-sm shadow-blue-500/30"
                         : "bg-white dark:bg-[#071b30] hover:bg-slate-100 dark:hover:bg-[#0c2847] border border-slate-300 dark:border-[#1e436c] text-slate-700 dark:text-slate-200"

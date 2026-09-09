@@ -319,7 +319,6 @@ export function generateNextFormId(records: CsvPermitRecord[]): string {
 }
 
 export function formatExportStartTime(dateRequired?: string, startTime?: string, completionTime?: string): string {
-  // ✅ PRIORITY: completionTime → startTime → dateRequired
   const targetRaw = completionTime || startTime || dateRequired || "";
   if (!targetRaw) return "-";
 
@@ -353,10 +352,6 @@ export function formatExportCreatedAt(createdAt?: string, created_at?: string, s
   return "-";
 }
 
-/**
- * Format the record's submitted timestamp for the table display as DD/MM/YYYY HH:MM:SS.
- * Priority: completionTime → startTime → createdAt
- */
 export function formatSubmittedDateTime(record: CsvPermitRecord): string {
   if (!record) return "-";
 
@@ -1631,10 +1626,6 @@ export interface ParsedVoucherData {
   [key: string]: any;
 }
 
-/**
- * ⭐ FIXED: Clean and normalize voucher dates from various formats
- * Now properly handles ISO 8601 with time: "2026-09-02T00:00:00"
- */
 export function cleanVoucherDate(val: any): string {
   if (val === undefined || val === null) return "";
   
@@ -1648,7 +1639,6 @@ export function cleanVoucherDate(val: any): string {
   const s = String(val).trim();
   if (!s || s === "-" || s === "—" || s === "N/A" || s === "NA") return "";
 
-  // ⭐ KEY FIX: Handle ISO 8601 with time: "2026-09-02T00:00:00" → "2026-09-02"
   if (s.includes('T')) {
     const datePart = s.split('T')[0];
     if (/^\d{4}-\d{2}-\d{2}$/.test(datePart)) {
@@ -1656,10 +1646,8 @@ export function cleanVoucherDate(val: any): string {
     }
   }
 
-  // Already in YYYY-MM-DD format
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
 
-  // Handle Excel serial numbers
   if (!isNaN(Number(s)) && Number(s) > 30000 && Number(s) < 60000) {
     const d = new Date((Number(s) - 25569) * 86400 * 1000);
     if (!isNaN(d.getTime())) {
@@ -1670,13 +1658,11 @@ export function cleanVoucherDate(val: any): string {
     }
   }
 
-  // Handle date ranges like "02/09/2026 - 12/09/2026"
   const range = parseDateRange(s);
   if (range && range.startISO) {
     return range.startISO;
   }
 
-  // Handle DD/MM/YYYY or other formats
   const parsedIso = parseDateToISO(s);
   if (parsedIso && /^\d{4}-\d{2}-\d{2}$/.test(parsedIso)) {
     return parsedIso;
@@ -2188,23 +2174,18 @@ export function isVoucherInValidityPeriod(
   const vFrom = rawFrom ? (parseDateToISO(String(rawFrom)) || "") : "";
   const vTo = rawTo ? (parseDateToISO(String(rawTo)) || "") : "";
 
-  // Range matching: validFrom <= targetDate <= validTo
-  // 1. Both bounds present: target date must fall within the range (inclusive)
   if (vFrom && vTo) {
     return targetDateISO >= vFrom && targetDateISO <= vTo;
   }
 
-  // 2. Only validFrom present (open-ended): target date must be on or after validFrom
   if (vFrom && !vTo) {
     return targetDateISO >= vFrom;
   }
 
-  // 3. Only validTo present (no defined start): target date must be on or before validTo
   if (!vFrom && vTo) {
     return targetDateISO <= vTo;
   }
 
-  // 4. Neither bound present: no date restriction
   return true;
 }
 
@@ -2236,7 +2217,6 @@ export function isRecordCancelledCanonical(record: any, todayDateOrReference?: s
     : "";
   const dateRequired = record.dateRequired || record.validFrom || "";
   if (isDateRequiredOutsideValidWindow(dateRequired, referenceDate)) return true;
-  // CANCELLED and BLOCKED are completely decoupled.
   return false;
 }
 
@@ -2410,8 +2390,6 @@ export function getUnusedVouchersForDate(
     .toUpperCase()
     .replace(/[^A-Z0-9]/g, "");
 
-  // 1. Strict validity periods: ValidFrom <= Target Date <= ValidTo
-  // Eliminate ALL fallbacks to the full vouchersDatabase when no date matches
   const dailyVouchersForDate = vouchersDatabase.filter((v) => {
     return isVoucherInValidityPeriod(v, targetDateISO);
   });
@@ -2475,7 +2453,6 @@ export function getUnusedVouchersForDate(
   const collectAssignedCodesFromRecord = (permit: any) => {
     if (!permit) return;
 
-    // Cancelled or blocked permits MUST NOT consume vouchers - they release their codes back to the pool
     const reqDate = getRequestedPermitDateISO(permit, targetDateISO);
     if (
       isVrmSilentBlockedSync(permit.vrm) ||
@@ -3051,7 +3028,6 @@ export function isRecordCancelled(
     return true;
   }
 
-  // CANCELLED and BLOCKED are completely decoupled.
   return false;
 }
 
@@ -3075,4 +3051,77 @@ export function resolvePermitDate(record?: any): string {
     if (iso) return iso;
   }
   return getTodayISO();
+}
+
+// ⭐ ============================================================
+// ⭐ NEW: VRM VALIDATION FUNCTIONS
+// ⭐ Add these at the end of the file
+// ⭐ ============================================================
+
+/**
+ * Validate if a string is a valid UK VRM (Vehicle Registration Mark)
+ * Valid formats:
+ * - AA12AAA (2 letters, 2 numbers, 3 letters)
+ * - AB12CDE (2 letters, 2 numbers, 3 letters)
+ * - A123ABC (1 letter, 3 numbers, 3 letters) - older format
+ */
+export function isValidVRM(vrm: string): boolean {
+  if (!vrm) return false;
+  const clean = vrm.trim().toUpperCase().replace(/\s+/g, "");
+  if (clean.length < 4) return false;
+  
+  // UK VRM patterns
+  const ukPattern = /^[A-Z]{2}[0-9]{2}[A-Z]{3}$/;   // AA12AAA
+  const oldPattern = /^[A-Z][0-9]{3}[A-Z]{3}$/;     // A123ABC
+  
+  return ukPattern.test(clean) || oldPattern.test(clean);
+}
+
+/**
+ * Detect if a string is likely a driver name (not a VRM)
+ * Used to catch cases where users enter their name in the VRM field
+ */
+export function isLikelyDriverName(text: string): boolean {
+  if (!text) return false;
+  const s = text.trim().toUpperCase().replace(/\s+/g, "");
+  
+  // If it contains numbers, it's probably a VRM
+  if (/\d/.test(s)) return false;
+  
+  // If it's all letters and longer than 7 characters, it's probably a name
+  if (/^[A-Z]+$/.test(s) && s.length > 7) return true;
+  
+  // Common name patterns
+  const commonNames = ["JOHN", "PETER", "DAVID", "SARAH", "ALASTAIR", "ABDULLAH", "MOHAMMED", "MARY", "JAMES", "ROBERT", "MICHAEL", "WILLIAM"];
+  if (commonNames.some(name => s.includes(name))) return true;
+  
+  return false;
+}
+
+/**
+ * Clean VRM field - if it looks like a name, move it to driver name field
+ * Returns { vrm, driverName } with corrected values
+ */
+export function cleanVrm(value: string, driverName: string): { vrm: string; driverName: string } {
+  const raw = (value || "").trim().toUpperCase();
+  
+  if (!raw) return { vrm: "", driverName };
+  
+  // If VRM looks like a name, move it to driver name
+  if (isLikelyDriverName(raw)) {
+    const newDriverName = driverName ? `${driverName} ${toTitleCase(raw)}` : toTitleCase(raw);
+    console.log(`🔄 Auto-corrected VRM: "${raw}" → moved to driver name as "${newDriverName}"`);
+    return { vrm: "PENDING", driverName: newDriverName };
+  }
+  
+  // Clean VRM: remove spaces, keep only valid characters
+  const cleanVrm = raw.replace(/[^A-Z0-9]/g, "");
+  return { vrm: cleanVrm, driverName };
+}
+
+/**
+ * Check if a VRM is pending (needs correction)
+ */
+export function isVrmPending(vrm: string): boolean {
+  return vrm === "PENDING" || vrm === "PENDING_CORRECTION";
 }
