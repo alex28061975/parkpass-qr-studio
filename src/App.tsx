@@ -169,6 +169,16 @@ export function enrichRecordsWithVouchers(
     }
     const custAssignedSet = assignedPerCustomer.get(customerKey)!;
     const reqIso = getRequestedPermitDateISO(record, fallbackDateStr);
+
+    // Cancelled or blocked permits MUST NOT claim or consume vouchers
+    if (
+      isVrmSilentBlockedSync(record.vrm) ||
+      record.isCancelled === true ||
+      isRecordCancelled(record, reqIso || fallbackDateStr, recordsList)
+    ) {
+      return;
+    }
+
     const keyWithDate = (reqIso && cleanVrm) ? `${cleanVrm}_${reqIso}` : "";
     const customOverride = (record.formId ? customVouchersMap[String(record.formId)] : undefined) ||
                            (record.id ? customVouchersMap[String(record.id)] : undefined) ||
@@ -210,6 +220,16 @@ export function enrichRecordsWithVouchers(
       return;
     }
 
+    if (record.isCancelled === true || isRecordCancelled(record, reqDateD || fallbackDateStr, recordsList)) {
+      enrichedByIndex.set(index, {
+        ...record,
+        voucherCode: "CANCELLED",
+        prePaidCode: "CANCELLED",
+        hasOriginalVoucher: false
+      });
+      return;
+    }
+
     const claimed = recordClaimedCodes.get(index);
     if (claimed) {
       enrichedByIndex.set(index, {
@@ -217,16 +237,6 @@ export function enrichRecordsWithVouchers(
         voucherCode: claimed,
         prePaidCode: claimed,
         hasOriginalVoucher: true
-      });
-      return;
-    }
-
-    if (record.isCancelled === true || isRecordCancelled(record, reqDateD || fallbackDateStr, recordsList)) {
-      enrichedByIndex.set(index, {
-        ...record,
-        voucherCode: "CANCELLED",
-        prePaidCode: "CANCELLED",
-        hasOriginalVoucher: false
       });
       return;
     }
@@ -1478,8 +1488,8 @@ export default function App() {
     const enrichedRecord = (record.id ? enrichedDatabase.find(r => r.id === record.id) : null) || 
                            (record.formId ? enrichedDatabase.find(r => r.formId === record.formId) : null) || 
                            record;
-    const fromISO = parseDateToISO(enrichedRecord.dateRequired) || getTodayISO();
-    const toISO = addDays(fromISO, 6);
+    const fromISO = getRequestedPermitDateISO(enrichedRecord) || parseDateToISO(enrichedRecord.validFrom || enrichedRecord.dateRequired) || getTodayISO();
+    const toISO = enrichedRecord.validTo ? (parseDateToISO(enrichedRecord.validTo) || addDays(fromISO, 6)) : addDays(fromISO, 6);
 
     const isRecordDispatched = checkIsRecordDispatched(
       enrichedRecord,
@@ -1519,8 +1529,8 @@ export default function App() {
     const enrichedRecord = (record.id ? enrichedDatabase.find(r => r.id === record.id) : null) || 
                            (record.formId ? enrichedDatabase.find(r => r.formId === record.formId) : null) || 
                            record;
-    const fromISO = parseDateToISO(enrichedRecord.dateRequired) || getTodayISO();
-    const toISO = addDays(fromISO, 6);
+    const fromISO = getRequestedPermitDateISO(enrichedRecord) || parseDateToISO(enrichedRecord.validFrom || enrichedRecord.dateRequired) || getTodayISO();
+    const toISO = enrichedRecord.validTo ? (parseDateToISO(enrichedRecord.validTo) || addDays(fromISO, 6)) : addDays(fromISO, 6);
 
     const isRecordDispatched = checkIsRecordDispatched(
       enrichedRecord,

@@ -20,7 +20,8 @@ import {
   resolvePermitDate,
   isRecordCancelled,
   getRequestedPermitDateISO,
-  getVoucherDateISO
+  getVoucherDateISO,
+  isVoucherInValidityPeriod
 } from "../utils/csvParser";
 import { getRecordKeys, checkIsRecordDispatched, getRecordPrimaryKey } from "../utils/dispatchUtils";
 import { 
@@ -227,10 +228,7 @@ function PermitCardInner({
       matchingPermits
     );
 
-    const dateFiltered = vouchers.filter(v => {
-      const vIso = getVoucherDateISO(v);
-      return !vIso || vIso === targetIso;
-    });
+    const dateFiltered = vouchers.filter(v => isVoucherInValidityPeriod(v, targetIso));
 
     const spreadsheetAssignedCodes = getSpreadsheetMatchingAssignedCodes(
       matchingPermits,

@@ -17,6 +17,7 @@ import {
   isSamePermitRecord,
   cleanVoucherCodeValue,
   isVoucherCodeMatch,
+  isVoucherInValidityPeriod,
   isRecordCancelledCanonical as isCancelled
 } from "../utils/csvParser";
 import { 
@@ -117,11 +118,8 @@ export function PermitForm({
       matchingPermits
     );
 
-    // Filter to vouchers matching targetIso (or generic pool)
-    const dateFiltered = vouchers.filter(v => {
-      const vIso = getVoucherDateISO(v);
-      return !vIso || vIso === targetIso;
-    });
+    // Filter to vouchers matching targetIso validity period
+    const dateFiltered = vouchers.filter(v => isVoucherInValidityPeriod(v, targetIso));
 
     const spreadsheetAssignedCodes = getSpreadsheetMatchingAssignedCodes(
       matchingPermits,
@@ -134,12 +132,9 @@ export function PermitForm({
       return !spreadsheetAssignedCodes.has(codeUpper);
     });
 
-    // Total vouchers for the selected target date
-    const dailyVouchers = (vouchersDatabase || []).filter(v => {
-      const vIso = getVoucherDateISO(v);
-      return vIso === targetIso;
-    });
-    const totalForDate = dailyVouchers.length > 0 ? dailyVouchers.length : (vouchersDatabase?.length || 0);
+    // Total vouchers for the selected target date (strict validity period, no fallback)
+    const dailyVouchers = (vouchersDatabase || []).filter(v => isVoucherInValidityPeriod(v, targetIso));
+    const totalForDate = dailyVouchers.length;
     const assignedCount = Math.max(0, totalForDate - finalFiltered.length);
 
     console.log('🔍 Unused Codes Debug:', {

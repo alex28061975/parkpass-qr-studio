@@ -2156,20 +2156,58 @@ export function getVoucherDateISO(voucher: ParsedVoucherData | undefined | null)
   return vIso && /^\d{4}-\d{2}-\d{2}$/.test(vIso) ? vIso : "";
 }
 
+export function isVoucherInValidityPeriod(
+  voucher: ParsedVoucherData | undefined | null,
+  targetDateStr: string
+): boolean {
+  if (!voucher || !voucher.code || !targetDateStr) return false;
+  const cleanCode = cleanVoucherCodeValue(voucher.code).toUpperCase();
+  if (!cleanCode || cleanCode === "-" || cleanCode === "CANCELLED" || cleanCode === "PENDING") {
+    return false;
+  }
+
+  const targetDateISO = parseDateToISO(targetDateStr) || targetDateStr;
+  if (!targetDateISO || !/^\d{4}-\d{2}-\d{2}$/.test(targetDateISO)) return false;
+
+  const rawFrom = voucher.validFrom ||
+                  voucher.valid_from ||
+                  voucher.ValidFrom ||
+                  voucher.startDate ||
+                  voucher.start_date ||
+                  voucher.date ||
+                  voucher.dateRequired ||
+                  voucher.uploadDate;
+  const rawTo = voucher.validTo ||
+                voucher.valid_to ||
+                voucher.ValidTo ||
+                voucher.endDate ||
+                voucher.end_date;
+
+  const vFrom = rawFrom ? (parseDateToISO(String(rawFrom)) || "") : "";
+  const vTo = rawTo ? (parseDateToISO(String(rawTo)) || "") : "";
+
+  // Strict validity period matching:
+  // 1. If voucher has a start date (ValidFrom), it MUST match the permit's requested start date
+  if (vFrom) {
+    if (vFrom !== targetDateISO) {
+      return false;
+    }
+    return true;
+  }
+
+  // 2. If voucher only has validTo, target date must be on or before validTo
+  if (!vFrom && vTo) {
+    return targetDateISO <= vTo;
+  }
+
+  return false;
+}
+
 export function isVoucherExactPeriodEligible(
   voucher: ParsedVoucherData | undefined | null,
   requestedDateStr: string
 ): boolean {
-  if (!voucher || !voucher.code) return false;
-  const cleanCode = cleanVoucherCodeValue(voucher.code).toUpperCase();
-  if (!cleanCode || cleanCode === "-" || cleanCode === "CANCELLED") return false;
-
-  if (!requestedDateStr) return false;
-  const dIso = parseDateToISO(requestedDateStr);
-  if (!dIso || !/^\d{4}-\d{2}-\d{2}$/.test(dIso)) return false;
-
-  const vIso = getVoucherDateISO(voucher);
-  return vIso === dIso;
+  return isVoucherInValidityPeriod(voucher, requestedDateStr);
 }
 
 export function isRecordCancelledCanonical(record: any, todayDateOrReference?: string, database?: CsvPermitRecord[]): boolean {
@@ -2193,9 +2231,7 @@ export function isRecordCancelledCanonical(record: any, todayDateOrReference?: s
     : "";
   const dateRequired = record.dateRequired || record.validFrom || "";
   if (isDateRequiredOutsideValidWindow(dateRequired, referenceDate)) return true;
-  if (database && database.length > 0) {
-    if (checkIsBlockedDuplicate(record, database, referenceDate)) return true;
-  }
+  // CANCELLED and BLOCKED are completely decoupled.
   return false;
 }
 
@@ -2233,6 +2269,11 @@ export function getSpreadsheetMatchingAllocationsMap(
       return;
     }
 
+    if (isRecordCancelledCanonical(r, reqDate || processingDate, effectiveDatabase)) {
+      map.set(recordKey, "CANCELLED");
+      return;
+    }
+
     if (customVouchersMap) {
       const rVrm = (r.vrm || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
       const rDateIso = reqDate;
@@ -2265,11 +2306,6 @@ export function getSpreadsheetMatchingAllocationsMap(
         internalAssignedSet.add(clean);
         return;
       }
-    }
-
-    if (isRecordCancelledCanonical(r, reqDate || processingDate, effectiveDatabase)) {
-      map.set(recordKey, "CANCELLED");
-      return;
     }
   });
 
@@ -2369,14 +2405,14 @@ export function getUnusedVouchersForDate(
     .toUpperCase()
     .replace(/[^A-Z0-9]/g, "");
 
-  let dailyVouchersForDate = vouchersDatabase.filter((v) => {
-    if (!v) return false;
-    return getVoucherDateISO(v) === targetDateISO;
+  // 1. Strict validity periods: ValidFrom <= Target Date <= ValidTo
+  // Eliminate ALL fallbacks to the full vouchersDatabase when no date matches
+  const dailyVouchersForDate = vouchersDatabase.filter((v) => {
+    return isVoucherInValidityPeriod(v, targetDateISO);
   });
 
   if (dailyVouchersForDate.length === 0) {
-    const undated = vouchersDatabase.filter((v) => !getVoucherDateISO(v));
-    dailyVouchersForDate = undated.length > 0 ? undated : vouchersDatabase;
+    return [];
   }
 
   const dailyVouchersMap = new Map<string, ParsedVoucherData>();
@@ -2433,6 +2469,16 @@ export function getUnusedVouchersForDate(
 
   const collectAssignedCodesFromRecord = (permit: any) => {
     if (!permit) return;
+
+    // Cancelled or blocked permits MUST NOT consume vouchers - they release their codes back to the pool
+    const reqDate = getRequestedPermitDateISO(permit, targetDateISO);
+    if (
+      isVrmSilentBlockedSync(permit.vrm) ||
+      isRecordCancelledCanonical(permit, reqDate || targetDateISO, database) ||
+      isRecordCancelled(permit, reqDate || targetDateISO, database)
+    ) {
+      return;
+    }
 
     consumeAssignedCode(permit.voucherCode);
     consumeAssignedCode(permit.prePaidCode);
@@ -3000,12 +3046,7 @@ export function isRecordCancelled(
     return true;
   }
 
-  if (database && database.length > 0) {
-    if (checkIsBlockedDuplicate(record, database, referenceDate)) {
-      return true;
-    }
-  }
-
+  // CANCELLED and BLOCKED are completely decoupled.
   return false;
 }
 
