@@ -853,7 +853,7 @@ export function DispatchCentre({
   const renderSortIndicator = (key: SortKey) => {
     if (sortKey === key) {
       return (
-        <span className="inline-flex items-center ml-1 text-[#38bdf8] font-normal text-[10px] animate-pulse">
+        <span className="inline-flex items-center ml-1 text-[#38bdf8] font-bold text-[11px] animate-pulse">
           {sortDirection === "asc" ? "▲" : "▼"}
         </span>
       );
@@ -1267,13 +1267,13 @@ export function DispatchCentre({
       <div className="w-full mt-4 border border-slate-200 dark:border-[#163657] rounded-xl bg-white dark:bg-[#061424] overflow-hidden shadow-xs dark:shadow-inner">
         <div className="overflow-x-auto w-full">
           <table className="min-w-[1180px] w-full text-xs text-left border-collapse table-auto">
-            <thead className="bg-slate-50 dark:bg-[#081b30] border-b border-slate-200 dark:border-[#163657] text-slate-600 dark:text-slate-300 font-normal uppercase tracking-wider text-[10px] sticky top-0 z-10 select-none">
+            <thead className="bg-slate-50 dark:bg-[#081b30] border-b border-slate-200 dark:border-[#163657] text-slate-600 dark:text-slate-300 font-bold uppercase tracking-wider text-[11px] sticky top-0 z-10 select-none">
               <tr>
                 <th 
                   scope="col" 
                   onClick={() => handleSort("id")}
-                  className={`py-3 px-3 text-center w-12 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none text-[10px] font-normal uppercase tracking-wider ${
-                    sortKey === "id" ? "bg-blue-50 text-blue-700 dark:bg-[#0c2847] dark:text-[#38bdf8] font-normal" : "hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-[#0b2440] dark:hover:text-white"
+                  className={`py-3 px-3 text-center w-12 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none text-[11px] font-bold uppercase tracking-wider ${
+                    sortKey === "id" ? "bg-blue-50 text-blue-700 dark:bg-[#0c2847] dark:text-[#38bdf8] font-bold" : "hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-[#0b2440] dark:hover:text-white"
                   }`}
                   title="Click to sort by Number"
                 >
@@ -1286,8 +1286,8 @@ export function DispatchCentre({
                 <th 
                   scope="col" 
                   onClick={() => handleSort("submitted")}
-                  className={`py-3 px-3 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none text-[10px] font-normal uppercase tracking-wider ${
-                    sortKey === "submitted" ? "bg-blue-50 text-blue-700 dark:bg-[#0c2847] dark:text-[#38bdf8] font-normal" : "hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-[#0b2440] dark:hover:text-white"
+                  className={`py-3 px-3 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none text-[11px] font-bold uppercase tracking-wider ${
+                    sortKey === "submitted" ? "bg-blue-50 text-blue-700 dark:bg-[#0c2847] dark:text-[#38bdf8] font-bold" : "hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-[#0b2440] dark:hover:text-white"
                   }`}
                   title="Click to sort by Submitted timestamp"
                 >
@@ -1300,8 +1300,8 @@ export function DispatchCentre({
                 <th 
                   scope="col" 
                   onClick={() => handleSort("driverName")}
-                  className={`py-3 px-3 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none text-[10px] font-normal uppercase tracking-wider ${
-                    sortKey === "driverName" ? "bg-blue-50 text-blue-700 dark:bg-[#0c2847] dark:text-[#38bdf8] font-normal" : "hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-[#0b2440] dark:hover:text-white"
+                  className={`py-3 px-3 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none text-[11px] font-bold uppercase tracking-wider ${
+                    sortKey === "driverName" ? "bg-blue-50 text-blue-700 dark:bg-[#0c2847] dark:text-[#38bdf8] font-bold" : "hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-[#0b2440] dark:hover:text-white"
                   }`}
                   title="Click to sort by Driver's Name"
                 >
@@ -1313,7 +1313,7 @@ export function DispatchCentre({
 
                 <th
                   scope="col"
-                  className="py-3 px-3 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap text-[10px] font-normal uppercase tracking-wider"
+                  className="py-3 px-3 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap text-[11px] font-bold uppercase tracking-wider"
                 >
                   PHONE
                 </th>
@@ -1321,8 +1321,8 @@ export function DispatchCentre({
                 <th 
                   scope="col" 
                   onClick={() => handleSort("vrm")}
-                  className={`py-3 px-3 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none text-[10px] font-normal uppercase tracking-wider ${
-                    sortKey === "vrm" ? "bg-blue-50 text-blue-700 dark:bg-[#0c2847] dark:text-[#38bdf8] font-normal" : "hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-[#0b2440] dark:hover:text-white"
+                  className={`py-3 px-3 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none text-[11px] font-bold uppercase tracking-wider ${
+                    sortKey === "vrm" ? "bg-blue-50 text-blue-700 dark:bg-[#0c2847] dark:text-[#38bdf8] font-bold" : "hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-[#0b2440] dark:hover:text-white"
                   }`}
                   title="Click to sort by VRM"
                 >
@@ -1335,8 +1335,8 @@ export function DispatchCentre({
                 <th 
                   scope="col" 
                   onClick={() => handleSort("voucherCode")}
-                  className={`py-3 px-3 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none text-[10px] font-normal uppercase tracking-wider ${
-                    sortKey === "voucherCode" ? "bg-blue-50 text-blue-700 dark:bg-[#0c2847] dark:text-[#38bdf8] font-normal" : "hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-[#0b2440] dark:hover:text-white"
+                  className={`py-3 px-3 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none text-[11px] font-bold uppercase tracking-wider ${
+                    sortKey === "voucherCode" ? "bg-blue-50 text-blue-700 dark:bg-[#0c2847] dark:text-[#38bdf8] font-bold" : "hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-[#0b2440] dark:hover:text-white"
                   }`}
                   title="Click to sort by Voucher Code"
                 >
@@ -1348,7 +1348,7 @@ export function DispatchCentre({
 
                 <th 
                   scope="col" 
-                  className="py-3 px-3 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap text-center select-none w-[90px] min-w-[90px] text-[10px] font-normal uppercase tracking-wider"
+                  className="py-3 px-3 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap text-center select-none w-[90px] min-w-[90px] text-[11px] font-bold uppercase tracking-wider"
                 >
                   <div className="flex items-center justify-center">
                     <span>CODES</span>
@@ -1358,8 +1358,8 @@ export function DispatchCentre({
                 <th 
                   scope="col" 
                   onClick={() => handleSort("validFrom")}
-                  className={`py-3 px-3 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none text-[10px] font-normal uppercase tracking-wider ${
-                    sortKey === "validFrom" ? "bg-blue-50 text-blue-700 dark:bg-[#0c2847] dark:text-[#38bdf8] font-normal" : "hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-[#0b2440] dark:hover:text-white"
+                  className={`py-3 px-3 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none text-[11px] font-bold uppercase tracking-wider ${
+                    sortKey === "validFrom" ? "bg-blue-50 text-blue-700 dark:bg-[#0c2847] dark:text-[#38bdf8] font-bold" : "hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-[#0b2440] dark:hover:text-white"
                   }`}
                   title="Click to sort by Valid From date"
                 >
@@ -1372,8 +1372,8 @@ export function DispatchCentre({
                 <th 
                   scope="col" 
                   onClick={() => handleSort("validTo")}
-                  className={`py-3 px-3 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none text-[10px] font-normal uppercase tracking-wider ${
-                    sortKey === "validTo" ? "bg-blue-50 text-blue-700 dark:bg-[#0c2847] dark:text-[#38bdf8] font-normal" : "hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-[#0b2440] dark:hover:text-white"
+                  className={`py-3 px-3 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none text-[11px] font-bold uppercase tracking-wider ${
+                    sortKey === "validTo" ? "bg-blue-50 text-blue-700 dark:bg-[#0c2847] dark:text-[#38bdf8] font-bold" : "hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-[#0b2440] dark:hover:text-white"
                   }`}
                   title="Click to sort by Valid To date"
                 >
@@ -1386,8 +1386,8 @@ export function DispatchCentre({
                 <th 
                   scope="col" 
                   onClick={() => handleSort("ward")}
-                  className={`py-3 px-3 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none text-[10px] font-normal uppercase tracking-wider ${
-                    sortKey === "ward" ? "bg-blue-50 text-blue-700 dark:bg-[#0c2847] dark:text-[#38bdf8] font-normal" : "hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-[#0b2440] dark:hover:text-white"
+                  className={`py-3 px-3 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none text-[11px] font-bold uppercase tracking-wider ${
+                    sortKey === "ward" ? "bg-blue-50 text-blue-700 dark:bg-[#0c2847] dark:text-[#38bdf8] font-bold" : "hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-[#0b2440] dark:hover:text-white"
                   }`}
                   title="Click to sort by Ward"
                 >
@@ -1400,8 +1400,8 @@ export function DispatchCentre({
                 <th 
                   scope="col" 
                   onClick={() => handleSort("hospital")}
-                  className={`py-3 px-3.5 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap min-w-[185px] cursor-pointer transition-colors group select-none text-[10px] font-normal uppercase tracking-wider ${
-                    sortKey === "hospital" ? "bg-blue-50 text-blue-700 dark:bg-[#0c2847] dark:text-[#38bdf8] font-normal" : "hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-[#0b2440] dark:hover:text-white"
+                  className={`py-3 px-3.5 border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap min-w-[185px] cursor-pointer transition-colors group select-none text-[11px] font-bold uppercase tracking-wider ${
+                    sortKey === "hospital" ? "bg-blue-50 text-blue-700 dark:bg-[#0c2847] dark:text-[#38bdf8] font-bold" : "hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-[#0b2440] dark:hover:text-white"
                   }`}
                   title="Click to sort by Hospital Site"
                 >
@@ -1414,8 +1414,8 @@ export function DispatchCentre({
                 <th 
                   scope="col" 
                   onClick={() => handleSort("status")}
-                  className={`py-3 px-3 text-center border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none text-[10px] font-normal uppercase tracking-wider ${
-                    sortKey === "status" ? "bg-blue-50 text-blue-700 dark:bg-[#0c2847] dark:text-[#38bdf8] font-normal" : "hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-[#0b2440] dark:hover:text-white"
+                  className={`py-3 px-3 text-center border-r border-slate-200 dark:border-[#143252]/50 whitespace-nowrap cursor-pointer transition-colors group select-none text-[11px] font-bold uppercase tracking-wider ${
+                    sortKey === "status" ? "bg-blue-50 text-blue-700 dark:bg-[#0c2847] dark:text-[#38bdf8] font-bold" : "hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-[#0b2440] dark:hover:text-white"
                   }`}
                   title="Click to sort by Status"
                 >
@@ -1428,8 +1428,8 @@ export function DispatchCentre({
                 <th 
                   scope="col" 
                   onClick={() => handleSort("actions")}
-                  className={`py-3 px-3 text-center whitespace-nowrap cursor-pointer transition-colors group select-none text-[10px] font-normal uppercase tracking-wider ${
-                    sortKey === "actions" ? "bg-blue-50 text-blue-700 dark:bg-[#0c2847] dark:text-[#38bdf8] font-normal" : "hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-[#0b2440] dark:hover:text-white"
+                  className={`py-3 px-3 text-center whitespace-nowrap cursor-pointer transition-colors group select-none text-[11px] font-bold uppercase tracking-wider ${
+                    sortKey === "actions" ? "bg-blue-50 text-blue-700 dark:bg-[#0c2847] dark:text-[#38bdf8] font-bold" : "hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-[#0b2440] dark:hover:text-white"
                   }`}
                   title="Click to sort by Action state"
                 >
@@ -1520,27 +1520,27 @@ export function DispatchCentre({
                     onClick={() => onSelectRecord(record)}
                     className="hover:bg-blue-50/50 dark:hover:bg-[#0c233d]/70 transition-colors cursor-pointer text-slate-800 dark:text-slate-200"
                   >
-                    <td className="py-3 px-3 text-center text-slate-500 dark:text-slate-400 font-mono border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-[10px]">
+                    <td className="py-3 px-3 text-center text-slate-500 dark:text-slate-400 font-mono font-normal border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-[11px]">
                       {excelId}
                     </td>
 
-                    <td className="py-3 px-3 font-mono text-slate-700 dark:text-slate-200 border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-[10px]">
+                    <td className="py-3 px-3 font-mono font-normal text-slate-700 dark:text-slate-200 border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-[11px]">
                       {formatSubmittedDateTime(record)}
                     </td>
 
-                    <td className="py-3 px-3 text-slate-900 dark:text-white border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-[10px]">
+                    <td className="py-3 px-3 font-normal text-slate-900 dark:text-white border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-[11px]">
                       {record.driverName ? toTitleCase(record.driverName) : "-"}
                     </td>
 
-                    <td className="py-3 px-3 text-slate-700 dark:text-slate-200 border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-[10px]">
+                    <td className="py-3 px-3 font-normal text-slate-700 dark:text-slate-200 border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-[11px]">
                       {record.phone || "-"}
                     </td>
 
-                    <td className="py-3 px-3 font-mono text-slate-900 dark:text-white uppercase border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-[10px]">
+                    <td className="py-3 px-3 font-mono font-normal text-slate-900 dark:text-white uppercase border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-[11px]">
                       {record.vrm ? record.vrm.toUpperCase() : "-"}
                     </td>
 
-                    <td className="py-3 px-3 font-mono border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-[10px]">
+                    <td className="py-3 px-3 font-mono font-normal border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-[11px]">
                       {isBlocked ? (
                         <span className="text-rose-600 dark:text-rose-400 font-normal">
                           BLOCKED
@@ -1557,7 +1557,7 @@ export function DispatchCentre({
                     </td>
 
                     {/* ⭐ FIXED CODES COLUMN - Per-row voucher count with RED when ≤ 5 remaining */}
-                    <td className="py-3 px-3 border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-center text-[10px]">
+                    <td className="py-3 px-3 border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-center text-[11px]">
                       <div className="flex flex-col items-center justify-center gap-1 mx-auto w-[74px]">
                         <div 
                           className="w-[74px] h-[5px] rounded overflow-hidden"
@@ -1572,7 +1572,7 @@ export function DispatchCentre({
                           />
                         </div>
                         <span 
-                          className="text-[9px] font-normal leading-none select-none tracking-tight"
+                          className="text-[10px] font-bold leading-none select-none tracking-tight"
                           style={{ color: isRowStockLow ? "#b91c1c" : "#15803d" }}
                         >
                           {remainingForRow} left
@@ -1580,52 +1580,52 @@ export function DispatchCentre({
                       </div>
                     </td>
 
-                    <td className="py-3 px-3 font-mono text-slate-700 dark:text-slate-200 border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-[10px]">
+                    <td className="py-3 px-3 font-mono font-normal text-slate-700 dark:text-slate-200 border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-[11px]">
                       {formatDate(record.dateRequired || record.validFrom)}
                     </td>
 
-                    <td className="py-3 px-3 font-mono text-slate-700 dark:text-slate-200 border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-[10px]">
+                    <td className="py-3 px-3 font-mono font-normal text-slate-700 dark:text-slate-200 border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-[11px]">
                       {formatDate(expiresIso)}
                     </td>
 
-                    <td className="py-3 px-3 text-slate-700 dark:text-slate-200 border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-[10px]">
+                    <td className="py-3 px-3 font-normal text-slate-700 dark:text-slate-200 border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-[11px]">
                       {record.ward ? toTitleCase(record.ward) : "-"}
                     </td>
 
-                    <td className="py-3 px-3.5 text-slate-700 dark:text-slate-200 border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap min-w-[185px] text-[10px]">
+                    <td className="py-3 px-3.5 font-normal text-slate-700 dark:text-slate-200 border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap min-w-[185px] text-[11px]">
                       {hospitalDisplay}
                     </td>
 
-                    <td className="py-3 px-3 text-center border-r border-slate-100 dark:border-[#102947]/60 select-none whitespace-nowrap text-[10px]">
+                    <td className="py-3 px-3 text-center border-r border-slate-100 dark:border-[#102947]/60 select-none whitespace-nowrap text-[11px]">
                       {isBlocked ? (
-                        <span className="border border-rose-300 dark:border-rose-800/60 bg-rose-50 dark:bg-rose-950/30 text-rose-700 dark:text-rose-300 font-normal px-2 py-0.5 rounded text-[9px] tracking-wider uppercase inline-flex items-center justify-center whitespace-nowrap">
+                        <span className="border border-rose-300 dark:border-rose-800/60 bg-rose-50 dark:bg-rose-950/30 text-rose-700 dark:text-rose-300 font-bold px-2 py-0.5 rounded text-[10px] tracking-wider uppercase inline-flex items-center justify-center whitespace-nowrap">
                           BLOCKED
                         </span>
                       ) : (isCancelled || (record.status && record.status.trim().toUpperCase() === "CANCELLED")) ? (
-                        <span className="border border-red-300 dark:border-red-800/60 bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-400 font-normal px-2 py-0.5 rounded text-[9px] tracking-wider uppercase inline-flex items-center justify-center whitespace-nowrap">
+                        <span className="border border-red-300 dark:border-red-800/60 bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-400 font-bold px-2 py-0.5 rounded text-[10px] tracking-wider uppercase inline-flex items-center justify-center whitespace-nowrap">
                           CANCELLED
                         </span>
                       ) : replacementPending ? (
-                        <span className="border border-purple-300 dark:border-[#a855f7]/40 bg-purple-50 dark:bg-[#a855f7]/15 text-purple-700 dark:text-[#c084fc] font-normal px-2 py-0.5 rounded text-[9px] tracking-wider uppercase inline-flex items-center justify-center whitespace-nowrap">
+                        <span className="border border-purple-300 dark:border-[#a855f7]/40 bg-purple-50 dark:bg-[#a855f7]/15 text-purple-700 dark:text-[#c084fc] font-bold px-2 py-0.5 rounded text-[10px] tracking-wider uppercase inline-flex items-center justify-center whitespace-nowrap">
                           REPLACEMENT
                         </span>
                       ) : isDispatched ? (
-                        <span className="border border-emerald-300 dark:border-[#32D74B]/40 bg-emerald-50 dark:bg-[#32D74B]/15 text-emerald-700 dark:text-[#32D74B] font-normal px-2 py-0.5 rounded text-[9px] tracking-wider uppercase inline-flex items-center justify-center gap-1 whitespace-nowrap">
+                        <span className="border border-emerald-300 dark:border-[#32D74B]/40 bg-emerald-50 dark:bg-[#32D74B]/15 text-emerald-700 dark:text-[#32D74B] font-bold px-2 py-0.5 rounded text-[10px] tracking-wider uppercase inline-flex items-center justify-center gap-1 whitespace-nowrap">
                           <span>✅</span>
                           <span>SENT</span>
                         </span>
                       ) : isUnsent ? (
-                        <span className="border border-sky-300 dark:border-[#42A5F5]/40 bg-sky-50 dark:bg-[#42A5F5]/15 text-sky-700 dark:text-[#42A5F5] font-normal px-2 py-0.5 rounded text-[9px] tracking-wider uppercase inline-flex items-center justify-center whitespace-nowrap">
+                        <span className="border border-sky-300 dark:border-[#42A5F5]/40 bg-sky-50 dark:bg-[#42A5F5]/15 text-sky-700 dark:text-[#42A5F5] font-bold px-2 py-0.5 rounded text-[10px] tracking-wider uppercase inline-flex items-center justify-center whitespace-nowrap">
                           UNSENT
                         </span>
                       ) : (
-                        <span className="border border-amber-300 dark:border-[#FF9F0A]/40 bg-amber-50 dark:bg-[#FF9F0A]/15 text-amber-700 dark:text-[#FF9F0A] font-normal px-2 py-0.5 rounded text-[9px] tracking-wider uppercase inline-flex items-center justify-center whitespace-nowrap">
+                        <span className="border border-amber-300 dark:border-[#FF9F0A]/40 bg-amber-50 dark:bg-[#FF9F0A]/15 text-amber-700 dark:text-[#FF9F0A] font-bold px-2 py-0.5 rounded text-[10px] tracking-wider uppercase inline-flex items-center justify-center whitespace-nowrap">
                           PENDING
                         </span>
                       )}
                     </td>
 
-                    <td className="py-3 px-3 text-center whitespace-nowrap text-[10px]" onClick={e => e.stopPropagation()}>
+                    <td className="py-3 px-3 text-center whitespace-nowrap text-[11px]" onClick={e => e.stopPropagation()}>
                       <div className="inline-flex items-center justify-center gap-1.5 rounded-md">
                         <button
                           type="button"
