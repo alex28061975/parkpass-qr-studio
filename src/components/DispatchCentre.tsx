@@ -1490,7 +1490,9 @@ export function DispatchCentre({
                 // ⭐ FIX: Filter vouchers that match this permit's date range AND VRM
                 const matchingVouchersForRow = vouchersDatabase.filter(v => {
                   const dateMatch = isVoucherForPermitDateRange(v, permitFromISO, permitToISO);
-                  const vrmMatch = !v.vrm || v.vrm.toUpperCase() === record.vrm?.toUpperCase();
+                  const vVrmClean = (v.vrm || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+                  const recordVrmClean = (record.vrm || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+                  const vrmMatch = !vVrmClean || vVrmClean === recordVrmClean;
                   return dateMatch && vrmMatch;
                 });
                 
