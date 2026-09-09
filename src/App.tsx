@@ -52,65 +52,78 @@ function toTitleCase(str: string): string {
     .replace(/(?:^|\s|-)\S/g, (char) => char.toUpperCase());
 }
 
-// ⭐ NEW: Auto-Cancel Duplicates - GROUP BY VRM ONLY (not driver name)
+// ⭐ Auto-Cancel Duplicates - GROUP BY VRM ONLY (not driver name), 7-day rolling window
 const autoCancelDuplicates = (records: CsvPermitRecord[]): CsvPermitRecord[] => {
   if (!records || records.length === 0) return records;
-  
-  const vrmMap = new Map<string, CsvPermitRecord[]>();
-  const results: CsvPermitRecord[] = [];
-  
-  // ⭐ Group by VRM ONLY (not driver name)
-  for (const record of records) {
+
+  const results: CsvPermitRecord[] = new Array(records.length);
+  const vrmMap = new Map<string, { record: CsvPermitRecord; index: number }[]>();
+
+  // ⭐ Group by VRM ONLY (not driver name), preserving original index for ordering
+  records.forEach((record, index) => {
     // Skip if record is already cancelled
     if (record.isCancelled === true || record.status === "CANCELLED") {
-      results.push(record);
-      continue;
+      results[index] = record;
+      return;
     }
-    
-    const vrmKey = record.vrm?.trim().toUpperCase() || "";
-    
+
+    const vrmKey = record.vrm?.trim().toUpperCase().replace(/[^A-Z0-9]/g, "") || "";
+
     // If no VRM, keep as-is
     if (!vrmKey) {
-      results.push(record);
+      results[index] = record;
+      return;
+    }
+
+    if (!vrmMap.has(vrmKey)) vrmMap.set(vrmKey, []);
+    vrmMap.get(vrmKey)!.push({ record, index });
+  });
+
+  const getReqDateISO = (r: CsvPermitRecord): string =>
+    getRequestedPermitDateISO(r) || parseDateToISO(String(r.dateRequired || r.validFrom || "")) || "";
+
+  const getSortTimeMs = (r: CsvPermitRecord): number => {
+    const formIdNum = Number(String(r.formId ?? r.id ?? 0).replace(/[^0-9]/g, "")) || 0;
+    if (formIdNum > 0) return formIdNum;
+    return parseFullDateTimeMs(r.startTime || r.createdAt || r.completionTime, getReqDateISO(r)) ?? 0;
+  };
+
+  // For each VRM group, cancel any request that falls within 7 days of an earlier, still-active request
+  for (const [vrm, entries] of vrmMap) {
+    if (entries.length === 1) {
+      results[entries[0].index] = entries[0].record;
       continue;
     }
-    
-    if (!vrmMap.has(vrmKey)) vrmMap.set(vrmKey, []);
-    vrmMap.get(vrmKey)!.push(record);
-  }
-  
-  // For each VRM group, check if they are duplicates
-  for (const [vrm, recordList] of vrmMap) {
-    if (recordList.length === 1) {
-      results.push(recordList[0]);
-    } else {
-      // ⭐ Check if they have the SAME dates
-      const dates = recordList.map(r => r.dateRequired || r.validFrom || "");
-      const uniqueDates = new Set(dates);
-      
-      if (uniqueDates.size === 1) {
-        // ⭐ SAME DATE → DUPLICATE! Keep first, cancel rest
-        const first = recordList[0];
-        results.push(first);
-        for (let i = 1; i < recordList.length; i++) {
-          console.log(`🔄 Auto-cancelling duplicate for VRM: ${vrm} (same date)`);
-          results.push({
-            ...recordList[i],
-            isCancelled: true,
-            status: "CANCELLED",
-            voucherCode: "CANCELLED",
-            prePaidCode: "CANCELLED"
-          });
-        }
+
+    // Process in chronological (submission) order so the EARLIEST request is kept
+    const sorted = [...entries].sort((a, b) => getSortTimeMs(a.record) - getSortTimeMs(b.record));
+    const kept: { reqTimeMs: number }[] = [];
+
+    for (const entry of sorted) {
+      const reqIso = getReqDateISO(entry.record);
+      const reqTimeMs = reqIso ? new Date(`${reqIso}T00:00:00`).getTime() : NaN;
+
+      const isDuplicateOfKept = !isNaN(reqTimeMs) && kept.some(k => {
+        const diffDays = Math.round((reqTimeMs - k.reqTimeMs) / (1000 * 60 * 60 * 24));
+        return diffDays >= 0 && diffDays < 7;
+      });
+
+      if (isDuplicateOfKept) {
+        console.log(`🔄 Auto-cancelling duplicate for VRM: ${vrm} (within 7-day window of an earlier request)`);
+        results[entry.index] = {
+          ...entry.record,
+          isCancelled: true,
+          status: "CANCELLED",
+          voucherCode: "CANCELLED",
+          prePaidCode: "CANCELLED"
+        };
       } else {
-        // ⭐ DIFFERENT DATES → NOT DUPLICATES (different weeks)
-        // Keep ALL records (they're valid for different weeks)
-        console.log(`✅ Keeping ${recordList.length} records for VRM: ${vrm} - Different dates (different weeks)`);
-        results.push(...recordList);
+        results[entry.index] = entry.record;
+        if (!isNaN(reqTimeMs)) kept.push({ reqTimeMs });
       }
     }
   }
-  
+
   return results;
 };
 
