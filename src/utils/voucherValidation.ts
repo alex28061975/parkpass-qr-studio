@@ -271,16 +271,8 @@ export function getFirstValidUnusedCodeForDate(
     return cleanVoucherCodeValue(candidates[0].code).toUpperCase();
   }
 
-  // If no date-specific voucher is found, try any unused voucher in the database
-  const anyUnused = vouchersDb.find(v => {
-    if (!v || !v.code) return false;
-    const cleanCode = cleanVoucherCodeValue(v.code).toUpperCase();
-    return cleanCode && cleanCode !== "-" && !assignedCodes.has(cleanCode);
-  });
-
-  if (anyUnused) {
-    return cleanVoucherCodeValue(anyUnused.code).toUpperCase();
-  }
-
+  // ⭐ No fallback. If no voucher exists for this exact date range,
+  // return null so the caller shows 0 — never assign a voucher from
+  // a different week's batch.
   return null;
 }
