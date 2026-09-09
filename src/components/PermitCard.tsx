@@ -405,14 +405,15 @@ function PermitCardInner({
   }, [isCurrentDispatched, data, activeIndex, matchingPermits, dispatchBy]);
 
   const matchingStats = useMemo(() => {
-    let sent = 0;
-    const total = matchingPermits.length;
-
-    matchingPermits.forEach(p => {
-      if (isRecordDispatched(p)) {
-        sent++;
-      }
+    // Metrics are per permit, never per dispatch-key alias.
+    const unique = new Map<string, CsvPermitRecord>();
+    matchingPermits.forEach((p, index) => {
+      const key = getRecordPrimaryKey(p) || `row_${index}`;
+      if (!unique.has(key)) unique.set(key, p);
     });
+    const records = Array.from(unique.values());
+    const sent = records.filter(isRecordDispatched).length;
+    const total = records.length;
     const pending = Math.max(0, total - sent);
     return { sent, pending, total };
   }, [matchingPermits, isRecordDispatched]);
@@ -434,7 +435,15 @@ function PermitCardInner({
   }, [database, matchingPermits, isRecordDispatched, data.todayDate]);
 
   const dbStats = useMemo(() => {
-    const records = (database && database.length > 0) ? database : matchingPermits;
+    const sourceRecords = (database && database.length > 0) ? database : matchingPermits;
+    // A permit can expose PRIMARY_/FORM_/numeric aliases. Deduplicate by its
+    // canonical primary record key before calculating any metric.
+    const unique = new Map<string, CsvPermitRecord>();
+    sourceRecords.forEach((p, index) => {
+      const key = getRecordPrimaryKey(p) || `row_${index}`;
+      if (!unique.has(key)) unique.set(key, p);
+    });
+    const records = Array.from(unique.values());
     let sent = 0;
     let cancelled = 0;
     const total = records.length;
@@ -944,7 +953,9 @@ function PermitCardInner({
     }
 
     const silentBlocked = await isVrmSilentBlocked(vrm);
-    if (silentBlocked) {
+    // CANCELLED is a dispatchable permit state (used for the cancellation
+    // email workflow). Only an actual BLOCKED VRM prevents sending.
+    if (silentBlocked && !isCancelledRec) {
       if (!targetRecord) {
         setQrUrl("");
         setQrUrlSmall("");

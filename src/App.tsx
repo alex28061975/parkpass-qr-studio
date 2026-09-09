@@ -670,10 +670,16 @@ export default function App() {
       // 2. Fetch fresh keys from Supabase or apply verified keys to state
       const freshResult = await fetchDispatchedFromSupabase();
       if (freshResult && freshResult.dispatchedKeys) {
-        dispatchedKeysRef.current = freshResult.dispatchedKeys;
-        setDispatchedKeys(freshResult.dispatchedKeys);
-        setDispatchDates(freshResult.dispatchDates);
-        setDispatchBy(freshResult.dispatchBy);
+        const currentUnsent = new Set(unsentKeysRef.current || []);
+        const freshKeys = freshResult.dispatchedKeys.filter(k => !currentUnsent.has(k));
+        const freshDates = Object.fromEntries(Object.entries(freshResult.dispatchDates || {}).filter(([k]) => !currentUnsent.has(k)));
+        const freshBy = Object.fromEntries(Object.entries(freshResult.dispatchBy || {}).filter(([k]) => !currentUnsent.has(k)));
+        dispatchedKeysRef.current = freshKeys;
+        setDispatchedKeys(freshKeys);
+        dispatchDatesRef.current = freshDates;
+        dispatchByRef.current = freshBy;
+        setDispatchDates(freshDates);
+        setDispatchBy(freshBy);
       } else {
         setDispatchedKeys(prev => {
           const next = Array.from(new Set([...prev, ...combinedKeys]));
@@ -738,11 +744,11 @@ export default function App() {
       safeLocalStorage.setItem("concessions_dispatch_by", JSON.stringify(updated));
       return updated;
     });
-    setUnsentKeys(prev => {
-      const next = Array.from(new Set([...prev, ...combinedKeys]));
-      unsentKeysRef.current = next;
-      return next;
-    });
+    // Update the ref BEFORE scheduling React state so a background refresh
+    // that starts immediately after Unsend can never miss the override.
+    const nextUnsentKeys = Array.from(new Set([...(unsentKeysRef.current || []), ...combinedKeys]));
+    unsentKeysRef.current = nextUnsentKeys;
+    setUnsentKeys(nextUnsentKeys);
 
     // If in Offline Local Storage mode, state and storage are already updated
     if (storageModeRef.current === "offline") {
@@ -755,6 +761,13 @@ export default function App() {
       const result = await unmarkRecordAsDispatched(targetRecord);
       if (!result.success) {
         console.error("❌ [Supabase Unmark Error]:", result.error);
+        // The delete failed, so restore the previous dispatched state and
+        // remove the local unsent override.
+        dispatchedKeysRef.current = Array.from(new Set([...(dispatchedKeysRef.current || []), ...combinedKeys]));
+        setDispatchedKeys(dispatchedKeysRef.current);
+        const rolledBackUnsent = (unsentKeysRef.current || []).filter(k => !combinedKeys.includes(k));
+        unsentKeysRef.current = rolledBackUnsent;
+        setUnsentKeys(rolledBackUnsent);
         alert(`❌ Database Error: ${result.error || 'Failed to remove dispatch status.'}`);
         return false;
       }
@@ -766,6 +779,11 @@ export default function App() {
       return true;
     } catch (err: any) {
       console.error("❌ [Supabase Unmark Exception]:", err);
+      dispatchedKeysRef.current = Array.from(new Set([...(dispatchedKeysRef.current || []), ...combinedKeys]));
+      setDispatchedKeys(dispatchedKeysRef.current);
+      const rolledBackUnsent = (unsentKeysRef.current || []).filter(k => !combinedKeys.includes(k));
+      unsentKeysRef.current = rolledBackUnsent;
+      setUnsentKeys(rolledBackUnsent);
       return false;
     }
   };
@@ -820,15 +838,23 @@ export default function App() {
           return false;
         };
 
-        const currentUnsent = unsentKeysRef.current || [];
+        const currentUnsent = new Set(unsentKeysRef.current || []);
         const validKeys = dbDispatchedData.dispatchedKeys
           .filter(k => !isCorrupted(k))
-          .filter(k => !currentUnsent.includes(k));
+          .filter(k => !currentUnsent.has(k));
+        const filteredDates = Object.fromEntries(
+          Object.entries(dbDispatchedData.dispatchDates || {}).filter(([k]) => !currentUnsent.has(k))
+        );
+        const filteredDispatchBy = Object.fromEntries(
+          Object.entries(dbDispatchedData.dispatchBy || {}).filter(([k]) => !currentUnsent.has(k))
+        );
 
         dispatchedKeysRef.current = validKeys;
         setDispatchedKeys(validKeys);
-        setDispatchDates(dbDispatchedData.dispatchDates || {});
-        setDispatchBy(dbDispatchedData.dispatchBy || {});
+        dispatchDatesRef.current = filteredDates;
+        dispatchByRef.current = filteredDispatchBy;
+        setDispatchDates(filteredDates);
+        setDispatchBy(filteredDispatchBy);
       }
     } catch (err) {
       console.warn("Dispatched keys background sync error:", err);
@@ -958,19 +984,31 @@ export default function App() {
           return false;
         };
 
-        const currentUnsent = unsentKeysRef.current || [];
+        const currentUnsent = new Set(unsentKeysRef.current || []);
         const validKeys = dbDispatchedData.dispatchedKeys
           .filter(k => !isCorrupted(k))
-          .filter(k => !currentUnsent.includes(k));
-        
+          .filter(k => !currentUnsent.has(k));
+
+        // Never let a background read undo an explicit Unsend action.
+        // Supabase can briefly return a stale row after the delete, so the
+        // local unsent override always wins until the user sends again.
+        const filteredDates = Object.fromEntries(
+          Object.entries(dbDispatchedData.dispatchDates || {}).filter(([k]) => !currentUnsent.has(k))
+        );
+        const filteredDispatchBy = Object.fromEntries(
+          Object.entries(dbDispatchedData.dispatchBy || {}).filter(([k]) => !currentUnsent.has(k))
+        );
+
         dispatchedKeysRef.current = validKeys;
         setDispatchedKeys(validKeys);
-        setDispatchDates(dbDispatchedData.dispatchDates || {});
-        setDispatchBy(dbDispatchedData.dispatchBy || {});
+        dispatchDatesRef.current = filteredDates;
+        dispatchByRef.current = filteredDispatchBy;
+        setDispatchDates(filteredDates);
+        setDispatchBy(filteredDispatchBy);
 
         safeLocalStorage.setItem("concessions_dispatched_keys", JSON.stringify(validKeys));
-        safeLocalStorage.setItem("concessions_dispatch_dates", JSON.stringify(dbDispatchedData.dispatchDates || {}));
-        safeLocalStorage.setItem("concessions_dispatch_by", JSON.stringify(dbDispatchedData.dispatchBy || {}));
+        safeLocalStorage.setItem("concessions_dispatch_dates", JSON.stringify(filteredDates));
+        safeLocalStorage.setItem("concessions_dispatch_by", JSON.stringify(filteredDispatchBy));
       }
     } catch (err) {
       console.warn("Real-time database fetch error:", err);

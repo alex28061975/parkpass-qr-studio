@@ -779,12 +779,6 @@ export function parsePastedText(rawText: string): CsvPermitRecord[] {
     const validToIdx = findValidToColumn(headers);
     const idIdx = findFormIdColumn(headers);
 
-    // Preserve explicit cancellation flags from imported spreadsheets before
-    // voucher-code cleaning turns "CANCELLED" into the "-" placeholder.
-    const statusIdx = headers.findIndex(h => h === "status" || h.includes("permit status") || h.includes("concession status"));
-    const voucherCodesTextIdx = headers.findIndex(h => h === "vouchercodestext" || h === "voucher codes text" || h === "voucher codes");
-    const prePaidCodeIdx = headers.findIndex(h => h === "prepaidcode" || h === "pre-paid code" || h === "pre paid code");
-
     for (let i = 1; i < lines.length; i++) {
       const line = lines[i];
       const columns = splitLine(line);
@@ -1264,12 +1258,6 @@ export function parsePermitExcel(arrayBuffer: ArrayBuffer): CsvPermitRecord[] {
     const validToIdx = findValidToColumn(headers);
     const idIdx = findFormIdColumn(headers);
 
-    // Preserve explicit cancellation flags from imported spreadsheets before
-    // voucher-code cleaning turns "CANCELLED" into the "-" placeholder.
-    const statusIdx = headers.findIndex(h => h === "status" || h.includes("permit status") || h.includes("concession status"));
-    const voucherCodesTextIdx = headers.findIndex(h => h === "vouchercodestext" || h === "voucher codes text" || h === "voucher codes");
-    const prePaidCodeIdx = headers.findIndex(h => h === "prepaidcode" || h === "pre-paid code" || h === "pre paid code");
-
     const records: CsvPermitRecord[] = [];
 
     for (let i = headerRowIndex + 1; i < rawRows.length; i++) {
@@ -1410,14 +1398,7 @@ export function parsePermitExcel(arrayBuffer: ArrayBuffer): CsvPermitRecord[] {
         driverName: cleanDriver || "Driver's Name",
         phone: cleanPhone ? formatPhoneNumber(cleanPhone) : "",
         email: cleanEmail,
-        status: rawStatus || undefined,
-        isCancelled: /^(cancelled|canceled)$/i.test(rawStatus) ||
-          /^(cancelled|canceled)$/i.test(String(rawVoucher).trim()) ||
-          /^(cancelled|canceled)$/i.test(rawVoucherCodesText) ||
-          /^(cancelled|canceled)$/i.test(rawPrePaidCode),
-        voucherCode: /^(cancelled|canceled)$/i.test(String(rawVoucher).trim()) ? "CANCELLED" : cleanVoucherCodeValue(rawVoucher),
-        voucherCodesText: rawVoucherCodesText || undefined,
-        prePaidCode: rawPrePaidCode || undefined,
+        voucherCode: cleanVoucherCodeValue(rawVoucher),
         startTime: rawStartTime || undefined,
         completionTime: rawCompletionTime || undefined,
         createdAt: rawStartTime ? String(rawStartTime).trim() : undefined
@@ -1467,138 +1448,19 @@ export function getTodayISO(): string {
 }
 
 export function isDateRequiredOutsideValidWindow(dateRequiredStr?: string, referenceDateStr?: string): boolean {
-  // Operational processing window:
-  //   - today is valid
-  //   - tomorrow (+1 day) is valid
-  //   - any past date is handled as expired by the 7-day rule
-  //   - +2 days or further into the future is invalid
   if (!dateRequiredStr) return false;
-
   const iso = parseDateToISO(String(dateRequiredStr));
-  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(iso)) return false;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return false;
 
   const refIso = referenceDateStr ? parseDateToISO(String(referenceDateStr)) : "";
-  const reference = /^\\d{4}-\\d{2}-\\d{2}$/.test(refIso)
-    ? new Date(refIso + "T00:00:00")
-    : new Date();
-  reference.setHours(0, 0, 0, 0);
+  const today = /^\d{4}-\d{2}-\d{2}$/.test(refIso) ? new Date(refIso + "T00:00:00") : new Date();
+  today.setHours(0, 0, 0, 0);
 
   const parkingDate = new Date(iso + "T00:00:00");
   parkingDate.setHours(0, 0, 0, 0);
 
-  const daysDiff = Math.round(
-    (parkingDate.getTime() - reference.getTime()) / (24 * 60 * 60 * 1000)
-  );
-
-  return daysDiff > 1;
-}
-
-function isExplicitlyCancelledRecord(record: any): boolean {
-  if (!record) return false;
-  if (record.isCancelled === true) return true;
-
-  const values = [
-    record.status,
-    record.voucherCode,
-    record.voucherCodesText,
-    record.prePaidCode,
-  ];
-
-  return values.some(value =>
-    typeof value === "string" &&
-    /^(cancelled|canceled)$/i.test(value.trim())
-  );
-}
-
-function getCancellationReferenceDate(record: any, suppliedReference?: string): string {
-  const candidates = [
-    suppliedReference,
-    record?.todayDate,
-    record?.processingDate,
-  ];
-
-  for (const candidate of candidates) {
-    const iso = candidate ? parseDateToISO(String(candidate)) : "";
-    if (/^\\d{4}-\\d{2}-\\d{2}$/.test(iso)) return iso;
-  }
-
-  return getTodayISO();
-}
-
-function getPermitStartDateISO(record: any): string {
-  if (!record) return "";
-  const raw = record.dateRequired || record.validFrom || record.valid_from ||
-    record["Date Required"] || record["DATE REQUIRED"] ||
-    record["Valid From"] || record["VALID FROM"];
-  if (!raw) return "";
-  const range = parseDateRange(String(raw));
-  if (range?.startISO) return range.startISO;
-  const iso = parseDateToISO(String(raw));
-  return /^\\d{4}-\\d{2}-\\d{2}$/.test(iso) ? iso : "";
-}
-
-function getInclusiveParkingDays(startISO: string, referenceISO: string): number {
-  if (!startISO || !referenceISO) return 0;
-  const start = new Date(startISO + "T00:00:00");
-  const reference = new Date(referenceISO + "T00:00:00");
-  return Math.round((reference.getTime() - start.getTime()) / (24 * 60 * 60 * 1000)) + 1;
-}
-
-/**
- * Returns true when the permit is cancelled for any of the four calculated
- * reasons: expired, duplicate, silent block, or invalid future date.
- *
- * Duplicate means the same VRM AND the same requested parking date. The
- * earliest/submitted record wins; later duplicates are cancelled.
- */
-function isDuplicateVrmdDate(
-  record: any,
-  database: CsvPermitRecord[] = []
-): boolean {
-  const vrm = String(record?.vrm || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
-  const date = getPermitStartDateISO(record);
-  if (!vrm || !date || vrm === "PENDING" || vrm === "-") return false;
-
-  const recordId = String(record?.formId ?? record?.id ?? "").replace(/^#/, "").trim();
-
-  const sameVrmdDate = database
-    .map((r, index) => ({ r, index }))
-    .filter(({ r }) => {
-      const rVrm = String(r?.vrm || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
-      return rVrm === vrm && getPermitStartDateISO(r) === date;
-    });
-
-  if (sameVrmdDate.length <= 1) return false;
-
-  // Existing explicit cancellations do not make the surviving request a duplicate.
-  const active = sameVrmdDate.filter(({ r }) => {
-    if (isExplicitlyCancelledRecord(r)) return false;
-    if (isVrmSilentBlockedSync(r?.vrm)) return false;
-    return true;
-  });
-
-  if (active.length <= 1) return false;
-
-  // The first record in dataset/submission order wins. Prefer numeric form ID,
-  // then submission time, then original dataset order.
-  const ordered = active.sort((a, b) => {
-    const aId = extractRecordNumericFormId(a.r);
-    const bId = extractRecordNumericFormId(b.r);
-    if (aId > 0 && bId > 0 && aId !== bId) return aId - bId;
-
-    const aTime = extractRecordSubmissionTimeMs(a.r);
-    const bTime = extractRecordSubmissionTimeMs(b.r);
-    if (aTime > 0 && bTime > 0 && aTime !== bTime) return aTime - bTime;
-
-    return a.index - b.index;
-  });
-
-  const first = ordered[0]?.r;
-  const firstId = String(first?.formId ?? first?.id ?? "").replace(/^#/, "").trim();
-
-  // If there is no stable identifier, compare object identity/position.
-  if (recordId && firstId) return recordId !== firstId;
-  return record !== first;
+  const daysDiff = Math.floor((parkingDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+  return daysDiff < -1 || daysDiff > 1;
 }
 
 export function parseUKDate(dateStr: string): string {
@@ -2316,15 +2178,13 @@ export function isVoucherInValidityPeriod(
     return targetDateISO >= vFrom && targetDateISO <= vTo;
   }
 
-  if (vFrom && !vTo) {
-    return targetDateISO >= vFrom;
-  }
+  // Voucher validity is a strict inclusive date range.
+  // A voucher is eligible only when BOTH ValidFrom and ValidTo are
+  // present and: ValidFrom <= targetDate <= ValidTo.
+  // Never infer an open-ended period and never fall back to another date.
+  if (!vFrom || !vTo) return false;
 
-  if (!vFrom && vTo) {
-    return targetDateISO <= vTo;
-  }
-
-  return true;
+  return targetDateISO >= vFrom && targetDateISO <= vTo;
 }
 
 export function isVoucherExactPeriodEligible(
@@ -2334,38 +2194,30 @@ export function isVoucherExactPeriodEligible(
   return isVoucherInValidityPeriod(voucher, requestedDateStr);
 }
 
-export function isRecordCancelledCanonical(
-  record: any,
-  todayDateOrReference?: string,
-  database: CsvPermitRecord[] = []
-): boolean {
+export function isRecordCancelledCanonical(record: any, todayDateOrReference?: string, database?: CsvPermitRecord[]): boolean {
   if (!record) return false;
-
-  // 1. Explicit imported/database cancellation always wins.
-  if (isExplicitlyCancelledRecord(record)) return true;
-
-  // 2. Security blocklist is a silent cancellation.
-  if (isVrmSilentBlockedSync(record.vrm)) return true;
-
-  const referenceISO = getCancellationReferenceDate(record, todayDateOrReference);
-  const permitDateISO = getPermitStartDateISO(record);
-  if (!permitDateISO) return false;
-
-  // 3. +2 future processing-window check.
-  if (isDateRequiredOutsideValidWindow(permitDateISO, referenceISO)) {
+  if (record.isCancelled === true) return true;
+  if (typeof record.status === "string" && record.status.trim().toLowerCase().includes("cancel")) return true;
+  if (
+    record.voucherCode === "CANCELLED" ||
+    record.voucherCodesText === "CANCELLED" ||
+    record.prePaidCode === "CANCELLED" ||
+    (typeof record.voucherCode === "string" && record.voucherCode.trim().toUpperCase() === "CANCELLED") ||
+    (typeof record.voucherCodesText === "string" && record.voucherCodesText.trim().toUpperCase() === "CANCELLED") ||
+    (typeof record.prePaidCode === "string" && record.prePaidCode.trim().toUpperCase() === "CANCELLED")
+  ) {
     return true;
   }
 
-  // 4. Exactly 7 inclusive calendar days. Day 1 is the permit date.
-  // Example: 01/09 -> 07/09 = 7 days (valid); 01/09 -> 08/09 = 8 days (cancelled).
-  const inclusiveDays = getInclusiveParkingDays(permitDateISO, referenceISO);
-  if (inclusiveDays > 7) return true;
-
-  // 5. Same VRM + same parking date: first active request wins.
-  if (isDuplicateVrmdDate(record, database)) return true;
-
+  const rawRefDate = record.completionTime || record.startTime || record.createdAt || todayDateOrReference || record.todayDate || record.processingDate || record.submissionDate;
+  const referenceDate = rawRefDate 
+    ? (parseDateToISO(String(rawRefDate)) || "") 
+    : "";
+  const dateRequired = record.dateRequired || record.validFrom || "";
+  if (isDateRequiredOutsideValidWindow(dateRequired, referenceDate)) return true;
   return false;
 }
+
 export function getSpreadsheetMatchingAllocationsMap(
   matchingPermits: any[] = [],
   database: CsvPermitRecord[] = [],
@@ -2395,7 +2247,12 @@ export function getSpreadsheetMatchingAllocationsMap(
     const recordKey = String(r.formId ?? r.id ?? idx);
     const reqDate = getRequestedPermitDateISO(r, processingDate);
 
-    if (isRecordCancelledCanonical(r, processingDate, effectiveDatabase)) {
+    if (isVrmSilentBlockedSync(r.vrm)) {
+      map.set(recordKey, "BLOCKED");
+      return;
+    }
+
+    if (isRecordCancelledCanonical(r, reqDate || processingDate, effectiveDatabase)) {
       map.set(recordKey, "CANCELLED");
       return;
     }
@@ -2440,7 +2297,7 @@ export function getSpreadsheetMatchingAllocationsMap(
     if (map.has(recordKey)) return;
 
     const reqDateD = getRequestedPermitDateISO(r, processingDate);
-    if (isRecordCancelledCanonical(r, processingDate, effectiveDatabase)) {
+    if (isRecordCancelledCanonical(r, reqDateD || processingDate, effectiveDatabase)) {
       map.set(recordKey, "CANCELLED");
       return;
     }
@@ -3037,29 +2894,98 @@ export function compareRecordsBySubmissionOrder(a: any, b: any, fallbackDateStr?
 }
 
 export function checkIsBlockedDuplicate(
-  record: {
-    vrm?: string;
-    validFrom?: string;
-    dateRequired?: string;
-    id?: string | number;
-    formId?: string | number;
-    voucherCode?: string;
-    createdAt?: string;
-    startTime?: string;
-    driverName?: string;
-    isCancelled?: boolean;
-    status?: string;
-    voucherCodesText?: string;
-    prePaidCode?: string;
-  },
+  record: { vrm?: string; validFrom?: string; dateRequired?: string; id?: string | number; formId?: string | number; voucherCode?: string; createdAt?: string; startTime?: string; driverName?: string; isCancelled?: boolean; status?: string; voucherCodesText?: string; prePaidCode?: string },
   database: CsvPermitRecord[],
-  _refDateISO?: string,
-  _visited?: Set<string>
+  refDateISO?: string,
+  visited?: Set<string>
 ): boolean {
-  // Historical name retained for compatibility with existing callers.
-  // The cancellation rule is strictly SAME VRM + SAME PARKING DATE.
-  return isDuplicateVrmdDate(record, database || []);
+  if (!record) return false;
+  if (!record.vrm) return false;
+  
+  const cleanVrm = record.vrm.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (!cleanVrm || cleanVrm === "PENDING" || cleanVrm === "-") return false;
+  
+  if (!database || database.length === 0) {
+    return false;
+  }
+
+  const numId = extractRecordNumericFormId(record);
+  const matchedDbRecord = database.find(r => isSamePermitRecord(r, record) || (numId > 0 && extractRecordNumericFormId(r) === numId));
+  const fullRecord = matchedDbRecord ? { ...matchedDbRecord, ...record } : record;
+
+  const vrmRecords = database.filter(r => {
+    const rVrm = (r.vrm || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+    return rVrm === cleanVrm;
+  });
+
+  if (vrmRecords.length <= 1) {
+    return false;
+  }
+
+  const strictlyEarlierRecords: CsvPermitRecord[] = [];
+
+  for (const other of vrmRecords) {
+    if (isSamePermitRecord(other, fullRecord)) continue;
+    if (isRecordStrictlyEarlier(other, fullRecord, database)) {
+      strictlyEarlierRecords.push(other);
+    }
+  }
+
+  if (strictlyEarlierRecords.length === 0) {
+    return false;
+  }
+
+  const reqIsoX = parseDateToISO(fullRecord.dateRequired || fullRecord.validFrom || "") || 
+                  parseDateToISO(fullRecord.startTime || fullRecord.createdAt || "") || 
+                  refDateISO || getTodayISO();
+  const reqTimeMsX = new Date(reqIsoX + "T00:00:00").getTime();
+
+  const recordKey = String(fullRecord.formId ?? fullRecord.id ?? (cleanVrm + "_" + reqIsoX));
+  const currentVisited = visited ? new Set(visited) : new Set<string>();
+  if (recordKey) {
+    if (currentVisited.has(recordKey)) return false;
+    currentVisited.add(recordKey);
+  }
+
+  for (const earlier of strictlyEarlierRecords) {
+    const earlierDateRequired = earlier.dateRequired || earlier.validFrom || "";
+    const earlierRawRefDate = earlier.completionTime || earlier.startTime || earlier.createdAt || earlier.submissionDate;
+    const earlierRefDate = earlierRawRefDate 
+      ? (parseDateToISO(String(earlierRawRefDate)) || "") 
+      : (parseDateToISO(earlierDateRequired) || refDateISO || "");
+
+    const earlierIsCancelled = 
+      earlier.isCancelled === true ||
+      earlier.voucherCode === "CANCELLED" ||
+      earlier.voucherCodesText === "CANCELLED" ||
+      earlier.prePaidCode === "CANCELLED" ||
+      (typeof earlier.voucherCode === "string" && earlier.voucherCode.trim().toUpperCase() === "CANCELLED") ||
+      (typeof earlier.voucherCodesText === "string" && earlier.voucherCodesText.trim().toUpperCase() === "CANCELLED") ||
+      (typeof earlier.prePaidCode === "string" && earlier.prePaidCode.trim().toUpperCase() === "CANCELLED") ||
+      (typeof earlier.status === "string" && earlier.status.trim().toLowerCase().includes("cancel")) ||
+      isVrmSilentBlockedSync(earlier.vrm) ||
+      isDateRequiredOutsideValidWindow(earlierDateRequired, earlierRefDate) ||
+      checkIsBlockedDuplicate(earlier, database, earlierRefDate, currentVisited);
+
+    if (earlierIsCancelled) {
+      continue;
+    }
+
+    const earlierReqIso = parseDateToISO(earlier.dateRequired || earlier.validFrom || "") || 
+                          parseDateToISO(earlier.startTime || earlier.createdAt || "") || 
+                          refDateISO || getTodayISO();
+    const earlierReqTimeMs = new Date(earlierReqIso + "T00:00:00").getTime();
+
+    const diffDays = Math.round((reqTimeMsX - earlierReqTimeMs) / (1000 * 60 * 60 * 24));
+
+    if (diffDays >= 0 && diffDays < 7) {
+      return true;
+    }
+  }
+
+  return false;
 }
+
 function simpleStringHash(str: string): number {
   let hash = 0;
   if (!str || str.length === 0) return hash;
@@ -3074,7 +3000,126 @@ function simpleStringHash(str: string): number {
 export function isRecordCancelled(
   record: any,
   todayDateOrReference?: string,
-  database: CsvPermitRecord[] = []
+  database?: CsvPermitRecord[]
 ): boolean {
-  return isRecordCancelledCanonical(record, todayDateOrReference, database);
+  if (!record) return false;
+
+  if (record.isCancelled === true) return true;
+  if (typeof record.status === "string" && record.status.trim().toLowerCase().includes("cancel")) return true;
+  if (
+    record.voucherCode === "CANCELLED" ||
+    record.voucherCodesText === "CANCELLED" ||
+    record.prePaidCode === "CANCELLED" ||
+    (typeof record.voucherCode === "string" && record.voucherCode.trim().toUpperCase() === "CANCELLED") ||
+    (typeof record.voucherCodesText === "string" && record.voucherCodesText.trim().toUpperCase() === "CANCELLED") ||
+    (typeof record.prePaidCode === "string" && record.prePaidCode.trim().toUpperCase() === "CANCELLED")
+  ) {
+    return true;
+  }
+
+  const rawRefDate = record.completionTime || record.startTime || record.createdAt || todayDateOrReference || record.todayDate || record.processingDate || record.submissionDate;
+  const referenceDate = rawRefDate 
+    ? (parseDateToISO(String(rawRefDate)) || "") 
+    : "";
+  const dateRequired = record.dateRequired || record.validFrom || "";
+  if (isDateRequiredOutsideValidWindow(dateRequired, referenceDate)) {
+    return true;
+  }
+
+  return false;
+}
+
+export function resolvePermitDate(record?: any): string {
+  if (!record) return getTodayISO();
+  const rawDate = record.processingDate ||
+                  record.submissionDate ||
+                  record.todayDate ||
+                  record.startTime ||
+                  record.completionTime ||
+                  record.validFrom ||
+                  record.dateRequired ||
+                  record.createdAt;
+
+  if (rawDate) {
+    const range = parseDateRange(String(rawDate));
+    if (range && range.startISO) {
+      return range.startISO;
+    }
+    const iso = parseDateToISO(rawDate);
+    if (iso) return iso;
+  }
+  return getTodayISO();
+}
+
+// ⭐ ============================================================
+// ⭐ NEW: VRM VALIDATION FUNCTIONS
+// ⭐ Add these at the end of the file
+// ⭐ ============================================================
+
+/**
+ * Validate if a string is a valid UK VRM (Vehicle Registration Mark)
+ * Valid formats:
+ * - AA12AAA (2 letters, 2 numbers, 3 letters)
+ * - AB12CDE (2 letters, 2 numbers, 3 letters)
+ * - A123ABC (1 letter, 3 numbers, 3 letters) - older format
+ */
+export function isValidVRM(vrm: string): boolean {
+  if (!vrm) return false;
+  const clean = vrm.trim().toUpperCase().replace(/\s+/g, "");
+  if (clean.length < 4) return false;
+  
+  // UK VRM patterns
+  const ukPattern = /^[A-Z]{2}[0-9]{2}[A-Z]{3}$/;   // AA12AAA
+  const oldPattern = /^[A-Z][0-9]{3}[A-Z]{3}$/;     // A123ABC
+  
+  return ukPattern.test(clean) || oldPattern.test(clean);
+}
+
+/**
+ * Detect if a string is likely a driver name (not a VRM)
+ * Used to catch cases where users enter their name in the VRM field
+ */
+export function isLikelyDriverName(text: string): boolean {
+  if (!text) return false;
+  const s = text.trim().toUpperCase().replace(/\s+/g, "");
+  
+  // If it contains numbers, it's probably a VRM
+  if (/\d/.test(s)) return false;
+  
+  // If it's all letters and longer than 7 characters, it's probably a name
+  if (/^[A-Z]+$/.test(s) && s.length > 7) return true;
+  
+  // Common name patterns
+  const commonNames = ["JOHN", "PETER", "DAVID", "SARAH", "ALASTAIR", "ABDULLAH", "MOHAMMED", "MARY", "JAMES", "ROBERT", "MICHAEL", "WILLIAM"];
+  if (commonNames.some(name => s.includes(name))) return true;
+  
+  return false;
+}
+
+/**
+ * Clean VRM field - if it looks like a name, move it to driver name field
+ * Returns { vrm, driverName } with corrected values
+ */
+export function cleanVrm(value: string, driverName: string): { vrm: string; driverName: string } {
+  const raw = (value || "").trim().toUpperCase();
+  
+  if (!raw) return { vrm: "", driverName };
+  
+  // If VRM looks like a name, move it to driver name
+  if (isLikelyDriverName(raw)) {
+    const newDriverName = driverName ? `${driverName} ${toTitleCase(raw)}` : toTitleCase(raw);
+    console.log(`🔄 Auto-corrected VRM: "${raw}" → moved to driver name as "${newDriverName}"`);
+    return { vrm: "PENDING", driverName: newDriverName };
+  }
+  
+  // Clean VRM: remove spaces, keep only valid characters
+  const cleanVrm = raw.replace(/[^A-Z0-9]/g, "");
+  return { vrm: cleanVrm, driverName };
+}
+
+/**
+ * Check if a VRM is pending (needs correction)
+ */
+export function isVrmPending(vrm: string): boolean {
+  return vrm === "PENDING" || vrm === "PENDING_CORRECTION";
 }
