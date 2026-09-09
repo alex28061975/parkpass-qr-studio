@@ -2215,6 +2215,12 @@ export function isRecordCancelledCanonical(record: any, todayDateOrReference?: s
     : "";
   const dateRequired = record.dateRequired || record.validFrom || "";
   if (isDateRequiredOutsideValidWindow(dateRequired, referenceDate)) return true;
+
+  // ⭐ Live duplicate check: same VRM, requested within 7 days of an earlier non-cancelled request
+  if (database && database.length > 0 && checkIsBlockedDuplicate(record, database, referenceDate)) {
+    return true;
+  }
+
   return false;
 }
 
@@ -3023,6 +3029,13 @@ export function isRecordCancelled(
     : "";
   const dateRequired = record.dateRequired || record.validFrom || "";
   if (isDateRequiredOutsideValidWindow(dateRequired, referenceDate)) {
+    return true;
+  }
+
+  // ⭐ Live duplicate check: same VRM, requested within 7 days of an earlier non-cancelled request.
+  // Computed on every call so it applies regardless of how/when the record was loaded
+  // (fresh CSV import, Supabase fetch, page refresh) — not just at import time.
+  if (database && database.length > 0 && checkIsBlockedDuplicate(record, database, referenceDate)) {
     return true;
   }
 
