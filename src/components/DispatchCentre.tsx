@@ -39,6 +39,7 @@ import {
   getNumericFormId,
   extractRecordSubmissionTimeMs,
   getRequestedPermitDateISO,
+  getRecordSubmittedDateISO,
   getTodayISO,
   formatSubmittedDateTime,
   getRecordSubmittedTimeMs,
@@ -476,11 +477,8 @@ export function DispatchCentre({
   const [statusFilter, setStatusFilter] = useState<"ALL" | "PENDING" | "SENT" | "CANCELLED" | "BLOCKED" | "REPLACEMENT">("ALL");
   const [hospitalFilter, setHospitalFilter] = useState<string>("ALL");
   const [wardFilter, setWardFilter] = useState<string>("ALL");
-  const [dateFilter, setDateFilter] = useState<"ALL" | "TODAY" | "THIS_WEEK" | "THIS_MONTH" | "CUSTOM">(() => {
-    if (dateRangeFilter === "7days") return "THIS_WEEK";
-    if (dateRangeFilter === "30days") return "THIS_MONTH";
-    return "ALL";
-  });
+  // ⭐ FIX: Restore default filter to "This Week"
+  const [dateFilter, setDateFilter] = useState<"ALL" | "TODAY" | "THIS_WEEK" | "THIS_MONTH" | "CUSTOM">("THIS_WEEK");
 
   useEffect(() => {
     if (dateRangeFilter === "7days") setDateFilter("THIS_WEEK");
@@ -789,10 +787,10 @@ export function DispatchCentre({
       }
 
       if (dateFilter !== "ALL") {
+        // ⭐ FIX: Filter by SUBMITTED date, not VALID FROM
         const recDate =
-          getRequestedPermitDateISO(record) ||
-          parseDateToISO(record.dateRequired || record.validFrom) ||
-          parseDateToISO(record.todayDate || record.createdAt || record.created_at || (record as any).submissionTime);
+          getRecordSubmittedDateISO(record) ||                            // ← SUBMITTED (primary)
+          parseDateToISO(record.completionTime || record.startTime || record.createdAt || record.created_at);  // ← SUBMITTED (fallback)
         if (!recDate) return false;
 
         if (dateFilter === "TODAY") {
