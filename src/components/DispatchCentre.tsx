@@ -793,12 +793,14 @@ export function DispatchCentre({
           parseDateToISO(record.completionTime || record.startTime || record.createdAt || record.created_at);  // ← SUBMITTED (fallback)
         if (!recDate) return false;
 
+        // ⭐ FIX: "Today" shows only today (1 day) by SUBMITTED date
         if (dateFilter === "TODAY") {
           if (recDate !== todayISO) return false;
         } else if (dateFilter === "THIS_WEEK") {
           if (recDate < dateRanges.last7DaysStart || recDate > todayISO) return false;
         } else if (dateFilter === "THIS_MONTH") {
           if (recDate < dateRanges.last30DaysStart || recDate > todayISO) return false;
+        // ⭐ FIX: "Custom Range" simple From/To filter by SUBMITTED date (inclusive)
         } else if (dateFilter === "CUSTOM") {
           if (customStartDate && recDate < customStartDate) return false;
           if (customEndDate && recDate > customEndDate) return false;
