@@ -1,4 +1,4 @@
-import { ParsedVoucherData, CsvPermitRecord } from "../types";
+import { ParsedVoucherData, CsvPermitRecord } from "./csvParser";
 import { cleanVoucherCodeValue } from "./csvParser";
 
 /**
@@ -170,7 +170,7 @@ export interface InvalidVoucherRecord {
   driverName?: string;
   validFrom?: string;
   validTo?: string;
-  reason: "not_in_db" | "date_mismatch";
+  reason: "not_in_db" | "date_mismatch" | "empty";
 }
 
 export function scanForInvalidVouchers(

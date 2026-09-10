@@ -805,14 +805,20 @@ export function DispatchCentre({
           parseDateToISO(record.todayDate || record.createdAt || record.created_at || (record as any).submissionTime);
         if (!recDate) return false;
 
+        // A permit is active from recDate through recDate+6 (7-day validity window).
+        // Use that full window when checking against TODAY/THIS_WEEK/THIS_MONTH so a
+        // permit that started before the window, but is still valid during part of it,
+        // isn't dropped just because its start date predates the window.
+        const recValidTo = addDays(recDate, 6);
+
         if (dateFilter === "TODAY") {
-          if (recDate !== todayISO) return false;
+          if (recDate > todayISO || recValidTo < todayISO) return false;
         } else if (dateFilter === "THIS_WEEK") {
-          if (recDate < dateRanges.last7DaysStart || recDate > todayISO) return false;
+          if (recDate > todayISO || recValidTo < dateRanges.last7DaysStart) return false;
         } else if (dateFilter === "THIS_MONTH") {
-          if (recDate < dateRanges.last30DaysStart || recDate > todayISO) return false;
+          if (recDate > todayISO || recValidTo < dateRanges.last30DaysStart) return false;
         } else if (dateFilter === "CUSTOM") {
-          if (customStartDate && recDate < customStartDate) return false;
+          if (customStartDate && recValidTo < customStartDate) return false;
           if (customEndDate && recDate > customEndDate) return false;
         }
       }
