@@ -5,6 +5,7 @@ import {
   ChevronRight,
   Mail, 
   Send, 
+  Navigation,
   Archive, 
   Zap, 
   XSquare, 
@@ -55,6 +56,16 @@ import {
 import { checkIsRecordDispatched, getRecordKeys } from "../utils/dispatchUtils";
 import { isVrmSilentBlockedSync } from "../lib/blocklist";
 import { useLoading } from "../contexts/LoadingContext";
+// ⭐ FIX: Import canonical date & voucher matching functions from voucherValidation
+import {
+  isVoucherForPermitDateRange,
+  getVoucherValidFromISO,
+  getVoucherValidToISO,
+  normalizeDateToISO
+} from "../utils/voucherValidation";
+
+// ⭐ FIX: Re-export isVoucherForPermitDateRange so other files importing from DispatchCentre don't break
+export { isVoucherForPermitDateRange };
 
 interface DispatchCentreProps {
   database: CsvPermitRecord[];
@@ -98,56 +109,6 @@ const formatDate = (dateStr?: string) => {
     return `${parts[2]}/${parts[1]}/${parts[0]}`;
   }
   return dateStr;
-};
-
-const getVoucherValidFromISO = (v: ParsedVoucherData | undefined | null): string => {
-  if (!v) return "";
-  const raw = v.validFrom || v.valid_from || v.ValidFrom || v.startDate || v.start_date || v.date || v.dateRequired || v.uploadDate;
-  if (raw) {
-    const iso = parseDateToISO(String(raw));
-    if (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso;
-  }
-  return getVoucherDateISO(v) || "";
-};
-
-const getVoucherValidToISO = (v: ParsedVoucherData | undefined | null): string => {
-  if (!v) return "";
-  const raw = v.validTo || v.valid_to || v.ValidTo || v.endDate || v.end_date || v.expires || v.expiryDate;
-  if (raw) {
-    const iso = parseDateToISO(String(raw));
-    if (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso;
-  }
-  const fromIso = getVoucherValidFromISO(v);
-  if (fromIso) {
-    return addDays(fromIso, 6);
-  }
-  return "";
-};
-
-export const isVoucherForPermitDateRange = (
-  v: ParsedVoucherData | undefined | null,
-  permitFromISO: string,
-  permitToISO?: string
-): boolean => {
-  if (!v || !v.code || !permitFromISO) return false;
-  const cleanCode = cleanVoucherCodeValue(v.code).toUpperCase();
-  if (!cleanCode || cleanCode === "-" || cleanCode === "CANCELLED" || cleanCode === "PENDING") {
-    return false;
-  }
-
-  const vFrom = getVoucherValidFromISO(v);
-  if (!vFrom || vFrom !== permitFromISO) {
-    return false;
-  }
-
-  if (permitToISO) {
-    const vTo = getVoucherValidToISO(v);
-    if (vTo && vTo !== permitToISO) {
-      return false;
-    }
-  }
-
-  return true;
 };
 
 export type SortKey = 
@@ -805,20 +766,14 @@ export function DispatchCentre({
           parseDateToISO(record.todayDate || record.createdAt || record.created_at || (record as any).submissionTime);
         if (!recDate) return false;
 
-        // A permit is active from recDate through recDate+6 (7-day validity window).
-        // Use that full window when checking against TODAY/THIS_WEEK/THIS_MONTH so a
-        // permit that started before the window, but is still valid during part of it,
-        // isn't dropped just because its start date predates the window.
-        const recValidTo = addDays(recDate, 6);
-
         if (dateFilter === "TODAY") {
-          if (recDate > todayISO || recValidTo < todayISO) return false;
+          if (recDate !== todayISO) return false;
         } else if (dateFilter === "THIS_WEEK") {
-          if (recDate > todayISO || recValidTo < dateRanges.last7DaysStart) return false;
+          if (recDate < dateRanges.last7DaysStart || recDate > todayISO) return false;
         } else if (dateFilter === "THIS_MONTH") {
-          if (recDate > todayISO || recValidTo < dateRanges.last30DaysStart) return false;
+          if (recDate < dateRanges.last30DaysStart || recDate > todayISO) return false;
         } else if (dateFilter === "CUSTOM") {
-          if (customStartDate && recValidTo < customStartDate) return false;
+          if (customStartDate && recDate < customStartDate) return false;
           if (customEndDate && recDate > customEndDate) return false;
         }
       }
@@ -1034,60 +989,56 @@ export function DispatchCentre({
   };
 
   return (
-    <section className="w-full bg-white dark:bg-[#07172b] border border-slate-200 dark:border-[#183a5e] rounded-2xl p-4 md:p-6 shadow-sm dark:shadow-2xl text-slate-800 dark:text-slate-200 transition-colors">
+    <section className="w-full bg-[#030C1B] border border-[#0D223C] rounded-2xl p-4 md:p-6 shadow-2xl text-slate-200 transition-colors">
       {/* Top Header Section */}
-      <div className="flex flex-col gap-3 pb-4 border-b border-slate-200 dark:border-[#143252]">
-        <div className="flex items-center gap-3 w-full flex-nowrap overflow-x-auto">
+      <div className="flex flex-col gap-3 pb-4 border-b border-[#0D223C]">
+        <div className="flex items-center justify-between gap-4 w-full flex-wrap lg:flex-nowrap">
+          {/* Left: Logo & Title */}
           <div className="flex items-center gap-3 shrink-0">
-            <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center shadow-md shadow-blue-500/20 text-white shrink-0">
-              <Send className="w-4 h-4 -rotate-45" />
+            <div className="w-8 h-8 rounded-full bg-[#1877F2] flex items-center justify-center shadow-md shadow-blue-500/20 text-white shrink-0">
+              <Navigation className="w-4 h-4 fill-white text-white" />
             </div>
-            <h2 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white tracking-tight whitespace-nowrap shrink-0">
+            <h2 className="text-base sm:text-lg font-bold text-white tracking-tight whitespace-nowrap shrink-0">
               Permit Dispatch Centre
             </h2>
           </div>
 
-          <div className="flex-1 flex items-center justify-center gap-2 min-w-0 overflow-x-auto">
+          {/* Center: Browse Buttons, Counts & Sub-200ms Badge */}
+          <div className="flex items-center gap-3 shrink-0 flex-wrap sm:flex-nowrap">
             <button
               type="button"
               onClick={onBrowseConcessions}
-              className="flex items-center gap-1.5 rounded-md text-[13px] leading-none font-semibold text-white bg-blue-600 hover:bg-blue-700 transition-colors whitespace-nowrap shrink-0"
-              style={{
-                padding: "7px 12px"
-              }}
+              className="flex items-center gap-2 bg-[#1A73E8] hover:bg-[#1557b0] text-white rounded-lg px-3.5 py-2 text-xs sm:text-sm font-semibold transition-colors whitespace-nowrap shadow-sm"
             >
-              <FileSpreadsheet className="w-4 h-4 shrink-0 text-white" />
+              <FileSpreadsheet className="w-4 h-4 shrink-0" />
               <span className="whitespace-nowrap">Browse concessions</span>
             </button>
-            <span className="text-xs text-slate-500 dark:text-slate-400 font-medium whitespace-nowrap shrink-0">
+            <span className="text-xs sm:text-sm text-slate-400 font-normal whitespace-nowrap">
               {totalDbCount} concessions
             </span>
+
             <button
               type="button"
               onClick={onBrowseVouchers}
-              className="flex items-center gap-1.5 rounded-md text-[13px] leading-none font-semibold text-white bg-blue-600 hover:bg-blue-700 transition-colors whitespace-nowrap shrink-0"
-              style={{
-                padding: "7px 12px"
-              }}
+              className="flex items-center gap-2 bg-[#1A73E8] hover:bg-[#1557b0] text-white rounded-lg px-3.5 py-2 text-xs sm:text-sm font-semibold transition-colors whitespace-nowrap shadow-sm"
             >
-              <FileText className="w-4 h-4 shrink-0 text-white" />
+              <FileText className="w-4 h-4 shrink-0" />
               <span className="whitespace-nowrap">Browse vouchers</span>
             </button>
-            <span className="text-xs text-slate-500 dark:text-slate-400 font-medium whitespace-nowrap shrink-0">
+            <span className="text-xs sm:text-sm text-slate-400 font-normal whitespace-nowrap">
               {totalVouchersCount} vouchers
             </span>
-            <span className="whitespace-nowrap shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium text-slate-500 dark:text-slate-400 border border-slate-300 dark:border-slate-600">
-              <span className="w-1.5 h-1.5 rounded-full bg-teal-500"></span>
+
+            <span className="whitespace-nowrap shrink-0 inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold text-emerald-400 bg-emerald-950/40 border border-emerald-800/40">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
               Sub-200ms
             </span>
           </div>
 
-          <div className="flex items-center gap-2 whitespace-nowrap shrink-0">
+          {/* Right: Active Date Codes */}
+          <div className="flex items-center gap-2 whitespace-nowrap shrink-0 ml-auto lg:ml-0">
             <label 
-              className={`text-xs sm:text-sm font-semibold whitespace-nowrap shrink-0 transition-colors ${
-                isRangeStockLow ? "text-[#b91c1c]" : "text-[#15803d]"
-              }`}
-              style={{ color: isRangeStockLow ? "#b91c1c" : "#15803d" }}
+              className="text-xs sm:text-sm font-medium text-[#10B981] whitespace-nowrap shrink-0"
             >
               Active Date Codes ({unusedVouchersForDay.length}):
             </label>
@@ -1095,20 +1046,9 @@ export function DispatchCentre({
               value={unusedVouchersForDay.some(v => v.code === formData?.voucherCodesText) ? formData?.voucherCodesText : ""}
               onChange={handleActiveDateCodeChange}
               disabled={unusedVouchersForDay.length === 0}
-              className={`h-9 px-3 py-1.5 border rounded-md text-xs font-mono font-extrabold focus:outline-none transition-all shrink-0 whitespace-nowrap ${
-                unusedVouchersForDay.length > 0 ? "cursor-pointer" : "cursor-not-allowed font-normal"
-              } ${
-                isRangeStockLow
-                  ? "border-[#dc2626] bg-[#fee2e2] text-[#b91c1c] focus:border-[#dc2626]"
-                  : "border-[#16a34a] bg-[#dcfce7] text-[#15803d] focus:border-[#16a34a]"
-              }`}
-              style={{
-                borderColor: isRangeStockLow ? "#dc2626" : "#16a34a",
-                backgroundColor: isRangeStockLow ? "#fee2e2" : "#dcfce7",
-                color: isRangeStockLow ? "#b91c1c" : "#15803d"
-              }}
+              className="h-9 px-3 py-1.5 bg-[#D1FAE5] text-[#065F46] border border-[#34D399] rounded-lg text-xs font-mono font-bold focus:outline-none transition shrink-0 cursor-pointer"
             >
-              <option value="" disabled className="font-mono font-normal text-slate-500 bg-white dark:bg-slate-900">
+              <option value="" disabled className="font-mono font-normal text-slate-700 bg-white">
                 {vouchersDatabase.length === 0
                   ? "-- No Vouchers Uploaded --"
                   : unusedVouchersForDay.length === 0
@@ -1119,7 +1059,7 @@ export function DispatchCentre({
                 <option
                   key={`voucher_${v.code}_${index}`}
                   value={v.code}
-                  className="font-mono font-extrabold text-gray-800 dark:bg-slate-900 dark:text-slate-100"
+                  className="font-mono text-gray-900 bg-white"
                 >
                   {v.code}
                 </option>
@@ -1128,23 +1068,24 @@ export function DispatchCentre({
           </div>
         </div>
 
+        {/* Second Row: Search & Filters */}
         <div className="flex flex-col gap-2.5 pt-1">
           <div className="flex flex-wrap items-center gap-2.5">
             <div className="relative flex-1 min-w-[220px]">
-              <div className="flex items-center w-full bg-slate-50 dark:bg-[#041222] border border-slate-300 dark:border-[#1b436c] focus-within:border-blue-500 dark:focus-within:border-[#1677FF] focus-within:ring-2 focus-within:ring-blue-500/20 dark:focus-within:ring-[#1677FF]/20 rounded-xl px-3 py-2 transition shadow-inner">
-                <Search className="w-4 h-4 text-blue-500 dark:text-blue-400 shrink-0 mr-2" />
+              <div className="flex items-center w-full bg-[#020B19] border border-[#132A4A] focus-within:border-[#1A73E8] focus-within:ring-2 focus-within:ring-[#1A73E8]/20 rounded-xl px-3.5 py-2 transition shadow-inner">
+                <Search className="w-4 h-4 text-sky-400 shrink-0 mr-2" />
                 <input
                   type="text"
                   value={searchQuery}
                   onChange={(e) => handleSearchChange(e.target.value)}
                   placeholder="Search driver, VRN, hospital, voucher..."
-                  className="w-full bg-transparent text-xs sm:text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none font-normal"
+                  className="w-full bg-transparent text-xs sm:text-sm text-white placeholder-slate-400 focus:outline-none font-normal"
                 />
                 {searchQuery && (
                   <button
                     type="button"
                     onClick={() => handleSearchChange("")}
-                    className="text-slate-400 hover:text-slate-600 dark:hover:text-white p-0.5 rounded transition cursor-pointer"
+                    className="text-slate-400 hover:text-white p-0.5 rounded transition cursor-pointer"
                     title="Clear search"
                   >
                     <X className="w-3.5 h-3.5" />
@@ -1153,51 +1094,51 @@ export function DispatchCentre({
               </div>
             </div>
 
-            <div className="relative">
+            <div className="relative shrink-0">
               <select
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value as any)}
-                className="h-9.5 pl-3 pr-8 bg-slate-50 dark:bg-[#041222] border border-slate-300 dark:border-[#1b436c] text-slate-900 dark:text-slate-200 rounded-xl text-xs font-medium focus:outline-none focus:border-blue-500 transition appearance-none cursor-pointer"
+                className="h-9.5 pl-3.5 pr-8 bg-[#020B19] border border-[#132A4A] text-white rounded-xl text-xs font-medium focus:outline-none focus:border-[#1A73E8] transition appearance-none cursor-pointer"
               >
-                <option value="ALL">Status: All</option>
-                <option value="PENDING">PENDING</option>
-                <option value="SENT">SENT</option>
-                <option value="CANCELLED">CANCELLED</option>
-                <option value="BLOCKED">BLOCKED</option>
-                <option value="REPLACEMENT">REPLACEMENT</option>
+                <option value="ALL" className="bg-[#020B19] text-white">Status: All</option>
+                <option value="PENDING" className="bg-[#020B19] text-white">PENDING</option>
+                <option value="SENT" className="bg-[#020B19] text-white">SENT</option>
+                <option value="CANCELLED" className="bg-[#020B19] text-white">CANCELLED</option>
+                <option value="BLOCKED" className="bg-[#020B19] text-white">BLOCKED</option>
+                <option value="REPLACEMENT" className="bg-[#020B19] text-white">REPLACEMENT</option>
               </select>
               <ChevronDown className="w-3.5 h-3.5 text-slate-400 pointer-events-none absolute right-3 top-1/2 -translate-y-1/2" />
             </div>
 
-            <div className="relative">
+            <div className="relative shrink-0">
               <select
                 value={hospitalFilter}
                 onChange={(e) => setHospitalFilter(e.target.value)}
-                className="h-9.5 pl-3 pr-8 bg-slate-50 dark:bg-[#041222] border border-slate-300 dark:border-[#1b436c] text-slate-900 dark:text-slate-200 rounded-xl text-xs font-medium focus:outline-none focus:border-blue-500 transition appearance-none cursor-pointer truncate"
+                className="h-9.5 pl-3.5 pr-8 bg-[#020B19] border border-[#132A4A] text-white rounded-xl text-xs font-medium focus:outline-none focus:border-[#1A73E8] transition appearance-none cursor-pointer truncate max-w-[200px]"
               >
-                <option value="ALL">Hospital: All</option>
+                <option value="ALL" className="bg-[#020B19] text-white">Hospital: All</option>
                 {allHospitalsList.map(h => (
-                  <option key={h} value={h}>{h}</option>
+                  <option key={h} value={h} className="bg-[#020B19] text-white">{h}</option>
                 ))}
               </select>
               <ChevronDown className="w-3.5 h-3.5 text-slate-400 pointer-events-none absolute right-3 top-1/2 -translate-y-1/2" />
             </div>
 
-            <div className="relative">
+            <div className="relative shrink-0">
               <select
                 value={wardFilter}
                 onChange={(e) => setWardFilter(e.target.value)}
-                className="h-9.5 pl-3 pr-8 bg-slate-50 dark:bg-[#041222] border border-slate-300 dark:border-[#1b436c] text-slate-900 dark:text-slate-200 rounded-xl text-xs font-medium focus:outline-none focus:border-blue-500 transition appearance-none cursor-pointer truncate"
+                className="h-9.5 pl-3.5 pr-8 bg-[#020B19] border border-[#132A4A] text-white rounded-xl text-xs font-medium focus:outline-none focus:border-[#1A73E8] transition appearance-none cursor-pointer truncate max-w-[200px]"
               >
-                <option value="ALL">Ward: All</option>
+                <option value="ALL" className="bg-[#020B19] text-white">Ward: All</option>
                 {allWardsList.map(w => (
-                  <option key={w} value={w}>{w}</option>
+                  <option key={w} value={w} className="bg-[#020B19] text-white">{w}</option>
                 ))}
               </select>
               <ChevronDown className="w-3.5 h-3.5 text-slate-400 pointer-events-none absolute right-3 top-1/2 -translate-y-1/2" />
             </div>
 
-            <div className="relative">
+            <div className="relative shrink-0">
               <select
                 id="date-filter-dropdown"
                 value={dateFilter}
@@ -1216,13 +1157,13 @@ export function DispatchCentre({
                     setCustomEndDate("");
                   }
                 }}
-                className="h-9.5 pl-3 pr-8 bg-slate-50 dark:bg-[#041222] border border-slate-300 dark:border-[#1b436c] text-slate-900 dark:text-slate-200 rounded-xl text-xs font-medium focus:outline-none focus:border-blue-500 transition appearance-none cursor-pointer"
+                className="h-9.5 pl-3.5 pr-8 bg-[#020B19] border border-[#132A4A] text-white rounded-xl text-xs font-medium focus:outline-none focus:border-[#1A73E8] transition appearance-none cursor-pointer"
               >
-                <option value="ALL">{isLoadingHistory ? "Loading..." : "Date: All Time"}</option>
-                <option value="TODAY">Today</option>
-                <option value="THIS_WEEK">This Week</option>
-                <option value="THIS_MONTH">This Month</option>
-                <option value="CUSTOM">Custom Range</option>
+                <option value="ALL" className="bg-[#020B19] text-white">{isLoadingHistory ? "Loading..." : "Date: All Time"}</option>
+                <option value="TODAY" className="bg-[#020B19] text-white">Today</option>
+                <option value="THIS_WEEK" className="bg-[#020B19] text-white">This Week</option>
+                <option value="THIS_MONTH" className="bg-[#020B19] text-white">This Month</option>
+                <option value="CUSTOM" className="bg-[#020B19] text-white">Custom Range</option>
               </select>
               <ChevronDown className="w-3.5 h-3.5 text-slate-400 pointer-events-none absolute right-3 top-1/2 -translate-y-1/2" />
             </div>
@@ -1452,6 +1393,13 @@ export function DispatchCentre({
                 const isBlocked = isVrmSilentBlockedSync(record.vrm);
                 const isCancelled = isRecordCancelled(record, reqDate, database);
                 const recordKey = String(record.formId ?? record.id ?? index);
+
+                // ⭐ FIX: CODES Column & VOUCHER CODE Column - canonical date range matching
+                const permitFromISO = getRequestedPermitDateISO(record) || parseDateToISO(record.validFrom || record.dateRequired) || "";
+                const permitToISO = record.validTo 
+                  ? (parseDateToISO(record.validTo) || (permitFromISO ? addDays(permitFromISO, 6) : ""))
+                  : (record.dateExpiry ? (parseDateToISO(record.dateExpiry) || (permitFromISO ? addDays(permitFromISO, 6) : "")) : (permitFromISO ? addDays(permitFromISO, 6) : ""));
+
                 let displayCode = recordCodeMap.get(recordKey);
 
                 if (isBlocked) {
@@ -1460,7 +1408,35 @@ export function DispatchCentre({
                   displayCode = "CANCELLED";
                 } else if (displayCode === undefined || displayCode === null || displayCode === "CANCELLED" || displayCode === "BLOCKED") {
                   const rawCode = (record.voucherCode || (customVouchers && (customVouchers[recordKey] || (record.vrm && customVouchers[`${record.vrm.toUpperCase().replace(/\s+/g, "")}_${reqDate}`]))) || "").trim();
-                  displayCode = (rawCode && rawCode.toUpperCase() !== "CANCELLED" && rawCode.toUpperCase() !== "BLOCKED") ? rawCode : "-";
+                  const cleanRaw = cleanVoucherCodeValue(rawCode).toUpperCase();
+                  
+                  // ⭐ FIX: Only display if the code actually exists in the current vouchersDatabase
+                  const codeExists = cleanRaw && cleanRaw !== "-" && cleanRaw !== "CANCELLED" && cleanRaw !== "BLOCKED" &&
+                    vouchersDatabase.some(v => v && v.code && cleanVoucherCodeValue(v.code).toUpperCase() === cleanRaw);
+                  
+                  displayCode = codeExists ? rawCode : "-";
+                }
+
+                // ⭐ FIX: Verify displayCode exists in current vouchersDatabase for this permit's date range
+                if (
+                  displayCode &&
+                  displayCode !== "-" &&
+                  displayCode !== "CANCELLED" &&
+                  displayCode !== "BLOCKED" &&
+                  vouchersDatabase &&
+                  vouchersDatabase.length > 0
+                ) {
+                  const cleanDisplay = cleanVoucherCodeValue(displayCode).toUpperCase();
+                  const validInDbForDate = vouchersDatabase.some(v => {
+                    if (!v || !v.code) return false;
+                    return (
+                      cleanVoucherCodeValue(v.code).toUpperCase() === cleanDisplay &&
+                      (!permitFromISO || isVoucherForPermitDateRange(v, permitFromISO, permitToISO))
+                    );
+                  });
+                  if (!validInDbForDate) {
+                    displayCode = "-";
+                  }
                 }
                 const rowKey = String(record.formId ?? record.id ?? record.vrm ?? index);
 
@@ -1483,13 +1459,7 @@ export function DispatchCentre({
 
                 const hospitalDisplay = getHospital(record);
 
-                // ⭐ FIXED: CODES Column - Use Actual VRM and Show Count
-                const permitFromISO = getRequestedPermitDateISO(record) || parseDateToISO(record.validFrom || record.dateRequired) || "";
-                const permitToISO = record.validTo 
-                  ? (parseDateToISO(record.validTo) || (permitFromISO ? addDays(permitFromISO, 6) : ""))
-                  : (record.dateExpiry ? (parseDateToISO(record.dateExpiry) || (permitFromISO ? addDays(permitFromISO, 6) : "")) : (permitFromISO ? addDays(permitFromISO, 6) : ""));
-                
-                // ⭐ FIX: Filter vouchers that match this permit's date range AND VRM
+                // ⭐ FIX: Filter vouchers that match this permit's date range AND VRM using canonical isVoucherForPermitDateRange
                 const matchingVouchersForRow = vouchersDatabase.filter(v => {
                   const dateMatch = isVoucherForPermitDateRange(v, permitFromISO, permitToISO);
                   const vVrmClean = (v.vrm || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
@@ -1497,6 +1467,21 @@ export function DispatchCentre({
                   const vrmMatch = !vVrmClean || vVrmClean === recordVrmClean;
                   return dateMatch && vrmMatch;
                 });
+
+                // ⭐ Stale code check: an assigned code that no longer exists in the
+                // currently-loaded voucher batch for this permit's date range — usually
+                // means it was assigned before a newer Vouchers.csv was uploaded.
+                const isStaleCode = Boolean(
+                  !isBlocked &&
+                  !isCancelled &&
+                  displayCode &&
+                  displayCode !== "-" &&
+                  !vouchersDatabase.some(v => {
+                    const vCode = (v.code || "").trim().toUpperCase();
+                    return vCode && vCode === String(displayCode).trim().toUpperCase() &&
+                      isVoucherForPermitDateRange(v, permitFromISO, permitToISO);
+                  })
+                );
                 
                 const totalForRow = matchingVouchersForRow.length;
                 
@@ -1557,6 +1542,14 @@ export function DispatchCentre({
                         <span className="text-amber-600 dark:text-amber-400 font-bold bg-amber-50 dark:bg-amber-950/30 px-2 py-0.5 rounded border border-amber-200 dark:border-amber-700/50 inline-flex items-center gap-1.5">
                           <span className="inline-block animate-spin text-[10px]">⟳</span>
                           {displayCode || "-"}
+                        </span>
+                      ) : isStaleCode ? (
+                        <span 
+                          className="text-orange-600 dark:text-orange-400 font-normal inline-flex items-center gap-1"
+                          title="This code isn't in the currently loaded voucher batch for this date range — likely assigned before the latest Vouchers.csv was uploaded."
+                        >
+                          <span aria-hidden="true">⚠</span>
+                          {displayCode}
                         </span>
                       ) : (
                         <span className="text-slate-800 dark:text-slate-200 font-normal">

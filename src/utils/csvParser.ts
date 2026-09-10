@@ -2278,7 +2278,12 @@ export function getSpreadsheetMatchingAllocationsMap(
 
       if (customOverride && customOverride !== "-" && customOverride.toUpperCase() !== "CANCELLED") {
         const clean = String(customOverride).trim().split(/[\n,;\s]+/)[0]?.trim().toUpperCase();
-        if (clean && clean !== "-" && clean !== "CANCELLED") {
+        // ⭐ FIX: Only allocate if code exists in vouchersDatabase for this date
+        const codeExistsInDb = !vouchersDatabase || vouchersDatabase.length === 0 || vouchersDatabase.some(v => 
+          v && v.code && cleanVoucherCodeValue(v.code).toUpperCase() === clean &&
+          (!reqDate || isVoucherExactPeriodEligible(v, reqDate))
+        );
+        if (codeExistsInDb && clean && clean !== "-" && clean !== "CANCELLED") {
           map.set(recordKey, clean);
           internalAssignedSet.add(clean);
           return;
@@ -2290,7 +2295,12 @@ export function getSpreadsheetMatchingAllocationsMap(
     const rawCodeUpper = rawCode ? String(rawCode).trim().toUpperCase() : "";
     if (rawCode && rawCode !== "-" && rawCodeUpper !== "CANCELLED") {
       const clean = cleanVoucherCodeValue(String(rawCode)).toUpperCase();
-      if (clean && clean !== "-" && clean !== "CANCELLED") {
+      // ⭐ FIX: Only allocate if code exists in vouchersDatabase for this date
+      const codeExistsInDb = !vouchersDatabase || vouchersDatabase.length === 0 || vouchersDatabase.some(v => 
+        v && v.code && cleanVoucherCodeValue(v.code).toUpperCase() === clean &&
+        (!reqDate || isVoucherExactPeriodEligible(v, reqDate))
+      );
+      if (codeExistsInDb && clean && clean !== "-" && clean !== "CANCELLED") {
         map.set(recordKey, clean);
         internalAssignedSet.add(clean);
         return;

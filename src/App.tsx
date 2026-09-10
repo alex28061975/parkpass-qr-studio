@@ -24,6 +24,8 @@ import {
 import { INITIAL_DEMO_CSV } from "./data/defaultCsv";
 import { isVrmSilentBlockedSync } from "./lib/blocklist";
 import { CsvPermitRecord, parsePermitCsv, parseDateToISO, addDays, formatPhoneNumber, ParsedVoucherData, addDaysSafe, parseDateRange, getDatesInRange, cleanVoucherCodeValue, exportToExcel, isVoucherCodeMatch, sortRecordsByFormIdDesc, getMatchingPermits, isDateRequiredOutsideValidWindow, getTodayISO, checkIsBlockedDuplicate, parseFullDateTimeMs, normalizeVouchersList, isRecordCancelled, getRequestedPermitDateISO, isVoucherExactPeriodEligible, isVoucherAvailableStatus, isVoucherVrmCompatible } from "./utils/csvParser";
+// ⭐ FIX: Import canonical voucher validation helper
+import { isVoucherForPermitDateRange } from "./utils/voucherValidation";
 import { CsvDatabasePanel, type CsvDatabasePanelHandle } from "./components/CsvDatabasePanel";
 import { BlocklistPanel } from "./components/BlocklistPanel";
 import { EditRecordModal } from "./components/EditRecordModal";
@@ -262,18 +264,34 @@ export function enrichRecordsWithVouchers(
 
     const existingCode = record.voucherCode || record.prePaidCode || record.qrCode || record.serialNumber;
 
+    // ⭐ FIX: Only accept customOverride if it exists in current vouchersDb and matches permit date
     if (customOverride && customOverride !== "-" && customOverride.toUpperCase() !== "CANCELLED") {
       const clean = cleanVoucherCodeValue(customOverride).toUpperCase();
-      if (clean && clean !== "-" && clean !== "CANCELLED" && !checkIsAssigned(clean, custAssignedSet)) {
+      const matchingVoucherInDb = vouchersDb.find(v => {
+        if (!v || !v.code) return false;
+        return cleanVoucherCodeValue(v.code).toUpperCase() === clean;
+      });
+      const dateMatches = !reqIso || !matchingVoucherInDb || isVoucherForPermitDateRange(matchingVoucherInDb, reqIso);
+      if (matchingVoucherInDb && dateMatches && clean && clean !== "-" && clean !== "CANCELLED" && !checkIsAssigned(clean, custAssignedSet)) {
         registerCodeGlobally(clean, custAssignedSet);
         recordClaimedCodes.set(index, clean);
       }
     } else if (existingCode && existingCode !== "-" && existingCode.toUpperCase() !== "CANCELLED") {
       const clean = cleanVoucherCodeValue(existingCode).toUpperCase();
-      if (clean && clean !== "-" && clean !== "CANCELLED" && !checkIsAssigned(clean, custAssignedSet)) {
+      
+      // ⭐ FIX: only accept if the code exists in the current vouchersDatabase and matches permit date
+      const matchingVoucherInDb = vouchersDb.find(v => {
+        if (!v || !v.code) return false;
+        return cleanVoucherCodeValue(v.code).toUpperCase() === clean;
+      });
+      
+      const dateMatches = !reqIso || !matchingVoucherInDb || isVoucherForPermitDateRange(matchingVoucherInDb, reqIso);
+      
+      if (matchingVoucherInDb && dateMatches && clean !== "-" && clean !== "CANCELLED" && !checkIsAssigned(clean, custAssignedSet)) {
         registerCodeGlobally(clean, custAssignedSet);
         recordClaimedCodes.set(index, clean);
       }
+      // If it doesn't exist in vouchersDb or doesn't match date, do NOT claim it — Pass 1 will reassign from the real DB or set '-'
     }
   });
 
@@ -1871,6 +1889,28 @@ export default function App() {
   };
 
   const handleVouchersDatabaseChange = async (incomingVouchers: ParsedVoucherData[]) => {
+    // ⭐ FIX: Clear any customVouchers entries whose codes no longer exist in incoming vouchers
+    const validCodes = new Set(
+      (incomingVouchers || [])
+        .filter(v => v && v.code)
+        .map(v => cleanVoucherCodeValue(v.code).toUpperCase())
+    );
+
+    const cleanedCustomVouchers: Record<string, string> = {};
+    Object.entries(customVouchers || {}).forEach(([key, raw]) => {
+      if (raw && typeof raw === "string") {
+        const clean = cleanVoucherCodeValue(raw).toUpperCase();
+        if (validCodes.has(clean)) {
+          cleanedCustomVouchers[key] = raw;
+        }
+      }
+    });
+
+    if (Object.keys(cleanedCustomVouchers).length !== Object.keys(customVouchers || {}).length) {
+      setCustomVouchers(cleanedCustomVouchers);
+      safeLocalStorage.setItem("concessions_custom_vouchers", JSON.stringify(cleanedCustomVouchers));
+    }
+
     const mergedMap = new Map<string, ParsedVoucherData>();
     const todayISO = getTodayISO();
 
