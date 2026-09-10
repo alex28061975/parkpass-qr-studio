@@ -146,6 +146,7 @@ export function DispatchCentre({
   onBulkEmail,
   onClear,
   onChangeFormData,
+  dateRangeFilter,
   onDateRangeFilterChange,
   isLoadingHistory,
   onBrowseConcessions,
@@ -475,7 +476,17 @@ export function DispatchCentre({
   const [statusFilter, setStatusFilter] = useState<"ALL" | "PENDING" | "SENT" | "CANCELLED" | "BLOCKED" | "REPLACEMENT">("ALL");
   const [hospitalFilter, setHospitalFilter] = useState<string>("ALL");
   const [wardFilter, setWardFilter] = useState<string>("ALL");
-  const [dateFilter, setDateFilter] = useState<"ALL" | "TODAY" | "THIS_WEEK" | "THIS_MONTH" | "CUSTOM">("THIS_WEEK");
+  const [dateFilter, setDateFilter] = useState<"ALL" | "TODAY" | "THIS_WEEK" | "THIS_MONTH" | "CUSTOM">(() => {
+    if (dateRangeFilter === "7days") return "THIS_WEEK";
+    if (dateRangeFilter === "30days") return "THIS_MONTH";
+    return "ALL";
+  });
+
+  useEffect(() => {
+    if (dateRangeFilter === "7days") setDateFilter("THIS_WEEK");
+    else if (dateRangeFilter === "30days") setDateFilter("THIS_MONTH");
+    else if (dateRangeFilter === "all") setDateFilter("ALL");
+  }, [dateRangeFilter]);
   const [customStartDate, setCustomStartDate] = useState<string>("");
   const [customEndDate, setCustomEndDate] = useState<string>("");
 

@@ -850,7 +850,7 @@ export default function App() {
   const initialSupabaseSyncDone = useRef(false);
 
   const [isSupabaseActive, setIsSupabaseActive] = useState<boolean>(() => isSupabaseConfigured());
-  const [dateRangeFilter, setDateRangeFilter] = useState<'7days' | '30days' | 'all'>('7days');
+  const [dateRangeFilter, setDateRangeFilter] = useState<'7days' | '30days' | 'all'>('all');
   const dateRangeFilterRef = useRef(dateRangeFilter);
   useEffect(() => {
     dateRangeFilterRef.current = dateRangeFilter;
