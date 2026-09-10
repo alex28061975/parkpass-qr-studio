@@ -1039,43 +1039,39 @@ export function DispatchCentre({
             <h2 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white tracking-tight whitespace-nowrap shrink-0">
               Permit Dispatch Centre
             </h2>
-            <span className="text-xs text-emerald-700 dark:text-emerald-400 font-semibold whitespace-nowrap">
-              {totalDbCount} records
-            </span>
-            <span className="text-xs text-emerald-700 dark:text-emerald-400 font-semibold whitespace-nowrap">
-              {totalVouchersCount} vouchers
-            </span>
           </div>
 
-          <div className="flex-1 flex items-center justify-center gap-3 min-w-0 overflow-x-auto">
+          <div className="flex-1 flex items-center justify-center gap-2 min-w-0 overflow-x-auto">
             <button
               type="button"
               onClick={onBrowseConcessions}
-              className="flex items-center gap-1.5 border border-emerald-700 dark:border-[#2c6e4f] rounded-md text-[13px] leading-none text-emerald-700 dark:text-[#4ade80] transition-colors whitespace-nowrap shrink-0"
+              className="flex items-center gap-1.5 rounded-md text-[13px] leading-none font-semibold text-white bg-blue-600 hover:bg-blue-700 transition-colors whitespace-nowrap shrink-0"
               style={{
-                background: "transparent",
-                borderWidth: "1px",
                 padding: "7px 12px"
               }}
             >
-              <FileSpreadsheet className="w-4 h-4 shrink-0 text-emerald-700 dark:text-[#4ade80]" />
+              <FileSpreadsheet className="w-4 h-4 shrink-0 text-white" />
               <span className="whitespace-nowrap">Browse concessions</span>
             </button>
+            <span className="text-xs text-slate-500 dark:text-slate-400 font-medium whitespace-nowrap shrink-0">
+              {totalDbCount} concessions
+            </span>
             <button
               type="button"
               onClick={onBrowseVouchers}
-              className="flex items-center gap-1.5 border border-emerald-700 dark:border-[#2c6e4f] rounded-md text-[13px] leading-none text-emerald-700 dark:text-[#4ade80] transition-colors whitespace-nowrap shrink-0"
+              className="flex items-center gap-1.5 rounded-md text-[13px] leading-none font-semibold text-white bg-blue-600 hover:bg-blue-700 transition-colors whitespace-nowrap shrink-0"
               style={{
-                background: "transparent",
-                borderWidth: "1px",
                 padding: "7px 12px"
               }}
             >
-              <FileText className="w-4 h-4 shrink-0 text-emerald-700 dark:text-[#4ade80]" />
+              <FileText className="w-4 h-4 shrink-0 text-white" />
               <span className="whitespace-nowrap">Browse vouchers</span>
             </button>
-            <span className="whitespace-nowrap shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold text-emerald-700 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800/60">
-              <span className="w-2 h-2 rounded-full bg-emerald-600 dark:bg-emerald-500 animate-pulse"></span>
+            <span className="text-xs text-slate-500 dark:text-slate-400 font-medium whitespace-nowrap shrink-0">
+              {totalVouchersCount} vouchers
+            </span>
+            <span className="whitespace-nowrap shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium text-slate-500 dark:text-slate-400 border border-slate-300 dark:border-slate-600">
+              <span className="w-1.5 h-1.5 rounded-full bg-teal-500"></span>
               Sub-200ms
             </span>
           </div>
