@@ -1,6 +1,23 @@
 import * as XLSX from "xlsx";
 import { safeLocalStorage } from "./safeLocalStorage";
 import { isVrmSilentBlockedSync } from "../lib/blocklist";
+import {
+  cleanVoucherCodeValue,
+  normalizeDateToISO,
+  addDaysISO,
+  getVoucherValidFromISO,
+  getVoucherValidToISO,
+  isVoucherForPermitDateRange
+} from "./voucherValidation";
+
+export {
+  cleanVoucherCodeValue,
+  normalizeDateToISO,
+  addDaysISO,
+  getVoucherValidFromISO,
+  getVoucherValidToISO,
+  isVoucherForPermitDateRange
+};
 
 export function findFormIdColumn(headers: string[]): number {
   const exactTargets = ["form id", "form_id", "formid", "id", "id_no", "id no", "response id", "submission id"];
@@ -55,45 +72,6 @@ export function findVoucherCodeColumn(headers: string[]): number {
   if (idx !== -1) return idx;
 
   return -1;
-}
-
-export function cleanVoucherCodeValue(val: any): string {
-  if (val === undefined || val === null) return "-";
-  const s = String(val).trim();
-  if (!s || s === "") return "-";
-  
-  const num = Number(s);
-  if (!isNaN(num)) {
-    if (s.includes(".") || (num > 30000 && num < 60000)) {
-      return "-";
-    }
-  }
-
-  const lower = s.toLowerCase();
-  if (
-    lower === "pending" || 
-    lower === "none" || 
-    lower === "null" || 
-    lower === "undefined" || 
-    lower === "-" || 
-    lower === "—" ||
-    lower === "blocked" ||
-    lower === "expired" ||
-    lower === "cancelled" ||
-    lower === "canceled" ||
-    lower === "cz7o274wedacs" ||
-    lower === "29s54wndiefeg" ||
-    lower.includes("cz7o") ||
-    lower.includes("29s5") ||
-    lower.includes("hospital") || 
-    lower.includes("site") || 
-    lower.includes("ward") || 
-    lower.includes("department")
-  ) {
-    return "-";
-  }
-
-  return s.toUpperCase();
 }
 
 export function findValidFromColumn(headers: string[]): number {
@@ -2189,9 +2167,11 @@ export function isVoucherInValidityPeriod(
 
 export function isVoucherExactPeriodEligible(
   voucher: ParsedVoucherData | undefined | null,
-  requestedDateStr: string
+  requestedDateStr: string,
+  permitToDateStr?: string
 ): boolean {
-  return isVoucherInValidityPeriod(voucher, requestedDateStr);
+  if (!voucher || !voucher.code || !requestedDateStr) return false;
+  return isVoucherForPermitDateRange(voucher, requestedDateStr, permitToDateStr);
 }
 
 export function isRecordCancelledCanonical(record: any, todayDateOrReference?: string, database?: CsvPermitRecord[]): boolean {
@@ -2252,6 +2232,9 @@ export function getSpreadsheetMatchingAllocationsMap(
   sortedMatchingPermits.forEach((r, idx) => {
     const recordKey = String(r.formId ?? r.id ?? idx);
     const reqDate = getRequestedPermitDateISO(r, processingDate);
+    const reqDateTo = r.validTo 
+      ? (parseDateToISO(r.validTo) || (reqDate ? addDaysSafe(reqDate, 6) : ""))
+      : (r.dateExpiry ? (parseDateToISO(r.dateExpiry) || (reqDate ? addDaysSafe(reqDate, 6) : "")) : (reqDate ? addDaysSafe(reqDate, 6) : ""));
 
     if (isVrmSilentBlockedSync(r.vrm)) {
       map.set(recordKey, "BLOCKED");
@@ -2278,10 +2261,10 @@ export function getSpreadsheetMatchingAllocationsMap(
 
       if (customOverride && customOverride !== "-" && customOverride.toUpperCase() !== "CANCELLED") {
         const clean = String(customOverride).trim().split(/[\n,;\s]+/)[0]?.trim().toUpperCase();
-        // ⭐ FIX: Only allocate if code exists in vouchersDatabase for this date
+        // ⭐ FIX: Only allocate if code exists in vouchersDatabase for this exact date range
         const codeExistsInDb = !vouchersDatabase || vouchersDatabase.length === 0 || vouchersDatabase.some(v => 
           v && v.code && cleanVoucherCodeValue(v.code).toUpperCase() === clean &&
-          (!reqDate || isVoucherExactPeriodEligible(v, reqDate))
+          (!reqDate || isVoucherExactPeriodEligible(v, reqDate, reqDateTo))
         );
         if (codeExistsInDb && clean && clean !== "-" && clean !== "CANCELLED") {
           map.set(recordKey, clean);
@@ -2295,10 +2278,10 @@ export function getSpreadsheetMatchingAllocationsMap(
     const rawCodeUpper = rawCode ? String(rawCode).trim().toUpperCase() : "";
     if (rawCode && rawCode !== "-" && rawCodeUpper !== "CANCELLED") {
       const clean = cleanVoucherCodeValue(String(rawCode)).toUpperCase();
-      // ⭐ FIX: Only allocate if code exists in vouchersDatabase for this date
+      // ⭐ FIX: Only allocate if code exists in vouchersDatabase for this exact date range
       const codeExistsInDb = !vouchersDatabase || vouchersDatabase.length === 0 || vouchersDatabase.some(v => 
         v && v.code && cleanVoucherCodeValue(v.code).toUpperCase() === clean &&
-        (!reqDate || isVoucherExactPeriodEligible(v, reqDate))
+        (!reqDate || isVoucherExactPeriodEligible(v, reqDate, reqDateTo))
       );
       if (codeExistsInDb && clean && clean !== "-" && clean !== "CANCELLED") {
         map.set(recordKey, clean);
@@ -2313,6 +2296,10 @@ export function getSpreadsheetMatchingAllocationsMap(
     if (map.has(recordKey)) return;
 
     const reqDateD = getRequestedPermitDateISO(r, processingDate);
+    const reqDateToD = r.validTo 
+      ? (parseDateToISO(r.validTo) || (reqDateD ? addDaysSafe(reqDateD, 6) : ""))
+      : (r.dateExpiry ? (parseDateToISO(r.dateExpiry) || (reqDateD ? addDaysSafe(reqDateD, 6) : "")) : (reqDateD ? addDaysSafe(reqDateD, 6) : ""));
+
     if (isRecordCancelledCanonical(r, reqDateD || processingDate, effectiveDatabase)) {
       map.set(recordKey, "CANCELLED");
       return;
@@ -2327,7 +2314,7 @@ export function getSpreadsheetMatchingAllocationsMap(
       if (!isVoucherAvailableStatus(v)) return false;
       const cleanCode = cleanVoucherCodeValue(v.code).toUpperCase();
       if (internalAssignedSet.has(cleanCode)) return false;
-      return isVoucherExactPeriodEligible(v, reqDateD);
+      return isVoucherExactPeriodEligible(v, reqDateD, reqDateToD);
     });
 
     const rVrm = (r.vrm || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
@@ -2400,12 +2387,15 @@ export function getUnusedVouchersForDate(
   }
 
   const targetDateISO = parseDateToISO(targetISO) || targetISO;
+  const targetEndISO = (currentRecord && currentRecord.validTo)
+    ? (parseDateToISO(currentRecord.validTo) || addDaysSafe(targetDateISO, 6))
+    : addDaysSafe(targetDateISO, 6);
   const currentVrmClean = (currentVrm || "")
     .toUpperCase()
     .replace(/[^A-Z0-9]/g, "");
 
   const dailyVouchersForDate = vouchersDatabase.filter((v) => {
-    return isVoucherInValidityPeriod(v, targetDateISO);
+    return isVoucherForPermitDateRange(v, targetDateISO, targetEndISO);
   });
 
   if (dailyVouchersForDate.length === 0) {

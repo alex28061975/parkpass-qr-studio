@@ -1,5 +1,43 @@
-import { ParsedVoucherData, CsvPermitRecord } from "./csvParser";
-import { cleanVoucherCodeValue } from "./csvParser";
+import type { ParsedVoucherData, CsvPermitRecord } from "./csvParser";
+
+export function cleanVoucherCodeValue(val: any): string {
+  if (val === undefined || val === null) return "-";
+  const s = String(val).trim();
+  if (!s || s === "") return "-";
+  
+  const num = Number(s);
+  if (!isNaN(num)) {
+    if (s.includes(".") || (num > 30000 && num < 60000)) {
+      return "-";
+    }
+  }
+
+  const lower = s.toLowerCase();
+  if (
+    lower === "pending" || 
+    lower === "none" || 
+    lower === "null" || 
+    lower === "undefined" || 
+    lower === "-" || 
+    lower === "—" ||
+    lower === "blocked" ||
+    lower === "expired" ||
+    lower === "cancelled" ||
+    lower === "canceled" ||
+    lower === "cz7o274wedacs" ||
+    lower === "29s54wndiefeg" ||
+    lower.includes("cz7o") ||
+    lower.includes("29s5") ||
+    lower.includes("hospital") || 
+    lower.includes("site") || 
+    lower.includes("ward") || 
+    lower.includes("department")
+  ) {
+    return "-";
+  }
+
+  return s.toUpperCase();
+}
 
 /**
  * Normalizes any date string (ISO YYYY-MM-DD or UK DD/MM/YYYY) into ISO YYYY-MM-DD.
@@ -93,12 +131,10 @@ export function isVoucherForPermitDateRange(
     return false;
   }
 
-  if (permitToISO) {
-    const normPermitTo = normalizeDateToISO(permitToISO);
-    const vTo = getVoucherValidToISO(v);
-    if (vTo && normPermitTo && vTo !== normPermitTo) {
-      return false;
-    }
+  const normPermitTo = permitToISO ? normalizeDateToISO(permitToISO) : addDaysISO(normPermitFrom, 6);
+  const vTo = getVoucherValidToISO(v);
+  if (vTo && normPermitTo && vTo !== normPermitTo) {
+    return false;
   }
 
   return true;

@@ -246,6 +246,9 @@ export function enrichRecordsWithVouchers(
     }
     const custAssignedSet = assignedPerCustomer.get(customerKey)!;
     const reqIso = getRequestedPermitDateISO(record, fallbackDateStr);
+    const reqIsoTo = record.validTo 
+      ? (parseDateToISO(record.validTo) || (reqIso ? addDaysSafe(reqIso, 6) : ""))
+      : (record.dateExpiry ? (parseDateToISO(record.dateExpiry) || (reqIso ? addDaysSafe(reqIso, 6) : "")) : (reqIso ? addDaysSafe(reqIso, 6) : ""));
 
     // Cancelled or blocked permits MUST NOT claim or consume vouchers
     if (
@@ -271,7 +274,7 @@ export function enrichRecordsWithVouchers(
         if (!v || !v.code) return false;
         return cleanVoucherCodeValue(v.code).toUpperCase() === clean;
       });
-      const dateMatches = !reqIso || !matchingVoucherInDb || isVoucherForPermitDateRange(matchingVoucherInDb, reqIso);
+      const dateMatches = !reqIso || !matchingVoucherInDb || isVoucherForPermitDateRange(matchingVoucherInDb, reqIso, reqIsoTo);
       if (matchingVoucherInDb && dateMatches && clean && clean !== "-" && clean !== "CANCELLED" && !checkIsAssigned(clean, custAssignedSet)) {
         registerCodeGlobally(clean, custAssignedSet);
         recordClaimedCodes.set(index, clean);
@@ -285,7 +288,7 @@ export function enrichRecordsWithVouchers(
         return cleanVoucherCodeValue(v.code).toUpperCase() === clean;
       });
       
-      const dateMatches = !reqIso || !matchingVoucherInDb || isVoucherForPermitDateRange(matchingVoucherInDb, reqIso);
+      const dateMatches = !reqIso || !matchingVoucherInDb || isVoucherForPermitDateRange(matchingVoucherInDb, reqIso, reqIsoTo);
       
       if (matchingVoucherInDb && dateMatches && clean !== "-" && clean !== "CANCELLED" && !checkIsAssigned(clean, custAssignedSet)) {
         registerCodeGlobally(clean, custAssignedSet);
@@ -301,6 +304,9 @@ export function enrichRecordsWithVouchers(
     const record = recordsList[index];
     const cleanVrm = record.vrm ? record.vrm.toUpperCase().replace(/[^A-Z0-9]/g, "") : "";
     const reqDateD = getRequestedPermitDateISO(record, fallbackDateStr);
+    const reqDateToD = record.validTo 
+      ? (parseDateToISO(record.validTo) || (reqDateD ? addDaysSafe(reqDateD, 6) : ""))
+      : (record.dateExpiry ? (parseDateToISO(record.dateExpiry) || (reqDateD ? addDaysSafe(reqDateD, 6) : "")) : (reqDateD ? addDaysSafe(reqDateD, 6) : ""));
 
     // Any VRM on the actual security blocklist is always blocked
     if (isVrmSilentBlockedSync(record.vrm)) {
@@ -355,7 +361,7 @@ export function enrichRecordsWithVouchers(
       if (!isVoucherAvailableStatus(v)) return false;
       const cleanCode = cleanVoucherCodeValue(v.code).toUpperCase();
       if (!cleanCode || checkIsAssigned(cleanCode, custAssignedSet)) return false;
-      return isVoucherExactPeriodEligible(v, reqDateD);
+      return isVoucherExactPeriodEligible(v, reqDateD, reqDateToD);
     });
 
     let matchedVoucher: ParsedVoucherData | undefined;

@@ -28,6 +28,7 @@ import {
   CsvPermitRecord, 
   ParsedVoucherData, 
   parseDateToISO, 
+  parseDateRange,
   addDays, 
   getSpreadsheetMatchingAllocationsMap, 
   isDateRequiredOutsideValidWindow, 
@@ -192,9 +193,48 @@ export function DispatchCentre({
     return getMatchingPermits(database, targetIso);
   }, [database, targetIso]);
 
-  // Assigned voucher codes set across the concessions database and custom allocations
+  const [blocklistVersion, setBlocklistVersion] = useState<number>(0);
+  useEffect(() => {
+    const handleBlocklistUpdate = () => {
+      setBlocklistVersion(v => v + 1);
+    };
+    window.addEventListener("blocklist_updated", handleBlocklistUpdate);
+    return () => window.removeEventListener("blocklist_updated", handleBlocklistUpdate);
+  }, []);
+
+  // Base records
+  const baseRecords = useMemo(() => {
+    return sortRecordsByFormIdDesc(database);
+  }, [database]);
+
+  // Compute dynamic voucher allocations map
+  const recordCodeMap = useMemo(() => {
+    return getSpreadsheetMatchingAllocationsMap(
+      baseRecords,
+      database,
+      processingDate,
+      vouchersDatabase,
+      customVouchers
+    );
+  }, [baseRecords, database, processingDate, vouchersDatabase, customVouchers, blocklistVersion]);
+
+  // Assigned voucher codes set across the concessions database, custom allocations, AND recordCodeMap
   const assignedVoucherCodesSet = useMemo(() => {
     const set = new Set<string>();
+
+    // 1. Include allocations from recordCodeMap (canonical allocation source)
+    if (recordCodeMap) {
+      recordCodeMap.forEach((code) => {
+        if (code && typeof code === "string") {
+          const clean = cleanVoucherCodeValue(code).toUpperCase();
+          if (clean && clean !== "-" && clean !== "CANCELLED" && clean !== "PENDING" && clean !== "BLOCKED") {
+            set.add(clean);
+          }
+        }
+      });
+    }
+
+    // 2. Include database records
     (database || []).forEach(rec => {
       // Cancelled or blocked permits MUST NOT consume a voucher - they release their codes back to inventory
       const reqDate = getRequestedPermitDateISO(rec, processingDate);
@@ -211,16 +251,18 @@ export function DispatchCentre({
       const raw = rec.voucherCode || rec.prePaidCode || "";
       if (raw && typeof raw === "string") {
         const clean = cleanVoucherCodeValue(raw).toUpperCase();
-        if (clean && clean !== "-" && clean !== "CANCELLED" && clean !== "PENDING" && clean !== "N/A") {
+        if (clean && clean !== "-" && clean !== "CANCELLED" && clean !== "PENDING" && clean !== "N/A" && clean !== "BLOCKED") {
           set.add(clean);
         }
       }
     });
+
+    // 3. Include customVouchers
     if (customVouchers) {
       Object.entries(customVouchers).forEach(([key, raw]) => {
         if (raw && typeof raw === "string") {
           const clean = cleanVoucherCodeValue(raw).toUpperCase();
-          if (clean && clean !== "-" && clean !== "CANCELLED" && clean !== "PENDING" && clean !== "N/A") {
+          if (clean && clean !== "-" && clean !== "CANCELLED" && clean !== "PENDING" && clean !== "N/A" && clean !== "BLOCKED") {
             const matchingRec = (database || []).find(r => 
               String(r.formId) === key || String(r.id) === key
             );
@@ -235,8 +277,9 @@ export function DispatchCentre({
         }
       });
     }
+
     return set;
-  }, [database, customVouchers, processingDate]);
+  }, [database, customVouchers, processingDate, recordCodeMap]);
 
   // Current permit exact validFrom and validTo ISO matching
   const currentPermitValidFromIso = useMemo(() => {
@@ -436,35 +479,10 @@ export function DispatchCentre({
   const [customStartDate, setCustomStartDate] = useState<string>("");
   const [customEndDate, setCustomEndDate] = useState<string>("");
 
-  const [blocklistVersion, setBlocklistVersion] = useState<number>(0);
-  useEffect(() => {
-    const handleBlocklistUpdate = () => {
-      setBlocklistVersion(v => v + 1);
-    };
-    window.addEventListener("blocklist_updated", handleBlocklistUpdate);
-    return () => window.removeEventListener("blocklist_updated", handleBlocklistUpdate);
-  }, []);
-
   // Pagination state
   const [pageSize, setPageSize] = useState<number>(50);
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [goToPageInput, setGoToPageInput] = useState<string>("");
-
-  // Base records
-  const baseRecords = useMemo(() => {
-    return sortRecordsByFormIdDesc(database);
-  }, [database]);
-
-  // Compute dynamic voucher allocations map
-  const recordCodeMap = useMemo(() => {
-    return getSpreadsheetMatchingAllocationsMap(
-      baseRecords,
-      database,
-      processingDate,
-      vouchersDatabase,
-      customVouchers
-    );
-  }, [baseRecords, database, processingDate, vouchersDatabase, customVouchers, blocklistVersion]);
 
   const isSameSelectedRecord = (record: CsvPermitRecord) => {
     if (!formData) return false;
@@ -1396,9 +1414,27 @@ export function DispatchCentre({
 
                 // ⭐ FIX: CODES Column & VOUCHER CODE Column - canonical date range matching
                 const permitFromISO = getRequestedPermitDateISO(record) || parseDateToISO(record.validFrom || record.dateRequired) || "";
-                const permitToISO = record.validTo 
-                  ? (parseDateToISO(record.validTo) || (permitFromISO ? addDays(permitFromISO, 6) : ""))
-                  : (record.dateExpiry ? (parseDateToISO(record.dateExpiry) || (permitFromISO ? addDays(permitFromISO, 6) : "")) : (permitFromISO ? addDays(permitFromISO, 6) : ""));
+                const permitToISO = (() => {
+                  if (record.validTo) {
+                    const iso = parseDateToISO(record.validTo);
+                    if (iso) return iso;
+                  }
+                  if (record.dateExpiry) {
+                    const iso = parseDateToISO(record.dateExpiry);
+                    if (iso) return iso;
+                  }
+                  const rawDate = record.dateRequired || record.validFrom;
+                  if (rawDate) {
+                    const range = parseDateRange(String(rawDate));
+                    if (range && range.endISO) {
+                      return range.endISO;
+                    }
+                  }
+                  if (permitFromISO) {
+                    return addDays(permitFromISO, 6);
+                  }
+                  return "";
+                })();
 
                 let displayCode = recordCodeMap.get(recordKey);
 
