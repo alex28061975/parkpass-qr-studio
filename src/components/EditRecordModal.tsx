@@ -1,11 +1,14 @@
-import React, { useState, useEffect } from "react";
-import { X, Check, Calendar, Car, User, Phone, Mail, Building2, MapPin, Tag, ShieldAlert } from "lucide-react";
-import { CsvPermitRecord, parseDateToISO, addDays, formatPhoneNumber } from "../utils/csvParser";
+import React, { useState, useEffect, useMemo } from "react";
+import { X, Check, Calendar, Car, User, Phone, Mail, Building2, MapPin, Tag } from "lucide-react";
+import { CsvPermitRecord, ParsedVoucherData, parseDateToISO, addDays, formatPhoneNumber, isVoucherCodeMatch } from "../utils/csvParser";
+import { isVoucherForPermitDateRange, cleanVoucherCodeValue } from "../utils/voucherValidation";
 import { HOSPITAL_SITES } from "../types";
 
 interface EditRecordModalProps {
   isOpen: boolean;
   record: CsvPermitRecord | null;
+  database: CsvPermitRecord[];
+  vouchersDatabase: ParsedVoucherData[];
   onClose: () => void;
   onSave: (updatedRecord: CsvPermitRecord) => void;
 }
@@ -13,6 +16,8 @@ interface EditRecordModalProps {
 export function EditRecordModal({
   isOpen,
   record,
+  database,
+  vouchersDatabase,
   onClose,
   onSave
 }: EditRecordModalProps) {
@@ -26,6 +31,57 @@ export function EditRecordModal({
   const [formDateExpiry, setFormDateExpiry] = useState("");
   const [formVoucherCode, setFormVoucherCode] = useState("");
   const [formStatus, setFormStatus] = useState("PENDING");
+
+  // Options list: filter vouchersDatabase by date range and exclude already-used/cancelled/pending codes
+  const activeDateCodes = useMemo(() => {
+    if (!formDateRequired || !vouchersDatabase?.length) return [];
+    return vouchersDatabase.filter(v => {
+      if (!isVoucherForPermitDateRange(v, formDateRequired, formDateExpiry || formDateRequired)) return false;
+      if (v.isUsed === true || v.status === "used" || v.status === "dispatched") return false;
+      const codeUpper = cleanVoucherCodeValue(v.code).toUpperCase();
+      return !!codeUpper && codeUpper !== "-" && codeUpper !== "CANCELLED" && codeUpper !== "PENDING";
+    });
+  }, [vouchersDatabase, formDateRequired, formDateExpiry]);
+
+  // Code assignment check
+  const codeFields = [
+    "voucherCode", "prePaidCode", "qrCode", "voucherCodesText", "serialNumber",
+    "voucher", "code", "qrOverride", "Voucher Code", "VOUCHER CODE",
+    "Pre-Paid Code", "Pre Paid Code", "QR Code", "QR CODE"
+  ];
+
+  const isCodeAssigned = (rec: any, selectedCode: string) => {
+    if (!rec) return false;
+    return codeFields.some((field) => {
+      const raw = rec[field];
+      if (raw === undefined || raw === null) return false;
+      return String(raw)
+        .split(/[\n,;\s]+/)
+        .map((part) => cleanVoucherCodeValue(part).toUpperCase())
+        .some((code) => code && code !== "-" && isVoucherCodeMatch(code, selectedCode));
+    });
+  };
+
+  const handleActiveDateCodeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const selectedCode = cleanVoucherCodeValue(e.target.value).toUpperCase();
+    if (!selectedCode || selectedCode === "-" || selectedCode === "CANCELLED") return;
+
+    // exclude the record's own current code from the "already assigned" check,
+    // since re-picking its own code should always be allowed
+    const alreadyAssigned =
+      (database || []).some(r => {
+        if (record && (r.id === record.id || r.formId === record.formId)) return false;
+        return isCodeAssigned(r, selectedCode);
+      }) || isCodeAssigned(record, selectedCode);
+
+    if (alreadyAssigned) {
+      console.warn(`Voucher ${selectedCode} is already assigned and cannot be reused.`);
+      return;
+    }
+
+    setFormVoucherCode(selectedCode);
+    setFormStatus("PENDING"); // matches the header's status: "Pending" reset on reassignment
+  };
 
   // Populate form fields whenever `record` changes or modal opens
   useEffect(() => {
@@ -308,21 +364,26 @@ export function EditRecordModal({
               />
             </div>
 
-            {/* Status Field */}
+            {/* Active Date Codes Dropdown */}
             <div>
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1 flex items-center gap-1.5">
-                <ShieldAlert className="w-3.5 h-3.5 text-slate-400" />
-                Permit Status
+                <Tag className="w-3.5 h-3.5 text-slate-400" />
+                Active Date Codes ({activeDateCodes.length})
               </label>
               <select
-                value={formStatus}
-                onChange={(e) => setFormStatus(e.target.value)}
-                className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#071728] text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 font-semibold"
+                value=""
+                onChange={handleActiveDateCodeChange}
+                disabled={activeDateCodes.length === 0}
+                className="w-full px-3 py-2 text-sm font-mono rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#071728] text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
               >
-                <option value="PENDING">PENDING</option>
-                <option value="SENT">SENT (DISPATCHED)</option>
-                <option value="UNSENT">UNSENT</option>
-                <option value="CANCELLED">CANCELLED</option>
+                <option value="">
+                  {activeDateCodes.length === 0 ? "No active codes for this date" : "-- Choose Code --"}
+                </option>
+                {activeDateCodes.map((v, i) => (
+                  <option key={`${v.code}_${i}`} value={cleanVoucherCodeValue(v.code).toUpperCase()}>
+                    {cleanVoucherCodeValue(v.code).toUpperCase()}
+                  </option>
+                ))}
               </select>
             </div>
 

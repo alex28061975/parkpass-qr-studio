@@ -1611,11 +1611,22 @@ export default function App() {
   const handleSelectRecord = (record: CsvPermitRecord) => {
     isManualSelectionRef.current = true;
     isUserNavigationRef.current = true;
-    const enrichedRecord = (record.id ? enrichedDatabase.find(r => r.id === record.id) : null) || 
-                           (record.formId ? enrichedDatabase.find(r => r.formId === record.formId) : null) || 
-                           record;
+    const sId = record.id !== undefined && record.id !== null ? String(record.id).trim() : "";
+    const sFormId = record.formId !== undefined && record.formId !== null ? String(record.formId).trim() : "";
+    const enrichedRecord = (enrichedDatabase || []).find(r => {
+      const rId = r.id !== undefined && r.id !== null ? String(r.id).trim() : "";
+      const rFormId = r.formId !== undefined && r.formId !== null ? String(r.formId).trim() : "";
+      return Boolean(
+        (sId && rId === sId) ||
+        (sFormId && rFormId === sFormId) ||
+        (sId && rFormId === sId) ||
+        (sFormId && rId === sId)
+      );
+    }) || record;
     const fromISO = getRequestedPermitDateISO(enrichedRecord) || parseDateToISO(enrichedRecord.validFrom || enrichedRecord.dateRequired) || getTodayISO();
-    const toISO = enrichedRecord.validTo ? (parseDateToISO(enrichedRecord.validTo) || addDays(fromISO, 6)) : addDays(fromISO, 6);
+    const toISO = enrichedRecord.validTo 
+      ? (parseDateToISO(enrichedRecord.validTo) || addDays(fromISO, 6)) 
+      : (enrichedRecord.dateExpiry ? (parseDateToISO(enrichedRecord.dateExpiry) || addDays(fromISO, 6)) : addDays(fromISO, 6));
 
     const isRecordDispatched = checkIsRecordDispatched(
       enrichedRecord,
@@ -1652,11 +1663,22 @@ export default function App() {
   const handleSelectRecordQuickSearch = (record: CsvPermitRecord) => {
     isManualSelectionRef.current = true;
     isUserNavigationRef.current = true;
-    const enrichedRecord = (record.id ? enrichedDatabase.find(r => r.id === record.id) : null) || 
-                           (record.formId ? enrichedDatabase.find(r => r.formId === record.formId) : null) || 
-                           record;
+    const sId = record.id !== undefined && record.id !== null ? String(record.id).trim() : "";
+    const sFormId = record.formId !== undefined && record.formId !== null ? String(record.formId).trim() : "";
+    const enrichedRecord = (enrichedDatabase || []).find(r => {
+      const rId = r.id !== undefined && r.id !== null ? String(r.id).trim() : "";
+      const rFormId = r.formId !== undefined && r.formId !== null ? String(r.formId).trim() : "";
+      return Boolean(
+        (sId && rId === sId) ||
+        (sFormId && rFormId === sFormId) ||
+        (sId && rFormId === sId) ||
+        (sFormId && rId === sId)
+      );
+    }) || record;
     const fromISO = getRequestedPermitDateISO(enrichedRecord) || parseDateToISO(enrichedRecord.validFrom || enrichedRecord.dateRequired) || getTodayISO();
-    const toISO = enrichedRecord.validTo ? (parseDateToISO(enrichedRecord.validTo) || addDays(fromISO, 6)) : addDays(fromISO, 6);
+    const toISO = enrichedRecord.validTo 
+      ? (parseDateToISO(enrichedRecord.validTo) || addDays(fromISO, 6)) 
+      : (enrichedRecord.dateExpiry ? (parseDateToISO(enrichedRecord.dateExpiry) || addDays(fromISO, 6)) : addDays(fromISO, 6));
 
     const isRecordDispatched = checkIsRecordDispatched(
       enrichedRecord,
@@ -2133,6 +2155,8 @@ export default function App() {
       <EditRecordModal
         isOpen={isEditModalOpen}
         record={editingRecord}
+        database={enrichedDatabase}
+        vouchersDatabase={vouchersDatabase}
         onClose={() => {
           setIsEditModalOpen(false);
           setEditingRecord(null);

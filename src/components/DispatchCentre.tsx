@@ -128,6 +128,30 @@ export type SortKey =
 
 export type SortDirection = "asc" | "desc" | null;
 
+const isRecordMatch = (r1: any, r2: any): boolean => {
+  if (!r1 || !r2) return false;
+  const id1 = String(r1.id ?? "").trim();
+  const formId1 = String(r1.formId ?? "").trim();
+  const id2 = String(r2.id ?? "").trim();
+  const formId2 = String(r2.formId ?? "").trim();
+  if (id1 || formId1 || id2 || formId2) {
+    return Boolean(
+      (id1 && id2 && id1 === id2) ||
+      (formId1 && formId2 && formId1 === formId2) ||
+      (id1 && formId2 && id1 === formId2) ||
+      (formId1 && id2 && formId1 === id2)
+    );
+  }
+  const vrm1 = (r1.vrm || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const vrm2 = (r2.vrm || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (vrm1 && vrm2 && vrm1 === vrm2) {
+    const d1 = parseDateToISO(r1.validFrom || r1.dateRequired || r1.todayDate) || "";
+    const d2 = parseDateToISO(r2.validFrom || r2.dateRequired || r2.todayDate) || "";
+    if (d1 && d2 && d1 === d2) return true;
+  }
+  return false;
+};
+
 export function DispatchCentre({ 
   database, 
   vouchersDatabase, 
@@ -167,6 +191,12 @@ export function DispatchCentre({
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [actionsOpen, setActionsOpen] = useState(false);
   const [wardDropdownOpen, setWardDropdownOpen] = useState(false);
+  const [selectedRowRecord, setSelectedRowRecord] = useState<CsvPermitRecord | null>(null);
+
+  const handleRowClick = (record: CsvPermitRecord) => {
+    setSelectedRowRecord(record);
+    onSelectRecord(record);
+  };
 
   // Target ISO for Active Date Codes dropdown
   const targetIso = useMemo(() => {
@@ -281,17 +311,24 @@ export function DispatchCentre({
     return set;
   }, [database, customVouchers, processingDate, recordCodeMap]);
 
-  // Current permit exact validFrom and validTo ISO matching
+  // Active record is either the explicitly clicked row, or matching record from formData, or the first record in database
+  const activeRecord = useMemo<CsvPermitRecord | null>(() => {
+    if (selectedRowRecord) {
+      const updated = (database || []).find(r => isRecordMatch(r, selectedRowRecord));
+      return updated || selectedRowRecord;
+    }
+    if (formData) {
+      const match = (database || []).find(r => isRecordMatch(r, formData));
+      if (match) return match;
+    }
+    return database?.[0] || null;
+  }, [selectedRowRecord, formData, database]);
+
+  // Current permit exact validFrom and validTo ISO matching for the selected row
   const currentPermitValidFromIso = useMemo(() => {
-    if (formData?.id || formData?.formId) {
-      const rec = (database || []).find(r => 
-        (formData.id && r.id === formData.id) || 
-        (formData.formId && r.formId === formData.formId)
-      );
-      if (rec) {
-        const iso = getRequestedPermitDateISO(rec);
-        if (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso;
-      }
+    if (activeRecord) {
+      const from = getRequestedPermitDateISO(activeRecord) || parseDateToISO(activeRecord.validFrom || activeRecord.dateRequired);
+      if (from && /^\d{4}-\d{2}-\d{2}$/.test(from)) return from;
     }
     if (formData?.validFrom) {
       const iso = parseDateToISO(String(formData.validFrom));
@@ -301,44 +338,28 @@ export function DispatchCentre({
       const iso = getRequestedPermitDateISO(formData);
       if (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso;
     }
-    if (formData?.vrm && database && database.length > 0) {
-      const cleanVrm = String(formData.vrm).toUpperCase().replace(/\s+/g, "");
-      const rec = database.find(r => r?.vrm && String(r.vrm).toUpperCase().replace(/\s+/g, "") === cleanVrm);
-      if (rec) {
-        const iso = getRequestedPermitDateISO(rec);
-        if (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso;
-      }
-    }
-    if (matchingPermits && matchingPermits.length > 0) {
-      const targetVrm = formData?.vrm ? String(formData.vrm).toUpperCase().replace(/\s+/g, "") : "";
-      const candidate = (targetVrm && matchingPermits.find(p => p?.vrm && String(p.vrm).toUpperCase().replace(/\s+/g, "") === targetVrm)) || matchingPermits[0];
-      const iso = getRequestedPermitDateISO(candidate);
+    if (formData?.todayDate) {
+      const iso = parseDateToISO(String(formData.todayDate));
       if (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso;
     }
-    if (database && database.length > 0) {
-      const iso = getRequestedPermitDateISO(database[0]);
-      if (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso;
-    }
-    if (targetIso && /^\d{4}-\d{2}-\d{2}$/.test(targetIso)) {
-      return targetIso;
-    }
-    return "";
-  }, [formData?.id, formData?.formId, formData?.validFrom, formData?.dateRequired, formData?.vrm, database, matchingPermits, targetIso]);
+    return getTodayISO();
+  }, [activeRecord, formData?.validFrom, formData?.dateRequired, formData?.todayDate]);
 
   const currentPermitValidToIso = useMemo(() => {
-    if (formData?.id || formData?.formId) {
-      const rec = (database || []).find(r => 
-        (formData.id && r.id === formData.id) || 
-        (formData.formId && r.formId === formData.formId)
-      );
-      if (rec) {
-        if (rec.validTo) {
-          const iso = parseDateToISO(String(rec.validTo));
-          if (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso;
-        }
-        if (rec.dateExpiry) {
-          const iso = parseDateToISO(String(rec.dateExpiry));
-          if (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso;
+    if (activeRecord) {
+      if (activeRecord.validTo) {
+        const iso = parseDateToISO(String(activeRecord.validTo));
+        if (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso;
+      }
+      if (activeRecord.dateExpiry) {
+        const iso = parseDateToISO(String(activeRecord.dateExpiry));
+        if (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso;
+      }
+      const rawDate = activeRecord.dateRequired || activeRecord.validFrom;
+      if (rawDate) {
+        const range = parseDateRange(String(rawDate));
+        if (range && range.endISO && /^\d{4}-\d{2}-\d{2}$/.test(range.endISO)) {
+          return range.endISO;
         }
       }
     }
@@ -346,20 +367,11 @@ export function DispatchCentre({
       const iso = parseDateToISO(String(formData.validTo));
       if (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso;
     }
-    if (matchingPermits && matchingPermits.length > 0) {
-      const targetVrm = formData?.vrm ? String(formData.vrm).toUpperCase().replace(/\s+/g, "") : "";
-      const candidate = (targetVrm && matchingPermits.find(p => p?.vrm && String(p.vrm).toUpperCase().replace(/\s+/g, "") === targetVrm)) || matchingPermits[0];
-      const rawTo = candidate?.validTo || candidate?.dateExpiry;
-      if (rawTo) {
-        const iso = parseDateToISO(String(rawTo));
-        if (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso;
-      }
-    }
     if (currentPermitValidFromIso) {
       return addDays(currentPermitValidFromIso, 6);
     }
     return "";
-  }, [formData?.id, formData?.formId, formData?.validTo, database, matchingPermits, currentPermitValidFromIso]);
+  }, [activeRecord, formData?.validTo, currentPermitValidFromIso]);
 
   // Helper to check if a voucher matches the permit's validity period
   const hasDatedVouchersForDate = useMemo(() => {
@@ -372,39 +384,82 @@ export function DispatchCentre({
   }, [currentPermitValidFromIso, currentPermitValidToIso]);
 
   // Unused vouchers computation for the active date with exact validFrom/validTo matching
+  // Matches the exact logic in EditRecordModal.tsx
   const unusedVouchersForDay = useMemo<ParsedVoucherData[]>(() => {
     if (!currentPermitValidFromIso || !vouchersDatabase || vouchersDatabase.length === 0) {
       return [];
     }
 
-    // Filter vouchers that strictly match the current selected permit's date range (ValidFrom - ValidTo)
-    const matchingRangeVouchers = vouchersDatabase.filter(v => {
-      return isVoucherForPermitDateRange(v, currentPermitValidFromIso, currentPermitValidToIso);
-    });
+    const validTo = currentPermitValidToIso || currentPermitValidFromIso;
 
-    return matchingRangeVouchers.filter(v => {
+    // Filter vouchers that strictly match the current selected permit's date range (ValidFrom - ValidTo)
+    return vouchersDatabase.filter(v => {
+      if (!isVoucherForPermitDateRange(v, currentPermitValidFromIso, validTo)) {
+        return false;
+      }
       if (v.isUsed === true || v.status === "used" || v.status === "dispatched") {
         return false;
       }
       const codeUpper = cleanVoucherCodeValue(v.code).toUpperCase();
-      if (!codeUpper || codeUpper === "-" || codeUpper === "CANCELLED" || codeUpper === "PENDING") {
-        return false;
-      }
-      return !assignedVoucherCodesSet.has(codeUpper);
+      return !!codeUpper && codeUpper !== "-" && codeUpper !== "CANCELLED" && codeUpper !== "PENDING";
     });
   }, [
     vouchersDatabase,
     currentPermitValidFromIso,
-    currentPermitValidToIso,
-    assignedVoucherCodesSet
+    currentPermitValidToIso
   ]);
+
+  // Resolve current voucher code for selected record
+  const currentRecordVoucherCode = useMemo(() => {
+    if (!activeRecord) return "";
+    const recordKey = String(activeRecord.formId ?? activeRecord.id ?? "");
+    const mapped = recordKey ? recordCodeMap.get(recordKey) : "";
+    if (mapped && mapped !== "-" && mapped !== "CANCELLED" && mapped !== "BLOCKED") {
+      return cleanVoucherCodeValue(mapped).toUpperCase();
+    }
+    const raw = (activeRecord.voucherCode || 
+                 activeRecord.prePaidCode || 
+                 (selectedRowRecord ? "" : formData?.voucherCodesText) || 
+                 "").trim();
+    const clean = cleanVoucherCodeValue(raw).toUpperCase();
+    if (clean && clean !== "-" && clean !== "CANCELLED" && clean !== "BLOCKED" && clean !== "PENDING") {
+      return clean;
+    }
+    return "";
+  }, [activeRecord, recordCodeMap, selectedRowRecord, formData?.voucherCodesText]);
+
+  // Dropdown options include unused vouchers for this date range, plus the selected record's current code if assigned
+  const dropdownOptions = useMemo(() => {
+    const list = [...unusedVouchersForDay];
+    if (currentRecordVoucherCode) {
+      const exists = list.some(v => cleanVoucherCodeValue(v.code).toUpperCase() === currentRecordVoucherCode);
+      if (!exists) {
+        list.unshift({
+          code: currentRecordVoucherCode,
+          dateRequired: currentPermitValidFromIso,
+          validFrom: currentPermitValidFromIso,
+          validTo: currentPermitValidToIso,
+          isUsed: false,
+          status: "assigned"
+        } as ParsedVoucherData);
+      }
+    }
+    return list;
+  }, [unusedVouchersForDay, currentRecordVoucherCode, currentPermitValidFromIso, currentPermitValidToIso]);
+
+  const selectedDropdownValue = useMemo(() => {
+    if (!currentRecordVoucherCode) return "";
+    const match = dropdownOptions.find(v => cleanVoucherCodeValue(v.code).toUpperCase() === currentRecordVoucherCode);
+    return match ? cleanVoucherCodeValue(match.code).toUpperCase() : "";
+  }, [dropdownOptions, currentRecordVoucherCode]);
 
   // Exact range voucher stock metrics for Active Date Codes dropdown badge
   const totalForThisRange = useMemo(() => {
     if (!currentPermitValidFromIso || !vouchersDatabase || vouchersDatabase.length === 0) {
       return 0;
     }
-    return vouchersDatabase.filter(v => isVoucherForPermitDateRange(v, currentPermitValidFromIso, currentPermitValidToIso)).length;
+    const validTo = currentPermitValidToIso || currentPermitValidFromIso;
+    return vouchersDatabase.filter(v => isVoucherForPermitDateRange(v, currentPermitValidFromIso, validTo)).length;
   }, [vouchersDatabase, currentPermitValidFromIso, currentPermitValidToIso]);
 
   const remainingForThisRange = unusedVouchersForDay.length;
@@ -450,14 +505,26 @@ export function DispatchCentre({
       });
     };
 
-    const alreadyAssigned =
-      (database || []).some(isCodeAssigned) || (formData && isCodeAssigned(formData));
+    const currentRec = activeRecord;
+    const alreadyAssigned = (database || []).some(r => {
+      if (currentRec && isRecordMatch(r, currentRec)) return false;
+      return isCodeAssigned(r);
+    });
 
     if (alreadyAssigned) {
       console.warn(
         `🚫 Voucher ${selectedCode} is already assigned and cannot be reused.`
       );
       return;
+    }
+
+    if (currentRec) {
+      setSelectedRowRecord({
+        ...currentRec,
+        voucherCode: selectedCode,
+        voucherCodesText: selectedCode,
+        prePaidCode: selectedCode
+      });
     }
 
     onChangeFormData?.({
@@ -498,35 +565,10 @@ export function DispatchCentre({
   const [goToPageInput, setGoToPageInput] = useState<string>("");
 
   const isSameSelectedRecord = (record: CsvPermitRecord) => {
-    if (!formData) return false;
-
-    const recordId = String(record.id ?? "").trim();
-    const recordFormId = String(record.formId ?? "").trim();
-    const selectedId = String(formData.id ?? "").trim();
-    const selectedFormId = String(formData.formId ?? "").trim();
-
-    const recordHasStableId = Boolean(recordId || recordFormId);
-    const selectedHasStableId = Boolean(selectedId || selectedFormId);
-
-    if (recordHasStableId || selectedHasStableId) {
-      return Boolean(
-        (recordId && selectedId && recordId === selectedId) ||
-        (recordFormId && selectedFormId && recordFormId === selectedFormId) ||
-        (recordId && selectedFormId && recordId === selectedFormId) ||
-        (recordFormId && selectedId && recordFormId === selectedId)
-      );
+    if (selectedRowRecord) {
+      return isRecordMatch(record, selectedRowRecord);
     }
-
-    const recordVrm = (record.vrm || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
-    const selectedVrm = (formData.vrm || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
-    const recordDate = parseDateToISO(record.dateRequired || record.validFrom) || "";
-    const selectedDate = parseDateToISO(formData.validFrom || formData.todayDate) || "";
-    return Boolean(
-      recordVrm && selectedVrm &&
-      recordVrm === selectedVrm &&
-      recordDate && selectedDate &&
-      recordDate === selectedDate
-    );
+    return isRecordMatch(record, formData);
   };
 
   const isReplacementPending = (record: CsvPermitRecord) =>
@@ -1129,27 +1171,30 @@ export function DispatchCentre({
               Active Date Codes ({unusedVouchersForDay.length}):
             </label>
             <select
-              value={unusedVouchersForDay.some(v => v.code === formData?.voucherCodesText) ? formData?.voucherCodesText : ""}
+              value={selectedDropdownValue}
               onChange={handleActiveDateCodeChange}
-              disabled={unusedVouchersForDay.length === 0}
+              disabled={unusedVouchersForDay.length === 0 && !currentRecordVoucherCode}
               className="h-8 px-2.5 py-1 bg-[#D1FAE5] text-[#065F46] border border-[#34D399] rounded-lg text-xs font-mono font-bold focus:outline-none transition shrink-0 cursor-pointer"
             >
               <option value="" disabled className="font-mono font-normal text-slate-700 bg-white">
                 {vouchersDatabase.length === 0
                   ? "-- No Vouchers Uploaded --"
-                  : unusedVouchersForDay.length === 0
+                  : unusedVouchersForDay.length === 0 && !currentRecordVoucherCode
                     ? "-- 0 Available --"
                     : "-- Choose Code --"}
               </option>
-              {unusedVouchersForDay.map((v, index) => (
-                <option
-                  key={`voucher_${v.code}_${index}`}
-                  value={v.code}
-                  className="font-mono text-gray-900 bg-white"
-                >
-                  {v.code}
-                </option>
-              ))}
+              {dropdownOptions.map((v, index) => {
+                const cleanCode = cleanVoucherCodeValue(v.code).toUpperCase();
+                return (
+                  <option
+                    key={`voucher_${cleanCode}_${index}`}
+                    value={cleanCode}
+                    className="font-mono text-gray-900 bg-white"
+                  >
+                    {cleanCode}
+                  </option>
+                );
+              })}
             </select>
           </div>
         </div>
@@ -1579,11 +1624,17 @@ export function DispatchCentre({
                 // 🔴 RED if: total=0 OR remaining≤5 OR percentage≤5%
                 const isRowStockLow = totalForRow === 0 || remainingForRow <= 5 || percentRemainingRow <= 5;
 
+                const isSelectedRow = Boolean(activeRecord && isRecordMatch(record, activeRecord));
+
                 return (
                   <tr 
                     key={`dispatch_${rowKey}_${index}`}
-                    onClick={() => onSelectRecord(record)}
-                    className="hover:bg-blue-50/50 dark:hover:bg-[#0c233d]/70 transition-colors cursor-pointer text-slate-800 dark:text-slate-200"
+                    onClick={() => handleRowClick(record)}
+                    className={`transition-colors cursor-pointer text-slate-800 dark:text-slate-200 ${
+                      isSelectedRow
+                        ? "bg-blue-50/80 dark:bg-[#0c2847]/90 font-medium ring-1 ring-inset ring-blue-500/30 dark:ring-blue-400/30"
+                        : "hover:bg-blue-50/50 dark:hover:bg-[#0c233d]/70"
+                    }`}
                   >
                     <td className="py-3 px-3 text-center text-slate-500 dark:text-slate-400 font-mono font-normal border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-[10px]">
                       {excelId}
