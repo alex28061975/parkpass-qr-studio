@@ -302,15 +302,16 @@ export function DispatchCentre({
       if (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso;
     }
     if (formData?.vrm && database && database.length > 0) {
-      const cleanVrm = formData.vrm.toUpperCase().replace(/\s+/g, "");
-      const rec = database.find(r => r.vrm && r.vrm.toUpperCase().replace(/\s+/g, "") === cleanVrm);
+      const cleanVrm = String(formData.vrm).toUpperCase().replace(/\s+/g, "");
+      const rec = database.find(r => r?.vrm && String(r.vrm).toUpperCase().replace(/\s+/g, "") === cleanVrm);
       if (rec) {
         const iso = getRequestedPermitDateISO(rec);
         if (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso;
       }
     }
     if (matchingPermits && matchingPermits.length > 0) {
-      const candidate = (formData?.vrm && matchingPermits.find(p => p.vrm && p.vrm.toUpperCase().replace(/\s+/g, "") === formData.vrm.toUpperCase().replace(/\s+/g, ""))) || matchingPermits[0];
+      const targetVrm = formData?.vrm ? String(formData.vrm).toUpperCase().replace(/\s+/g, "") : "";
+      const candidate = (targetVrm && matchingPermits.find(p => p?.vrm && String(p.vrm).toUpperCase().replace(/\s+/g, "") === targetVrm)) || matchingPermits[0];
       const iso = getRequestedPermitDateISO(candidate);
       if (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso;
     }
@@ -346,7 +347,8 @@ export function DispatchCentre({
       if (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso;
     }
     if (matchingPermits && matchingPermits.length > 0) {
-      const candidate = (formData?.vrm && matchingPermits.find(p => p.vrm && p.vrm.toUpperCase().replace(/\s+/g, "") === formData.vrm.toUpperCase().replace(/\s+/g, ""))) || matchingPermits[0];
+      const targetVrm = formData?.vrm ? String(formData.vrm).toUpperCase().replace(/\s+/g, "") : "";
+      const candidate = (targetVrm && matchingPermits.find(p => p?.vrm && String(p.vrm).toUpperCase().replace(/\s+/g, "") === targetVrm)) || matchingPermits[0];
       const rawTo = candidate?.validTo || candidate?.dateExpiry;
       if (rawTo) {
         const iso = parseDateToISO(String(rawTo));
@@ -532,18 +534,20 @@ export function DispatchCentre({
     (formData?.emailType === "RESEND_CONCESSION" || formData?.isResend === true || formData?.emailTemplate === "replacement");
 
   const getHospital = (record: CsvPermitRecord) => {
-    const raw = (record.hospital || "").trim();
+    const raw = (record?.hospital || "").trim();
     if (raw && !raw.toLowerCase().includes("royal london")) {
       return raw;
     }
-    return (record.ward && (
-      record.ward.toLowerCase().includes("acorn") || 
-      record.ward.toLowerCase().includes("acacia") || 
-      record.ward.toLowerCase().includes("mulberry")
-    ) ? "Whipps Cross Hospital" : "Newham Hospital");
+    const ward = (record?.ward || "").toLowerCase();
+    return (
+      ward.includes("acorn") || 
+      ward.includes("acacia") || 
+      ward.includes("mulberry")
+    ) ? "Whipps Cross Hospital" : "Newham Hospital";
   };
 
   const getIsCancelled = (record: CsvPermitRecord, idx?: number) => {
+    if (!record) return false;
     if (record.isCancelled === true) return true;
     if (typeof record.status === "string" && record.status.trim().toLowerCase().includes("cancel")) return true;
     if (
@@ -560,13 +564,74 @@ export function DispatchCentre({
     return isRecordCancelled(record, reqDate, database);
   };
 
-  const getStatusStr = (record: CsvPermitRecord, idx: number) => {
+  const getStatusStr = (record: CsvPermitRecord, idx?: number) => {
+    if (!record) return "PENDING";
     if (isVrmSilentBlockedSync(record.vrm)) return "BLOCKED";
     if (getIsCancelled(record, idx)) return "CANCELLED";
     if (isReplacementPending(record)) return "REPLACEMENT";
     const isDispatched = checkIsRecordDispatched(record, record.vrm, record.driverName, record.dateRequired, dispatchedKeys, unsentKeys);
     if (isDispatched) return "SENT";
     return "PENDING";
+  };
+
+  // ⭐ PERFORMANCE OPTIMIZATION: Pre-index vouchersDatabase for O(1) table row and sort evaluations
+  const voucherIndex = useMemo(() => {
+    const codeMap = new Map<string, ParsedVoucherData[]>();
+    const periodMap = new Map<string, ParsedVoucherData[]>();
+    const stockCache = new Map<string, { total: number; remaining: number }>();
+
+    (vouchersDatabase || []).forEach(v => {
+      if (!v || !v.code) return;
+      const clean = cleanVoucherCodeValue(v.code).toUpperCase();
+      if (!clean) return;
+
+      let cList = codeMap.get(clean);
+      if (!cList) {
+        cList = [];
+        codeMap.set(clean, cList);
+      }
+      cList.push(v);
+
+      const pKey = `${v.validFrom || ""}_${v.validTo || ""}`;
+      let pList = periodMap.get(pKey);
+      if (!pList) {
+        pList = [];
+        periodMap.set(pKey, pList);
+      }
+      pList.push(v);
+    });
+
+    return { codeMap, periodMap, stockCache };
+  }, [vouchersDatabase]);
+
+  const getRowVoucherStats = (permitFromISO: string, permitToISO: string, recordVrm: string) => {
+    const recordVrmClean = (recordVrm || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+    const cacheKey = `${permitFromISO}_${permitToISO}_${recordVrmClean}`;
+    const cached = voucherIndex.stockCache.get(cacheKey);
+    if (cached) return cached;
+
+    const periodBucket = voucherIndex.periodMap.get(`${permitFromISO}_${permitToISO}`);
+    const candidateVouchers = periodBucket ?? (vouchersDatabase || []);
+
+    const matchingVouchers = candidateVouchers.filter(v => {
+      const dateMatch = isVoucherForPermitDateRange(v, permitFromISO, permitToISO);
+      if (!dateMatch) return false;
+      const vVrmClean = (v.vrm || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+      return !vVrmClean || vVrmClean === recordVrmClean;
+    });
+
+    const total = matchingVouchers.length;
+    let remaining = 0;
+    matchingVouchers.forEach(v => {
+      if (v.isUsed === true || v.status === "used" || v.status === "dispatched") return;
+      const code = cleanVoucherCodeValue(v.code).toUpperCase();
+      if (!code || code === "-" || code === "CANCELLED" || code === "PENDING") return;
+      if (!assignedVoucherCodesSet.has(code)) remaining++;
+    });
+
+    const result = { total, remaining };
+    voucherIndex.stockCache.set(cacheKey, result);
+    return result;
   };
 
   const todayISO = useMemo(() => getTodayISO(), []);
@@ -633,118 +698,9 @@ export function DispatchCentre({
     pageSize
   ]);
 
-  const sortedRecords = useMemo(() => {
-    if (!sortKey || !sortDirection) {
-      return baseRecords;
-    }
-
-    const sorted = [...baseRecords].sort((a, b) => {
-      let comparison = 0;
-      const aIdx = baseRecords.indexOf(a);
-      const bIdx = baseRecords.indexOf(b);
-
-      switch (sortKey) {
-        case "id": {
-          const aId = getNumericFormId(a) || (aIdx + 1);
-          const bId = getNumericFormId(b) || (bIdx + 1);
-          if (aId !== bId) {
-            comparison = aId - bId;
-          } else {
-            const timeA = extractRecordSubmissionTimeMs(a);
-            const timeB = extractRecordSubmissionTimeMs(b);
-            comparison = timeA - timeB;
-          }
-          break;
-        }
-        case "submitted":
-        case "qr": {
-          const timeA = getRecordSubmittedTimeMs(a);
-          const timeB = getRecordSubmittedTimeMs(b);
-          if (timeA !== timeB) {
-            comparison = timeA - timeB;
-          } else {
-            const aId = getNumericFormId(a) || (aIdx + 1);
-            const bId = getNumericFormId(b) || (bIdx + 1);
-            comparison = aId - bId;
-          }
-          break;
-        }
-        case "driverName": {
-          const aName = (a.driverName || "").trim();
-          const bName = (b.driverName || "").trim();
-          comparison = aName.localeCompare(bName, undefined, { sensitivity: "base", numeric: true });
-          break;
-        }
-        case "vrm": {
-          const aVrm = (a.vrm || "").trim().toUpperCase();
-          const bVrm = (b.vrm || "").trim().toUpperCase();
-          comparison = aVrm.localeCompare(bVrm, undefined, { sensitivity: "base", numeric: true });
-          break;
-        }
-        case "voucherCode": {
-          const aBlocked = isVrmSilentBlockedSync(a.vrm);
-          const bBlocked = isVrmSilentBlockedSync(b.vrm);
-          const aCanc = getIsCancelled(a, aIdx);
-          const bCanc = getIsCancelled(b, bIdx);
-          const aCode = aBlocked ? "BLOCKED" : (aCanc ? "CANCELLED" : (recordCodeMap.get(String(a.formId ?? a.id ?? aIdx)) || a.voucherCode || ""));
-          const bCode = bBlocked ? "BLOCKED" : (bCanc ? "CANCELLED" : (recordCodeMap.get(String(b.formId ?? b.id ?? bIdx)) || b.voucherCode || ""));
-          comparison = aCode.localeCompare(bCode, undefined, { sensitivity: "base", numeric: true });
-          break;
-        }
-        case "validFrom": {
-          const aDate = parseDateToISO(a.dateRequired || a.validFrom) || "";
-          const bDate = parseDateToISO(b.dateRequired || b.validFrom) || "";
-          comparison = aDate.localeCompare(bDate);
-          break;
-        }
-        case "validTo": {
-          const aIso = parseDateToISO(a.dateRequired || a.validFrom);
-          const bIso = parseDateToISO(b.dateRequired || b.validFrom);
-          const aExp = aIso ? addDays(aIso, 6) : "";
-          const bExp = bIso ? addDays(bIso, 6) : "";
-          comparison = aExp.localeCompare(bExp);
-          break;
-        }
-        case "ward": {
-          const aWard = (a.ward || "").trim();
-          const bWard = (b.ward || "").trim();
-          comparison = aWard.localeCompare(bWard, undefined, { sensitivity: "base", numeric: true });
-          break;
-        }
-        case "hospital": {
-          const aHosp = getHospital(a);
-          const bHosp = getHospital(b);
-          comparison = aHosp.localeCompare(bHosp, undefined, { sensitivity: "base", numeric: true });
-          break;
-        }
-        case "status": {
-          const aStatus = getStatusStr(a, aIdx);
-          const bStatus = getStatusStr(b, bIdx);
-          comparison = aStatus.localeCompare(bStatus);
-          break;
-        }
-        case "actions": {
-          const aCanc = getIsCancelled(a, aIdx);
-          const bCanc = getIsCancelled(b, bIdx);
-          const aDisp = checkIsRecordDispatched(a, a.vrm, a.driverName, a.dateRequired, dispatchedKeys, unsentKeys);
-          const bDisp = checkIsRecordDispatched(b, b.vrm, b.driverName, b.dateRequired, dispatchedKeys, unsentKeys);
-          const aAct = aCanc ? "Unsend" : (isReplacementPending(a) ? "Resend" : (aDisp ? "Unsend" : "Send"));
-          const bAct = bCanc ? "Unsend" : (isReplacementPending(b) ? "Resend" : (bDisp ? "Unsend" : "Send"));
-          comparison = aAct.localeCompare(bAct);
-          break;
-        }
-        default:
-          comparison = 0;
-      }
-
-      return sortDirection === "asc" ? comparison : -comparison;
-    });
-
-    return sorted;
-  }, [baseRecords, sortKey, sortDirection, database, processingDate, recordCodeMap, dispatchedKeys, unsentKeys, formData]);
-
+  // ⭐ STEP 1: Filter first in O(N) linear scan
   const filteredRecords = useMemo(() => {
-    return sortedRecords.filter((record, idx) => {
+    return baseRecords.filter((record, idx) => {
       if (searchQuery && searchQuery.trim()) {
         const q = searchQuery.trim().toLowerCase();
         const cleanFormId = String(record.formId ?? record.id ?? "");
@@ -785,20 +741,18 @@ export function DispatchCentre({
       }
 
       if (dateFilter !== "ALL") {
-        // ⭐ FIX: Filter by SUBMITTED date, not VALID FROM
+        // Filter by SUBMITTED date
         const recDate =
-          getRecordSubmittedDateISO(record) ||                            // ← SUBMITTED (primary)
-          parseDateToISO(record.completionTime || record.startTime || record.createdAt || record.created_at);  // ← SUBMITTED (fallback)
+          getRecordSubmittedDateISO(record) ||
+          parseDateToISO(record.completionTime || record.startTime || record.createdAt || record.created_at);
         if (!recDate) return false;
 
-        // ⭐ FIX: "Today" shows only today (1 day) by SUBMITTED date
         if (dateFilter === "TODAY") {
           if (recDate !== todayISO) return false;
         } else if (dateFilter === "THIS_WEEK") {
           if (recDate < dateRanges.last7DaysStart || recDate > todayISO) return false;
         } else if (dateFilter === "THIS_MONTH") {
           if (recDate < dateRanges.last30DaysStart || recDate > todayISO) return false;
-        // ⭐ FIX: "Custom Range" simple From/To filter by SUBMITTED date (inclusive)
         } else if (dateFilter === "CUSTOM") {
           if (customStartDate && recDate < customStartDate) return false;
           if (customEndDate && recDate > customEndDate) return false;
@@ -808,7 +762,7 @@ export function DispatchCentre({
       return true;
     });
   }, [
-    sortedRecords,
+    baseRecords,
     searchQuery,
     statusFilter,
     hospitalFilter,
@@ -818,9 +772,96 @@ export function DispatchCentre({
     customEndDate,
     todayISO,
     dateRanges,
-    recordCodeMap,
     processingDate,
     database,
+    dispatchedKeys,
+    unsentKeys,
+    formData
+  ]);
+
+  // ⭐ STEP 2: Sort filtered records using pre-decorated keys in O(M log M) without indexOf
+  const sortedRecords = useMemo(() => {
+    if (!sortKey || !sortDirection) {
+      return filteredRecords;
+    }
+
+    const decorated = filteredRecords.map((r, i) => {
+      let keyVal: string | number = 0;
+      switch (sortKey) {
+        case "id":
+          keyVal = getNumericFormId(r) || (i + 1);
+          break;
+        case "submitted":
+        case "qr":
+          keyVal = getRecordSubmittedTimeMs(r);
+          break;
+        case "driverName":
+          keyVal = (r.driverName || "").trim().toLowerCase();
+          break;
+        case "vrm":
+          keyVal = (r.vrm || "").trim().toUpperCase();
+          break;
+        case "voucherCode": {
+          const isBlk = isVrmSilentBlockedSync(r.vrm);
+          const isCanc = getIsCancelled(r, i);
+          keyVal = isBlk ? "BLOCKED" : (isCanc ? "CANCELLED" : (recordCodeMap.get(String(r.formId ?? r.id ?? i)) || r.voucherCode || ""));
+          break;
+        }
+        case "validFrom":
+          keyVal = parseDateToISO(r.dateRequired || r.validFrom) || "";
+          break;
+        case "validTo": {
+          const iso = parseDateToISO(r.dateRequired || r.validFrom);
+          keyVal = iso ? addDays(iso, 6) : "";
+          break;
+        }
+        case "ward":
+          keyVal = (r.ward || "").trim().toLowerCase();
+          break;
+        case "hospital":
+          keyVal = getHospital(r).toLowerCase();
+          break;
+        case "status":
+          keyVal = getStatusStr(r, i);
+          break;
+        case "actions": {
+          const isCanc = getIsCancelled(r, i);
+          const isDisp = checkIsRecordDispatched(r, r.vrm, r.driverName, r.dateRequired, dispatchedKeys, unsentKeys);
+          keyVal = isCanc ? "Unsend" : (isReplacementPending(r) ? "Resend" : (isDisp ? "Unsend" : "Send"));
+          break;
+        }
+        default:
+          keyVal = 0;
+      }
+      return {
+        r,
+        keyVal,
+        numId: getNumericFormId(r) || (i + 1),
+        submittedTime: getRecordSubmittedTimeMs(r)
+      };
+    });
+
+    decorated.sort((a, b) => {
+      let comp = 0;
+      if (typeof a.keyVal === "string" && typeof b.keyVal === "string") {
+        comp = a.keyVal.localeCompare(b.keyVal, undefined, { sensitivity: "base", numeric: true });
+      } else if (typeof a.keyVal === "number" && typeof b.keyVal === "number") {
+        comp = a.keyVal - b.keyVal;
+      }
+      if (comp === 0) {
+        comp = a.numId - b.numId || a.submittedTime - b.submittedTime;
+      }
+      return sortDirection === "asc" ? comp : -comp;
+    });
+
+    return decorated.map(d => d.r);
+  }, [
+    filteredRecords,
+    sortKey,
+    sortDirection,
+    database,
+    processingDate,
+    recordCodeMap,
     dispatchedKeys,
     unsentKeys,
     formData
@@ -925,7 +966,7 @@ export function DispatchCentre({
     setCurrentPage(1);
   };
 
-  const totalFilteredCount = filteredRecords.length;
+  const totalFilteredCount = sortedRecords.length;
   const totalOriginalCount = totalRecordsCount && totalRecordsCount > 0 ? totalRecordsCount : (database.length || 0);
   const isFiltered = activeFilters.length > 0 || totalFilteredCount !== totalOriginalCount;
 
@@ -936,10 +977,32 @@ export function DispatchCentre({
   const startIndex = totalFilteredCount === 0 ? 0 : (safePage - 1) * effectivePageSize;
   const endIndex = Math.min(startIndex + effectivePageSize, totalFilteredCount);
 
+  // ⭐ Non-blocking progressive rendering when "ALL" (pageSize === 0) is selected
+  const [allRenderLimit, setAllRenderLimit] = useState<number>(100);
+
+  useEffect(() => {
+    if (pageSize === 0) {
+      setAllRenderLimit(100);
+      let limit = 100;
+      let frameId: number;
+      const renderNextChunk = () => {
+        if (limit < sortedRecords.length) {
+          limit = Math.min(limit + 150, sortedRecords.length);
+          setAllRenderLimit(limit);
+          frameId = requestAnimationFrame(renderNextChunk);
+        }
+      };
+      frameId = requestAnimationFrame(renderNextChunk);
+      return () => cancelAnimationFrame(frameId);
+    }
+  }, [pageSize, sortedRecords.length]);
+
   const paginatedRecords = useMemo(() => {
-    if (pageSize === 0) return filteredRecords;
-    return filteredRecords.slice(startIndex, endIndex);
-  }, [filteredRecords, startIndex, endIndex, pageSize]);
+    if (pageSize === 0) {
+      return sortedRecords.slice(0, allRenderLimit);
+    }
+    return sortedRecords.slice(startIndex, endIndex);
+  }, [sortedRecords, startIndex, endIndex, pageSize, allRenderLimit]);
 
   const pageNumbers = useMemo(() => {
     if (totalPages <= 7) {
@@ -1448,17 +1511,17 @@ export function DispatchCentre({
                 } else if (isCancelled) {
                   displayCode = "CANCELLED";
                 } else if (displayCode === undefined || displayCode === null || displayCode === "CANCELLED" || displayCode === "BLOCKED") {
-                  const rawCode = (record.voucherCode || (customVouchers && (customVouchers[recordKey] || (record.vrm && customVouchers[`${record.vrm.toUpperCase().replace(/\s+/g, "")}_${reqDate}`]))) || "").trim();
+                  const rawCode = (record.voucherCode || (customVouchers && (customVouchers[recordKey] || (record.vrm && customVouchers[`${String(record.vrm).toUpperCase().replace(/\s+/g, "")}_${reqDate}`]))) || "").trim();
                   const cleanRaw = cleanVoucherCodeValue(rawCode).toUpperCase();
                   
-                  // ⭐ FIX: Only display if the code actually exists in the current vouchersDatabase
+                  // ⭐ O(1) check if code exists in current vouchersDatabase
                   const codeExists = cleanRaw && cleanRaw !== "-" && cleanRaw !== "CANCELLED" && cleanRaw !== "BLOCKED" &&
-                    vouchersDatabase.some(v => v && v.code && cleanVoucherCodeValue(v.code).toUpperCase() === cleanRaw);
+                    voucherIndex.codeMap.has(cleanRaw);
                   
                   displayCode = codeExists ? rawCode : "-";
                 }
 
-                // ⭐ FIX: Verify displayCode exists in current vouchersDatabase for this permit's date range
+                // ⭐ O(1) candidate lookup: Verify displayCode exists in current vouchersDatabase for this permit's date range
                 if (
                   displayCode &&
                   displayCode !== "-" &&
@@ -1468,13 +1531,10 @@ export function DispatchCentre({
                   vouchersDatabase.length > 0
                 ) {
                   const cleanDisplay = cleanVoucherCodeValue(displayCode).toUpperCase();
-                  const validInDbForDate = vouchersDatabase.some(v => {
-                    if (!v || !v.code) return false;
-                    return (
-                      cleanVoucherCodeValue(v.code).toUpperCase() === cleanDisplay &&
-                      (!permitFromISO || isVoucherForPermitDateRange(v, permitFromISO, permitToISO))
-                    );
-                  });
+                  const candidates = voucherIndex.codeMap.get(cleanDisplay);
+                  const validInDbForDate = candidates ? candidates.some(v =>
+                    !permitFromISO || isVoucherForPermitDateRange(v, permitFromISO, permitToISO)
+                  ) : false;
                   if (!validInDbForDate) {
                     displayCode = "-";
                   }
@@ -1498,42 +1558,19 @@ export function DispatchCentre({
 
                 const hospitalDisplay = getHospital(record);
 
-                // ⭐ FIX: Filter vouchers that match this permit's date range AND VRM using canonical isVoucherForPermitDateRange
-                const matchingVouchersForRow = vouchersDatabase.filter(v => {
-                  const dateMatch = isVoucherForPermitDateRange(v, permitFromISO, permitToISO);
-                  const vVrmClean = (v.vrm || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
-                  const recordVrmClean = (record.vrm || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
-                  const vrmMatch = !vVrmClean || vVrmClean === recordVrmClean;
-                  return dateMatch && vrmMatch;
-                });
-
-                // ⭐ Stale code check: an assigned code that no longer exists in the
-                // currently-loaded voucher batch for this permit's date range — usually
-                // means it was assigned before a newer Vouchers.csv was uploaded.
+                // ⭐ Stale code check using indexed lookup
+                const cleanUpperDisplay = String(displayCode || "").trim().toUpperCase();
+                const candidatesForDisplay = voucherIndex.codeMap.get(cleanUpperDisplay);
                 const isStaleCode = Boolean(
                   !isBlocked &&
                   !isCancelled &&
                   displayCode &&
                   displayCode !== "-" &&
-                  !vouchersDatabase.some(v => {
-                    const vCode = (v.code || "").trim().toUpperCase();
-                    return vCode && vCode === String(displayCode).trim().toUpperCase() &&
-                      isVoucherForPermitDateRange(v, permitFromISO, permitToISO);
-                  })
+                  (!candidatesForDisplay || !candidatesForDisplay.some(v => isVoucherForPermitDateRange(v, permitFromISO, permitToISO)))
                 );
                 
-                const totalForRow = matchingVouchersForRow.length;
-                
-                const remainingForRow = matchingVouchersForRow.filter(v => {
-                  if (v.isUsed === true || v.status === "used" || v.status === "dispatched") {
-                    return false;
-                  }
-                  const code = cleanVoucherCodeValue(v.code).toUpperCase();
-                  if (!code || code === "-" || code === "CANCELLED" || code === "PENDING") {
-                    return false;
-                  }
-                  return !assignedVoucherCodesSet.has(code);
-                }).length;
+                // ⭐ Instant O(1) memoized voucher stock calculation
+                const { total: totalForRow, remaining: remainingForRow } = getRowVoucherStats(permitFromISO, permitToISO, record?.vrm || "");
                 
                 const percentRemainingRow = totalForRow > 0
                   ? (remainingForRow / totalForRow) * 100

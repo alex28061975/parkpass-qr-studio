@@ -394,7 +394,7 @@ export function PermitForm({
             placeholder="E.G. FN15VKS"
             className={`${inputClass} uppercase`}
           />
-          {(!data.vrm || data.vrm.trim() === "") && (
+          {(!data.vrm || String(data.vrm).trim() === "") && (
             <span className="text-amber-400/90 text-[10px] mt-0.5 font-normal select-none">
               Awaiting plate number input
             </span>

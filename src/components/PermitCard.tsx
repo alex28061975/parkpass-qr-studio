@@ -284,7 +284,7 @@ function PermitCardInner({
       }
       const dataVrm = (data.vrm || "").toUpperCase().replace(/\s+/g, "");
       const dataName = (data.name || "").toUpperCase().replace(/\s+/g, "");
-      const currVrm = curr.vrm.toUpperCase().replace(/\s+/g, "");
+      const currVrm = (curr.vrm || "").toUpperCase().replace(/\s+/g, "");
       const currName = (curr.driverName || "").toUpperCase().replace(/\s+/g, "");
       const currDate = parseDateToISO(curr.dateRequired || curr.validFrom || "");
       if (dataVrm && currVrm === dataVrm && (!dataName || currName === dataName) && (!dataDate || !currDate || dataDate === currDate)) {
@@ -301,8 +301,8 @@ function PermitCardInner({
       if (dataId && pId && (pId === dataId || String(p.formId) === dataId || String(p.id) === dataId)) {
         return true;
       }
-      const pVrm = p.vrm.toUpperCase().replace(/\s+/g, "");
-      const pName = (p.driverName || "").toUpperCase().replace(/\s+/g, "");
+      const pVrm = (p?.vrm || "").toUpperCase().replace(/\s+/g, "");
+      const pName = (p?.driverName || "").toUpperCase().replace(/\s+/g, "");
       const pDate = parseDateToISO(p.dateRequired || p.validFrom || "");
       if (pVrm === dataVrm && (!dataName || pName === dataName)) {
         if (dataDate && pDate) {
@@ -802,7 +802,7 @@ function PermitCardInner({
     // Generate QR code data URL on demand if not cancelled
     let activeQrDataUrl = qrUrlSmall || qrUrl;
     if (!isCancelled) {
-      const payload = data.qrOverride.trim() || activeVoucherCode || currentSelectedCode || "";
+      const payload = (data.qrOverride || "").trim() || activeVoucherCode || currentSelectedCode || "";
       if (payload && payload !== "-" && payload !== "CANCELLED") {
         try {
           activeQrDataUrl = await QRCode.toDataURL(payload, {
@@ -1123,8 +1123,8 @@ function PermitCardInner({
   }, [isCancelled, voucherCodes, activeVoucherIndex, data.voucherCode, data.prePaidCode, data.qrCode, data.serialNumber, data.formId, data.dateRequired, data.startTime, data.validFrom, data.todayDate, data.vrm, data.id, database, availableVouchersForDate]);
 
   const qrPayload = useMemo(() => {
-    if (data.qrOverride.trim()) {
-      return data.qrOverride.trim();
+    if ((data.qrOverride || "").trim()) {
+      return (data.qrOverride || "").trim();
     }
     if (activeVoucherCode && activeVoucherCode !== "-") {
       return activeVoucherCode;
@@ -2780,7 +2780,7 @@ function PermitCardInner({
             {/* Current Match Counter / Progress Indicator */}
             <div className="text-center py-0.5 px-3">
               <span className="text-[12px] text-indigo-600 dark:text-indigo-400 font-black block uppercase tracking-[0.18em] leading-none mb-0.5 font-mono">
-                {currentRecord ? currentRecord.vrm.toUpperCase() : (data.vrm ? data.vrm.toUpperCase() : "MATCHED")}
+                {(currentRecord?.vrm || data.vrm || "MATCHED").toUpperCase()}
               </span>
               <span className="text-[11px] font-bold text-gray-400 dark:text-slate-500 font-mono">
                 {matchingPermits.length > 0 

@@ -22,7 +22,7 @@ import {
 // CSV Database Imports
 import { INITIAL_DEMO_CSV } from "./data/defaultCsv";
 import { isVrmSilentBlockedSync } from "./lib/blocklist";
-import { CsvPermitRecord, parsePermitCsv, parseDateToISO, addDays, formatPhoneNumber, ParsedVoucherData, addDaysSafe, parseDateRange, getDatesInRange, cleanVoucherCodeValue, exportToExcel, isVoucherCodeMatch, sortRecordsByFormIdDesc, getMatchingPermits, isDateRequiredOutsideValidWindow, getTodayISO, checkIsBlockedDuplicate, parseFullDateTimeMs, normalizeVouchersList, isRecordCancelled, getRequestedPermitDateISO, isVoucherExactPeriodEligible, isVoucherAvailableStatus, isVoucherVrmCompatible } from "./utils/csvParser";
+import { CsvPermitRecord, parsePermitCsv, parseDateToISO, addDays, formatPhoneNumber, ParsedVoucherData, addDaysSafe, parseDateRange, getDatesInRange, cleanVoucherCodeValue, exportToExcel, isVoucherCodeMatch, sortRecordsByFormIdDesc, getMatchingPermits, isDateRequiredOutsideValidWindow, getTodayISO, checkIsBlockedDuplicate, parseFullDateTimeMs, normalizeVouchersList, isRecordCancelled, getRequestedPermitDateISO, isVoucherExactPeriodEligible, isVoucherAvailableStatus, isVoucherVrmCompatible, clearDuplicateCheckCache } from "./utils/csvParser";
 // ⭐ FIX: Import canonical voucher validation helper
 import { isVoucherForPermitDateRange } from "./utils/voucherValidation";
 import { CsvDatabasePanel, type CsvDatabasePanelHandle } from "./components/CsvDatabasePanel";
@@ -214,6 +214,29 @@ export function enrichRecordsWithVouchers(
   const vouchersList: ParsedVoucherData[] = vouchersDb.filter(v => v && v.code);
   const recordClaimedCodes = new Map<number, string>();
 
+  // ⭐ PERFORMANCE CACHE: Pre-index vouchers for O(1) lookups
+  const voucherByCleanCode = new Map<string, ParsedVoucherData>();
+  const availableVouchersByPeriod = new Map<string, ParsedVoucherData[]>();
+
+  vouchersList.forEach(v => {
+    if (!v || !v.code) return;
+    const clean = cleanVoucherCodeValue(v.code).toUpperCase();
+    if (!clean) return;
+    if (!voucherByCleanCode.has(clean)) {
+      voucherByCleanCode.set(clean, v);
+    }
+
+    if (isVoucherAvailableStatus(v)) {
+      const pKey = `${v.validFrom || ""}_${v.validTo || ""}`;
+      let pList = availableVouchersByPeriod.get(pKey);
+      if (!pList) {
+        pList = [];
+        availableVouchersByPeriod.set(pKey, pList);
+      }
+      pList.push(v);
+    }
+  });
+
   const getRecordSortInfo = (r: CsvPermitRecord, idx: number) => {
     const reqIso = getRequestedPermitDateISO(r, fallbackDateStr) || getTodayISO();
     const cand = r.startTime || r.createdAt || r.created_at || r.completionTime || r.validFrom || r.dateRequired;
@@ -266,13 +289,10 @@ export function enrichRecordsWithVouchers(
 
     const existingCode = record.voucherCode || record.prePaidCode || record.qrCode || record.serialNumber;
 
-    // ⭐ FIX: Only accept customOverride if it exists in current vouchersDb and matches permit date
+    // Fast O(1) check: Only accept customOverride if it exists in current vouchersDb and matches permit date
     if (customOverride && customOverride !== "-" && customOverride.toUpperCase() !== "CANCELLED") {
       const clean = cleanVoucherCodeValue(customOverride).toUpperCase();
-      const matchingVoucherInDb = vouchersDb.find(v => {
-        if (!v || !v.code) return false;
-        return cleanVoucherCodeValue(v.code).toUpperCase() === clean;
-      });
+      const matchingVoucherInDb = voucherByCleanCode.get(clean);
       const dateMatches = !reqIso || !matchingVoucherInDb || isVoucherForPermitDateRange(matchingVoucherInDb, reqIso, reqIsoTo);
       if (matchingVoucherInDb && dateMatches && clean && clean !== "-" && clean !== "CANCELLED" && !checkIsAssigned(clean, custAssignedSet)) {
         registerCodeGlobally(clean, custAssignedSet);
@@ -281,19 +301,14 @@ export function enrichRecordsWithVouchers(
     } else if (existingCode && existingCode !== "-" && existingCode.toUpperCase() !== "CANCELLED") {
       const clean = cleanVoucherCodeValue(existingCode).toUpperCase();
       
-      // ⭐ FIX: only accept if the code exists in the current vouchersDatabase and matches permit date
-      const matchingVoucherInDb = vouchersDb.find(v => {
-        if (!v || !v.code) return false;
-        return cleanVoucherCodeValue(v.code).toUpperCase() === clean;
-      });
-      
+      // Fast O(1) check: only accept if the code exists in current vouchersDatabase and matches permit date
+      const matchingVoucherInDb = voucherByCleanCode.get(clean);
       const dateMatches = !reqIso || !matchingVoucherInDb || isVoucherForPermitDateRange(matchingVoucherInDb, reqIso, reqIsoTo);
       
       if (matchingVoucherInDb && dateMatches && clean !== "-" && clean !== "CANCELLED" && !checkIsAssigned(clean, custAssignedSet)) {
         registerCodeGlobally(clean, custAssignedSet);
         recordClaimedCodes.set(index, clean);
       }
-      // If it doesn't exist in vouchersDb or doesn't match date, do NOT claim it — Pass 1 will reassign from the real DB or set '-'
     }
   });
 
@@ -355,8 +370,12 @@ export function enrichRecordsWithVouchers(
     }
     const custAssignedSet = assignedPerCustomer.get(customerKey)!;
 
+    // Fast bucketed candidates for this date period
+    const periodBucket = availableVouchersByPeriod.get(`${reqDateD}_${reqDateToD}`);
+    const candidateList = periodBucket && periodBucket.length > 0 ? periodBucket : vouchersList;
+
     // Filter available vouchers eligible for this EXACT requested permit date D
-    const eligibleVouchers = vouchersList.filter(v => {
+    const eligibleVouchers = candidateList.filter(v => {
       if (!isVoucherAvailableStatus(v)) return false;
       const cleanCode = cleanVoucherCodeValue(v.code).toUpperCase();
       if (!cleanCode || checkIsAssigned(cleanCode, custAssignedSet)) return false;
@@ -1781,6 +1800,7 @@ export default function App() {
   // ⭐ UPDATED: handleDatabaseChange with auto-cancel (VRM-ONLY grouping)
   const handleDatabaseChange = async (incomingDb: CsvPermitRecord[]) => {
     safeLocalStorage.removeItem("concessions_unsent_keys");
+    clearDuplicateCheckCache();
     
     // ⭐ STEP 1: Auto-cancel duplicates (VRM-ONLY grouping)
     const processedRecords = autoCancelDuplicates(incomingDb);
@@ -1862,6 +1882,7 @@ export default function App() {
   };
 
   const handleVouchersDatabaseChange = async (incomingVouchers: ParsedVoucherData[]) => {
+    clearDuplicateCheckCache();
     // ⭐ FIX: Clear any customVouchers entries whose codes no longer exist in incoming vouchers
     const validCodes = new Set(
       (incomingVouchers || [])

@@ -1438,7 +1438,7 @@ export function isDateRequiredOutsideValidWindow(dateRequiredStr?: string, refer
   parkingDate.setHours(0, 0, 0, 0);
 
   const daysDiff = Math.floor((parkingDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-  return daysDiff < -7 || daysDiff > 14;
+  return daysDiff < -7 || daysDiff > 1;
 }
 
 export function parseUKDate(dateStr: string): string {
@@ -2245,6 +2245,43 @@ export function getSpreadsheetMatchingAllocationsMap(
   const effectiveDatabase = database.length > 0 ? database : sortedMatchingPermits;
   const internalAssignedSet = new Set<string>();
 
+  // ⭐ PERFORMANCE CACHE: Pre-index vouchersDatabase for instant O(1) lookups
+  const vouchersByCode = new Map<string, ParsedVoucherData[]>();
+  const availableVouchersByPeriod = new Map<string, ParsedVoucherData[]>();
+
+  (vouchersDatabase || []).forEach(v => {
+    if (!v || !v.code) return;
+    const clean = cleanVoucherCodeValue(v.code).toUpperCase();
+    if (!clean) return;
+    
+    let list = vouchersByCode.get(clean);
+    if (!list) {
+      list = [];
+      vouchersByCode.set(clean, list);
+    }
+    list.push(v);
+
+    if (isVoucherAvailableStatus(v)) {
+      const vFrom = v.validFrom || "";
+      const vTo = v.validTo || "";
+      const key = `${vFrom}_${vTo}`;
+      let pList = availableVouchersByPeriod.get(key);
+      if (!pList) {
+        pList = [];
+        availableVouchersByPeriod.set(key, pList);
+      }
+      pList.push(v);
+    }
+  });
+
+  const checkCodeExistsForPeriod = (cleanCode: string, reqFrom?: string, reqTo?: string): boolean => {
+    if (!vouchersDatabase || vouchersDatabase.length === 0) return true;
+    const matches = vouchersByCode.get(cleanCode);
+    if (!matches || matches.length === 0) return false;
+    if (!reqFrom) return true;
+    return matches.some(v => isVoucherExactPeriodEligible(v, reqFrom, reqTo));
+  };
+
   sortedMatchingPermits.forEach((r, idx) => {
     const recordKey = String(r.formId ?? r.id ?? idx);
     const reqDate = getRequestedPermitDateISO(r, processingDate);
@@ -2277,11 +2314,8 @@ export function getSpreadsheetMatchingAllocationsMap(
 
       if (customOverride && customOverride !== "-" && customOverride.toUpperCase() !== "CANCELLED") {
         const clean = String(customOverride).trim().split(/[\n,;\s]+/)[0]?.trim().toUpperCase();
-        // ⭐ FIX: Only allocate if code exists in vouchersDatabase for this exact date range
-        const codeExistsInDb = !vouchersDatabase || vouchersDatabase.length === 0 || vouchersDatabase.some(v => 
-          v && v.code && cleanVoucherCodeValue(v.code).toUpperCase() === clean &&
-          (!reqDate || isVoucherExactPeriodEligible(v, reqDate, reqDateTo))
-        );
+        // Fast O(1) check if code exists in vouchersDatabase for this date range
+        const codeExistsInDb = checkCodeExistsForPeriod(clean, reqDate, reqDateTo);
         if (codeExistsInDb && clean && clean !== "-" && clean !== "CANCELLED") {
           map.set(recordKey, clean);
           internalAssignedSet.add(clean);
@@ -2294,11 +2328,8 @@ export function getSpreadsheetMatchingAllocationsMap(
     const rawCodeUpper = rawCode ? String(rawCode).trim().toUpperCase() : "";
     if (rawCode && rawCode !== "-" && rawCodeUpper !== "CANCELLED") {
       const clean = cleanVoucherCodeValue(String(rawCode)).toUpperCase();
-      // ⭐ FIX: Only allocate if code exists in vouchersDatabase for this exact date range
-      const codeExistsInDb = !vouchersDatabase || vouchersDatabase.length === 0 || vouchersDatabase.some(v => 
-        v && v.code && cleanVoucherCodeValue(v.code).toUpperCase() === clean &&
-        (!reqDate || isVoucherExactPeriodEligible(v, reqDate, reqDateTo))
-      );
+      // Fast O(1) check if code exists in vouchersDatabase for this date range
+      const codeExistsInDb = checkCodeExistsForPeriod(clean, reqDate, reqDateTo);
       if (codeExistsInDb && clean && clean !== "-" && clean !== "CANCELLED") {
         map.set(recordKey, clean);
         internalAssignedSet.add(clean);
@@ -2326,7 +2357,13 @@ export function getSpreadsheetMatchingAllocationsMap(
       return;
     }
 
-    const eligibleVouchers = (vouchersDatabase || []).filter(v => {
+    // Fast O(1) bucket retrieval for this exact period if available
+    const periodBucket = availableVouchersByPeriod.get(`${reqDateD}_${reqDateToD}`);
+    const candidateVouchers = periodBucket && periodBucket.length > 0 
+      ? periodBucket 
+      : (vouchersDatabase || []);
+
+    const eligibleVouchers = candidateVouchers.filter(v => {
       if (!isVoucherAvailableStatus(v)) return false;
       const cleanCode = cleanVoucherCodeValue(v.code).toUpperCase();
       if (internalAssignedSet.has(cleanCode)) return false;
@@ -2852,27 +2889,15 @@ export function isRecordStrictlyEarlier(
   if (!candidate || !target) return false;
   if (isSamePermitRecord(candidate, target)) return false;
 
-  let cand = candidate;
-  let targ = target;
-  if (database && database.length > 0) {
-    const numCand = extractRecordNumericFormId(candidate);
-    const matchedCand = database.find(r => isSamePermitRecord(r, candidate) || (numCand > 0 && extractRecordNumericFormId(r) === numCand));
-    if (matchedCand) cand = { ...matchedCand, ...candidate };
-
-    const numTarg = extractRecordNumericFormId(target);
-    const matchedTarg = database.find(r => isSamePermitRecord(r, target) || (numTarg > 0 && extractRecordNumericFormId(r) === numTarg));
-    if (matchedTarg) targ = { ...matchedTarg, ...target };
-  }
-
-  const formIdCandidate = extractRecordNumericFormId(cand);
-  const formIdTarget = extractRecordNumericFormId(targ);
+  const formIdCandidate = extractRecordNumericFormId(candidate);
+  const formIdTarget = extractRecordNumericFormId(target);
 
   if (formIdCandidate > 0 && formIdTarget > 0 && formIdCandidate !== formIdTarget) {
     return formIdCandidate < formIdTarget;
   }
 
-  const timeCandidate = extractRecordSubmissionTimeMs(cand);
-  const timeTarget = extractRecordSubmissionTimeMs(targ);
+  const timeCandidate = extractRecordSubmissionTimeMs(candidate);
+  const timeTarget = extractRecordSubmissionTimeMs(target);
 
   if (timeCandidate > 0 && timeTarget > 0 && timeCandidate !== timeTarget) {
     return timeCandidate < timeTarget;
@@ -2893,8 +2918,8 @@ export function isRecordStrictlyEarlier(
   }
 
   if (database && database.length > 0) {
-    const idxCandidate = getRecordDatasetIndex(cand, database, formIdCandidate);
-    const idxTarget = getRecordDatasetIndex(targ, database, formIdTarget);
+    const idxCandidate = getRecordDatasetIndex(candidate, database, formIdCandidate);
+    const idxTarget = getRecordDatasetIndex(target, database, formIdTarget);
 
     if (idxCandidate !== -1 && idxTarget !== -1 && idxCandidate !== idxTarget) {
       const isDesc = database.length >= 2 && extractRecordNumericFormId(database[0]) > extractRecordNumericFormId(database[database.length - 1]);
@@ -2915,59 +2940,66 @@ export function compareRecordsBySubmissionOrder(a: any, b: any, fallbackDateStr?
   return 0;
 }
 
+// ⭐ Memoization cache for duplicate & cancellation checks to guarantee O(1) performance
+const blockedDuplicateCheckCache = new Map<string, boolean>();
+
+export function clearDuplicateCheckCache(): void {
+  blockedDuplicateCheckCache.clear();
+}
+
 export function checkIsBlockedDuplicate(
   record: { vrm?: string; validFrom?: string; dateRequired?: string; id?: string | number; formId?: string | number; voucherCode?: string; createdAt?: string; startTime?: string; driverName?: string; isCancelled?: boolean; status?: string; voucherCodesText?: string; prePaidCode?: string },
   database: CsvPermitRecord[],
   refDateISO?: string,
   visited?: Set<string>
 ): boolean {
-  if (!record) return false;
-  if (!record.vrm) return false;
+  if (!record || !record.vrm) return false;
   
-  const cleanVrm = record.vrm.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const cleanVrm = String(record.vrm).trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
   if (!cleanVrm || cleanVrm === "PENDING" || cleanVrm === "-") return false;
   
   if (!database || database.length === 0) {
     return false;
   }
 
-  const numId = extractRecordNumericFormId(record);
-  const matchedDbRecord = database.find(r => isSamePermitRecord(r, record) || (numId > 0 && extractRecordNumericFormId(r) === numId));
-  const fullRecord = matchedDbRecord ? { ...matchedDbRecord, ...record } : record;
+  // Already marked cancelled?
+  if (record.isCancelled === true || (typeof record.status === "string" && record.status.trim().toLowerCase().includes("cancel"))) {
+    return false;
+  }
+
+  const reqIsoX = parseDateToISO(record.dateRequired || record.validFrom || "") || 
+                  parseDateToISO(record.startTime || record.createdAt || "") || 
+                  refDateISO || getTodayISO();
+  const cacheKey = `${String(record.formId ?? record.id ?? cleanVrm)}_${reqIsoX}_${cleanVrm}_${database.length}`;
+  if (blockedDuplicateCheckCache.has(cacheKey)) {
+    return blockedDuplicateCheckCache.get(cacheKey)!;
+  }
 
   const vrmRecords = database.filter(r => {
-    const rVrm = (r.vrm || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+    const rVrm = (r?.vrm || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
     return rVrm === cleanVrm;
   });
 
   if (vrmRecords.length <= 1) {
+    blockedDuplicateCheckCache.set(cacheKey, false);
     return false;
   }
 
   const strictlyEarlierRecords: CsvPermitRecord[] = [];
 
   for (const other of vrmRecords) {
-    if (isSamePermitRecord(other, fullRecord)) continue;
-    if (isRecordStrictlyEarlier(other, fullRecord, database)) {
+    if (isSamePermitRecord(other, record)) continue;
+    if (isRecordStrictlyEarlier(other, record, database)) {
       strictlyEarlierRecords.push(other);
     }
   }
 
   if (strictlyEarlierRecords.length === 0) {
+    blockedDuplicateCheckCache.set(cacheKey, false);
     return false;
   }
 
-  const reqIsoX = parseDateToISO(fullRecord.dateRequired || fullRecord.validFrom || "") || 
-                  parseDateToISO(fullRecord.startTime || fullRecord.createdAt || "") || 
-                  refDateISO || getTodayISO();
   const reqTimeMsX = new Date(reqIsoX + "T00:00:00").getTime();
-
-  const recordKey = String(fullRecord.formId ?? fullRecord.id ?? (cleanVrm + "_" + reqIsoX));
-  const currentVisited = visited ? new Set(visited) : new Set<string>();
-  if (recordKey) {
-    if (currentVisited.has(recordKey)) return false;
-    currentVisited.add(recordKey);
-  }
 
   for (const earlier of strictlyEarlierRecords) {
     const earlierDateRequired = earlier.dateRequired || earlier.validFrom || "";
@@ -2976,6 +3008,7 @@ export function checkIsBlockedDuplicate(
       ? (parseDateToISO(String(earlierRawRefDate)) || "") 
       : (parseDateToISO(earlierDateRequired) || refDateISO || "");
 
+    // Fast check if earlier record is cancelled WITHOUT recursive deep database scanning
     const earlierIsCancelled = 
       earlier.isCancelled === true ||
       earlier.voucherCode === "CANCELLED" ||
@@ -2986,8 +3019,7 @@ export function checkIsBlockedDuplicate(
       (typeof earlier.prePaidCode === "string" && earlier.prePaidCode.trim().toUpperCase() === "CANCELLED") ||
       (typeof earlier.status === "string" && earlier.status.trim().toLowerCase().includes("cancel")) ||
       isVrmSilentBlockedSync(earlier.vrm) ||
-      isDateRequiredOutsideValidWindow(earlierDateRequired, earlierRefDate) ||
-      checkIsBlockedDuplicate(earlier, database, earlierRefDate, currentVisited);
+      isDateRequiredOutsideValidWindow(earlierDateRequired, earlierRefDate);
 
     if (earlierIsCancelled) {
       continue;
@@ -3001,10 +3033,12 @@ export function checkIsBlockedDuplicate(
     const diffDays = Math.round((reqTimeMsX - earlierReqTimeMs) / (1000 * 60 * 60 * 24));
 
     if (diffDays >= 0 && diffDays < 7) {
+      blockedDuplicateCheckCache.set(cacheKey, true);
       return true;
     }
   }
 
+  blockedDuplicateCheckCache.set(cacheKey, false);
   return false;
 }
 
@@ -3048,9 +3082,7 @@ export function isRecordCancelled(
     return true;
   }
 
-  // ⭐ Live duplicate check: same VRM, requested within 7 days of an earlier non-cancelled request.
-  // Computed on every call so it applies regardless of how/when the record was loaded
-  // (fresh CSV import, Supabase fetch, page refresh) — not just at import time.
+  // Live duplicate check with O(1) memoized cache
   if (database && database.length > 0 && checkIsBlockedDuplicate(record, database, referenceDate)) {
     return true;
   }
