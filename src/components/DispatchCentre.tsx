@@ -57,7 +57,6 @@ import {
 } from "../utils/csvParser";
 import { checkIsRecordDispatched } from "../utils/dispatchUtils";
 import { isVrmSilentBlockedSync } from "../lib/blocklist";
-import { useLoading } from "../contexts/LoadingContext";
 // ⭐ FIX: Import canonical date & voucher matching functions from voucherValidation
 import {
   isVoucherForPermitDateRange,
@@ -155,7 +154,6 @@ export function DispatchCentre({
   onEditRecord
 }: DispatchCentreProps) {
   const [internalSearchQuery, setInternalSearchQuery] = useState("");
-  const { showLoading, hideLoading, updateProgress } = useLoading();
   const isControlled = searchQueryProp !== undefined;
   const searchQuery = isControlled ? searchQueryProp : internalSearchQuery;
   const handleSearchChange = (val: string) => {
@@ -996,14 +994,10 @@ export function DispatchCentre({
   };
 
   const handleExportZip = () => {
-    showLoading("Preparing your export file...", 30);
     try {
-      updateProgress(60);
       exportToExcel(filteredRecords, "Concessions_Permits_Export.xlsx");
-      updateProgress(100);
-      setTimeout(hideLoading, 400);
     } catch (e) {
-      hideLoading();
+      console.error("Export failed:", e);
     }
   };
 
