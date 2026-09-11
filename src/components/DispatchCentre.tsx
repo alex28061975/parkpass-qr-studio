@@ -55,7 +55,7 @@ import {
   isLikelyDriverName,
   cleanVrm
 } from "../utils/csvParser";
-import { checkIsRecordDispatched, getRecordKeys } from "../utils/dispatchUtils";
+import { checkIsRecordDispatched } from "../utils/dispatchUtils";
 import { isVrmSilentBlockedSync } from "../lib/blocklist";
 import { useLoading } from "../contexts/LoadingContext";
 // ⭐ FIX: Import canonical date & voucher matching functions from voucherValidation
@@ -481,6 +481,10 @@ export function DispatchCentre({
   const [dateFilter, setDateFilter] = useState<"ALL" | "TODAY" | "THIS_WEEK" | "THIS_MONTH" | "CUSTOM">("THIS_WEEK");
 
   useEffect(() => {
+    // Don't let the parent's fetch-range prop clobber a local "Today" or "Custom Range"
+    // selection — both legitimately map to onDateRangeFilterChange("all") for data-fetching
+    // purposes, but that shouldn't reset the user's actual filter choice back to "ALL".
+    if (dateFilter === "TODAY" || dateFilter === "CUSTOM") return;
     if (dateRangeFilter === "7days") setDateFilter("THIS_WEEK");
     else if (dateRangeFilter === "30days") setDateFilter("THIS_MONTH");
     else if (dateRangeFilter === "all") setDateFilter("ALL");
@@ -563,11 +567,7 @@ export function DispatchCentre({
     if (getIsCancelled(record, idx)) return "CANCELLED";
     if (isReplacementPending(record)) return "REPLACEMENT";
     const isDispatched = checkIsRecordDispatched(record, record.vrm, record.driverName, record.dateRequired, dispatchedKeys, unsentKeys);
-    const rowKey = String(record.formId ?? record.id ?? record.vrm ?? idx);
-    const recordKeys = getRecordKeys(record);
-    const isUnsent = Boolean(unsentKeys && unsentKeys.length > 0 && (unsentKeys.includes(rowKey) || recordKeys.some(k => unsentKeys.includes(k))));
     if (isDispatched) return "SENT";
-    if (isUnsent) return "UNSENT";
     return "PENDING";
   };
 
@@ -1018,16 +1018,16 @@ export function DispatchCentre({
   };
 
   return (
-    <section className="w-full bg-[#030C1B] border border-[#0D223C] rounded-2xl p-4 md:p-6 shadow-2xl text-slate-200 transition-colors">
+    <section className="w-full bg-white dark:bg-[#030C1B] border border-slate-200 dark:border-[#0D223C] rounded-2xl p-4 md:p-6 shadow-2xl text-slate-700 dark:text-slate-200 transition-colors">
       {/* Top Header Section */}
-      <div className="flex flex-col gap-3 pb-4 border-b border-[#0D223C]">
+      <div className="flex flex-col gap-3 pb-4 border-b border-slate-200 dark:border-[#0D223C]">
         <div className="flex items-center justify-between gap-4 w-full flex-wrap lg:flex-nowrap">
           {/* Left: Logo & Title */}
           <div className="flex items-center gap-3 shrink-0">
             <div className="w-8 h-8 rounded-full bg-[#1877F2] flex items-center justify-center shadow-md shadow-blue-500/20 text-white shrink-0">
               <Navigation className="w-4 h-4 fill-white text-white" />
             </div>
-            <h2 className="text-base sm:text-lg font-bold text-white tracking-tight whitespace-nowrap shrink-0">
+            <h2 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white tracking-tight whitespace-nowrap shrink-0">
               Permit Dispatch Centre
             </h2>
           </div>
@@ -1037,24 +1037,24 @@ export function DispatchCentre({
             <button
               type="button"
               onClick={onBrowseConcessions}
-              className="flex items-center gap-2 bg-[#1A73E8] hover:bg-[#1557b0] text-white rounded-lg px-3.5 py-2 text-xs sm:text-sm font-semibold transition-colors whitespace-nowrap shadow-sm"
+              className="flex items-center gap-2 bg-[#1A73E8] hover:bg-[#1557b0] text-white rounded-lg h-8 px-3 text-xs font-semibold transition-colors whitespace-nowrap shadow-sm"
             >
               <FileSpreadsheet className="w-4 h-4 shrink-0" />
               <span className="whitespace-nowrap">Browse concessions</span>
             </button>
-            <span className="text-xs sm:text-sm text-slate-400 font-normal whitespace-nowrap">
+            <span className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 font-normal whitespace-nowrap">
               {totalDbCount} concessions
             </span>
 
             <button
               type="button"
               onClick={onBrowseVouchers}
-              className="flex items-center gap-2 bg-[#1A73E8] hover:bg-[#1557b0] text-white rounded-lg px-3.5 py-2 text-xs sm:text-sm font-semibold transition-colors whitespace-nowrap shadow-sm"
+              className="flex items-center gap-2 bg-[#1A73E8] hover:bg-[#1557b0] text-white rounded-lg h-8 px-3 text-xs font-semibold transition-colors whitespace-nowrap shadow-sm"
             >
               <FileText className="w-4 h-4 shrink-0" />
               <span className="whitespace-nowrap">Browse vouchers</span>
             </button>
-            <span className="text-xs sm:text-sm text-slate-400 font-normal whitespace-nowrap">
+            <span className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 font-normal whitespace-nowrap">
               {totalVouchersCount} vouchers
             </span>
 
@@ -1075,7 +1075,7 @@ export function DispatchCentre({
               value={unusedVouchersForDay.some(v => v.code === formData?.voucherCodesText) ? formData?.voucherCodesText : ""}
               onChange={handleActiveDateCodeChange}
               disabled={unusedVouchersForDay.length === 0}
-              className="h-9 px-3 py-1.5 bg-[#D1FAE5] text-[#065F46] border border-[#34D399] rounded-lg text-xs font-mono font-bold focus:outline-none transition shrink-0 cursor-pointer"
+              className="h-8 px-2.5 py-1 bg-[#D1FAE5] text-[#065F46] border border-[#34D399] rounded-lg text-xs font-mono font-bold focus:outline-none transition shrink-0 cursor-pointer"
             >
               <option value="" disabled className="font-mono font-normal text-slate-700 bg-white">
                 {vouchersDatabase.length === 0
@@ -1101,20 +1101,20 @@ export function DispatchCentre({
         <div className="flex flex-col gap-2.5 pt-1">
           <div className="flex flex-wrap items-center gap-2.5">
             <div className="relative flex-1 min-w-[220px]">
-              <div className="flex items-center w-full bg-[#020B19] border border-[#132A4A] focus-within:border-[#1A73E8] focus-within:ring-2 focus-within:ring-[#1A73E8]/20 rounded-xl px-3.5 py-2 transition shadow-inner">
-                <Search className="w-4 h-4 text-sky-400 shrink-0 mr-2" />
+              <div className="flex items-center w-full bg-white dark:bg-[#020B19] border border-slate-300 dark:border-[#132A4A] focus-within:border-[#1A73E8] focus-within:ring-2 focus-within:ring-[#1A73E8]/20 rounded-xl px-3.5 py-2 transition shadow-inner">
+                <Search className="w-4 h-4 text-sky-500 dark:text-sky-400 shrink-0 mr-2" />
                 <input
                   type="text"
                   value={searchQuery}
                   onChange={(e) => handleSearchChange(e.target.value)}
                   placeholder="Search driver, VRN, hospital, voucher..."
-                  className="w-full bg-transparent text-xs sm:text-sm text-white placeholder-slate-400 focus:outline-none font-normal"
+                  className="w-full bg-transparent text-xs sm:text-sm text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none font-normal"
                 />
                 {searchQuery && (
                   <button
                     type="button"
                     onClick={() => handleSearchChange("")}
-                    className="text-slate-400 hover:text-white p-0.5 rounded transition cursor-pointer"
+                    className="text-slate-400 hover:text-slate-900 dark:hover:text-white p-0.5 rounded transition cursor-pointer"
                     title="Clear search"
                   >
                     <X className="w-3.5 h-3.5" />
@@ -1127,14 +1127,14 @@ export function DispatchCentre({
               <select
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value as any)}
-                className="h-9.5 pl-3.5 pr-8 bg-[#020B19] border border-[#132A4A] text-white rounded-xl text-xs font-medium focus:outline-none focus:border-[#1A73E8] transition appearance-none cursor-pointer"
+                className="h-9.5 pl-3.5 pr-8 bg-white dark:bg-[#020B19] border border-slate-300 dark:border-[#132A4A] text-slate-900 dark:text-white rounded-xl text-xs font-medium focus:outline-none focus:border-[#1A73E8] transition appearance-none cursor-pointer"
               >
-                <option value="ALL" className="bg-[#020B19] text-white">Status: All</option>
-                <option value="PENDING" className="bg-[#020B19] text-white">PENDING</option>
-                <option value="SENT" className="bg-[#020B19] text-white">SENT</option>
-                <option value="CANCELLED" className="bg-[#020B19] text-white">CANCELLED</option>
-                <option value="BLOCKED" className="bg-[#020B19] text-white">BLOCKED</option>
-                <option value="REPLACEMENT" className="bg-[#020B19] text-white">REPLACEMENT</option>
+                <option value="ALL" className="bg-white dark:bg-[#020B19] text-slate-900 dark:text-white">Status: All</option>
+                <option value="PENDING" className="bg-white dark:bg-[#020B19] text-slate-900 dark:text-white">PENDING</option>
+                <option value="SENT" className="bg-white dark:bg-[#020B19] text-slate-900 dark:text-white">SENT</option>
+                <option value="CANCELLED" className="bg-white dark:bg-[#020B19] text-slate-900 dark:text-white">CANCELLED</option>
+                <option value="BLOCKED" className="bg-white dark:bg-[#020B19] text-slate-900 dark:text-white">BLOCKED</option>
+                <option value="REPLACEMENT" className="bg-white dark:bg-[#020B19] text-slate-900 dark:text-white">REPLACEMENT</option>
               </select>
               <ChevronDown className="w-3.5 h-3.5 text-slate-400 pointer-events-none absolute right-3 top-1/2 -translate-y-1/2" />
             </div>
@@ -1143,11 +1143,11 @@ export function DispatchCentre({
               <select
                 value={hospitalFilter}
                 onChange={(e) => setHospitalFilter(e.target.value)}
-                className="h-9.5 pl-3.5 pr-8 bg-[#020B19] border border-[#132A4A] text-white rounded-xl text-xs font-medium focus:outline-none focus:border-[#1A73E8] transition appearance-none cursor-pointer truncate max-w-[200px]"
+                className="h-9.5 pl-3.5 pr-8 bg-white dark:bg-[#020B19] border border-slate-300 dark:border-[#132A4A] text-slate-900 dark:text-white rounded-xl text-xs font-medium focus:outline-none focus:border-[#1A73E8] transition appearance-none cursor-pointer truncate max-w-[200px]"
               >
-                <option value="ALL" className="bg-[#020B19] text-white">Hospital: All</option>
+                <option value="ALL" className="bg-white dark:bg-[#020B19] text-slate-900 dark:text-white">Hospital: All</option>
                 {allHospitalsList.map(h => (
-                  <option key={h} value={h} className="bg-[#020B19] text-white">{h}</option>
+                  <option key={h} value={h} className="bg-white dark:bg-[#020B19] text-slate-900 dark:text-white">{h}</option>
                 ))}
               </select>
               <ChevronDown className="w-3.5 h-3.5 text-slate-400 pointer-events-none absolute right-3 top-1/2 -translate-y-1/2" />
@@ -1157,11 +1157,11 @@ export function DispatchCentre({
               <select
                 value={wardFilter}
                 onChange={(e) => setWardFilter(e.target.value)}
-                className="h-9.5 pl-3.5 pr-8 bg-[#020B19] border border-[#132A4A] text-white rounded-xl text-xs font-medium focus:outline-none focus:border-[#1A73E8] transition appearance-none cursor-pointer truncate max-w-[200px]"
+                className="h-9.5 pl-3.5 pr-8 bg-white dark:bg-[#020B19] border border-slate-300 dark:border-[#132A4A] text-slate-900 dark:text-white rounded-xl text-xs font-medium focus:outline-none focus:border-[#1A73E8] transition appearance-none cursor-pointer truncate max-w-[200px]"
               >
-                <option value="ALL" className="bg-[#020B19] text-white">Ward: All</option>
+                <option value="ALL" className="bg-white dark:bg-[#020B19] text-slate-900 dark:text-white">Ward: All</option>
                 {allWardsList.map(w => (
-                  <option key={w} value={w} className="bg-[#020B19] text-white">{w}</option>
+                  <option key={w} value={w} className="bg-white dark:bg-[#020B19] text-slate-900 dark:text-white">{w}</option>
                 ))}
               </select>
               <ChevronDown className="w-3.5 h-3.5 text-slate-400 pointer-events-none absolute right-3 top-1/2 -translate-y-1/2" />
@@ -1186,13 +1186,13 @@ export function DispatchCentre({
                     setCustomEndDate("");
                   }
                 }}
-                className="h-9.5 pl-3.5 pr-8 bg-[#020B19] border border-[#132A4A] text-white rounded-xl text-xs font-medium focus:outline-none focus:border-[#1A73E8] transition appearance-none cursor-pointer"
+                className="h-9.5 pl-3.5 pr-8 bg-white dark:bg-[#020B19] border border-slate-300 dark:border-[#132A4A] text-slate-900 dark:text-white rounded-xl text-xs font-medium focus:outline-none focus:border-[#1A73E8] transition appearance-none cursor-pointer"
               >
-                <option value="ALL" className="bg-[#020B19] text-white">{isLoadingHistory ? "Loading..." : "Date: All Time"}</option>
-                <option value="TODAY" className="bg-[#020B19] text-white">Today</option>
-                <option value="THIS_WEEK" className="bg-[#020B19] text-white">This Week</option>
-                <option value="THIS_MONTH" className="bg-[#020B19] text-white">This Month</option>
-                <option value="CUSTOM" className="bg-[#020B19] text-white">Custom Range</option>
+                <option value="ALL" className="bg-white dark:bg-[#020B19] text-slate-900 dark:text-white">{isLoadingHistory ? "Loading..." : "Date: All Time"}</option>
+                <option value="TODAY" className="bg-white dark:bg-[#020B19] text-slate-900 dark:text-white">Today</option>
+                <option value="THIS_WEEK" className="bg-white dark:bg-[#020B19] text-slate-900 dark:text-white">This Week</option>
+                <option value="THIS_MONTH" className="bg-white dark:bg-[#020B19] text-slate-900 dark:text-white">This Month</option>
+                <option value="CUSTOM" className="bg-white dark:bg-[#020B19] text-slate-900 dark:text-white">Custom Range</option>
               </select>
               <ChevronDown className="w-3.5 h-3.5 text-slate-400 pointer-events-none absolute right-3 top-1/2 -translate-y-1/2" />
             </div>
@@ -1488,8 +1488,6 @@ export function DispatchCentre({
                 const rowKey = String(record.formId ?? record.id ?? record.vrm ?? index);
 
                 const isDispatched = checkIsRecordDispatched(record, record.vrm, record.driverName, record.dateRequired, dispatchedKeys, unsentKeys);
-                const recordKeys = getRecordKeys(record);
-                const isUnsent = Boolean(unsentKeys && unsentKeys.length > 0 && (unsentKeys.includes(rowKey) || recordKeys.some(k => unsentKeys.includes(k))));
                 const replacementPending = !isBlocked && isReplacementPending(record);
 
                 const excelId = (() => {
@@ -1663,10 +1661,6 @@ export function DispatchCentre({
                         <span className="border border-emerald-300 dark:border-[#32D74B]/40 bg-emerald-50 dark:bg-[#32D74B]/15 text-emerald-700 dark:text-[#32D74B] font-bold px-2 py-0.5 rounded text-[9px] tracking-wider uppercase inline-flex items-center justify-center gap-1 whitespace-nowrap">
                           <span>✅</span>
                           <span>SENT</span>
-                        </span>
-                      ) : isUnsent ? (
-                        <span className="border border-sky-300 dark:border-[#42A5F5]/40 bg-sky-50 dark:bg-[#42A5F5]/15 text-sky-700 dark:text-[#42A5F5] font-bold px-2 py-0.5 rounded text-[9px] tracking-wider uppercase inline-flex items-center justify-center whitespace-nowrap">
-                          UNSENT
                         </span>
                       ) : (
                         <span className="border border-amber-300 dark:border-[#FF9F0A]/40 bg-amber-50 dark:bg-[#FF9F0A]/15 text-amber-700 dark:text-[#FF9F0A] font-bold px-2 py-0.5 rounded text-[9px] tracking-wider uppercase inline-flex items-center justify-center whitespace-nowrap">
