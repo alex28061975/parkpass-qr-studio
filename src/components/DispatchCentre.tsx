@@ -384,7 +384,7 @@ export function DispatchCentre({
   }, [currentPermitValidFromIso, currentPermitValidToIso]);
 
   // Unused vouchers computation for the active date with exact validFrom/validTo matching
-  // Matches the exact logic in EditRecordModal.tsx
+  // Excludes codes that have already been dispatched or assigned - showing only UNSENT codes
   const unusedVouchersForDay = useMemo<ParsedVoucherData[]>(() => {
     if (!currentPermitValidFromIso || !vouchersDatabase || vouchersDatabase.length === 0) {
       return [];
@@ -393,65 +393,32 @@ export function DispatchCentre({
     const validTo = currentPermitValidToIso || currentPermitValidFromIso;
 
     // Filter vouchers that strictly match the current selected permit's date range (ValidFrom - ValidTo)
-    return vouchersDatabase.filter(v => {
-      if (!isVoucherForPermitDateRange(v, currentPermitValidFromIso, validTo)) {
-        return false;
-      }
+    const matchingRangeVouchers = vouchersDatabase.filter(v => {
+      return isVoucherForPermitDateRange(v, currentPermitValidFromIso, validTo);
+    });
+
+    return matchingRangeVouchers.filter(v => {
+      // ❌ Exclude used/dispatched codes
       if (v.isUsed === true || v.status === "used" || v.status === "dispatched") {
         return false;
       }
       const codeUpper = cleanVoucherCodeValue(v.code).toUpperCase();
-      return !!codeUpper && codeUpper !== "-" && codeUpper !== "CANCELLED" && codeUpper !== "PENDING";
+      if (!codeUpper || codeUpper === "-" || codeUpper === "CANCELLED" || codeUpper === "PENDING") {
+        return false;
+      }
+      // ⭐ Exclude codes that have already been assigned/sent
+      // Only show UNSENT codes
+      if (assignedVoucherCodesSet.has(codeUpper)) {
+        return false;
+      }
+      return true;
     });
   }, [
     vouchersDatabase,
     currentPermitValidFromIso,
-    currentPermitValidToIso
+    currentPermitValidToIso,
+    assignedVoucherCodesSet
   ]);
-
-  // Resolve current voucher code for selected record
-  const currentRecordVoucherCode = useMemo(() => {
-    if (!activeRecord) return "";
-    const recordKey = String(activeRecord.formId ?? activeRecord.id ?? "");
-    const mapped = recordKey ? recordCodeMap.get(recordKey) : "";
-    if (mapped && mapped !== "-" && mapped !== "CANCELLED" && mapped !== "BLOCKED") {
-      return cleanVoucherCodeValue(mapped).toUpperCase();
-    }
-    const raw = (activeRecord.voucherCode || 
-                 activeRecord.prePaidCode || 
-                 (selectedRowRecord ? "" : formData?.voucherCodesText) || 
-                 "").trim();
-    const clean = cleanVoucherCodeValue(raw).toUpperCase();
-    if (clean && clean !== "-" && clean !== "CANCELLED" && clean !== "BLOCKED" && clean !== "PENDING") {
-      return clean;
-    }
-    return "";
-  }, [activeRecord, recordCodeMap, selectedRowRecord, formData?.voucherCodesText]);
-
-  // Dropdown options include unused vouchers for this date range, plus the selected record's current code if assigned
-  const dropdownOptions = useMemo(() => {
-    const list = [...unusedVouchersForDay];
-    if (currentRecordVoucherCode) {
-      const exists = list.some(v => cleanVoucherCodeValue(v.code).toUpperCase() === currentRecordVoucherCode);
-      if (!exists) {
-        list.unshift({
-          code: currentRecordVoucherCode,
-          dateRequired: currentPermitValidFromIso,
-          validFrom: currentPermitValidFromIso,
-          validTo: currentPermitValidToIso,
-          isUsed: false,
-          status: "assigned"
-        } as ParsedVoucherData);
-      }
-    }
-    return list;
-  }, [unusedVouchersForDay, currentRecordVoucherCode, currentPermitValidFromIso, currentPermitValidToIso]);
-
-  const selectedDropdownValue = useMemo(() => {
-    if (!currentRecordVoucherCode) return "";
-    const match = dropdownOptions.find(v => cleanVoucherCodeValue(v.code).toUpperCase() === currentRecordVoucherCode);
-    return match ? cleanVoucherCodeValue(match.code).toUpperCase() : "";
-  }, [dropdownOptions, currentRecordVoucherCode]);
 
   // Exact range voucher stock metrics for Active Date Codes dropdown badge
   const totalForThisRange = useMemo(() => {
@@ -1171,19 +1138,19 @@ export function DispatchCentre({
               Active Date Codes ({unusedVouchersForDay.length}):
             </label>
             <select
-              value={selectedDropdownValue}
+              value={unusedVouchersForDay.some(v => cleanVoucherCodeValue(v.code).toUpperCase() === cleanVoucherCodeValue(formData?.voucherCodesText).toUpperCase()) ? cleanVoucherCodeValue(formData?.voucherCodesText).toUpperCase() : ""}
               onChange={handleActiveDateCodeChange}
-              disabled={unusedVouchersForDay.length === 0 && !currentRecordVoucherCode}
+              disabled={unusedVouchersForDay.length === 0}
               className="h-8 px-2.5 py-1 bg-[#D1FAE5] text-[#065F46] border border-[#34D399] rounded-lg text-xs font-mono font-bold focus:outline-none transition shrink-0 cursor-pointer"
             >
               <option value="" disabled className="font-mono font-normal text-slate-700 bg-white">
                 {vouchersDatabase.length === 0
                   ? "-- No Vouchers Uploaded --"
-                  : unusedVouchersForDay.length === 0 && !currentRecordVoucherCode
+                  : unusedVouchersForDay.length === 0
                     ? "-- 0 Available --"
                     : "-- Choose Code --"}
               </option>
-              {dropdownOptions.map((v, index) => {
+              {unusedVouchersForDay.map((v, index) => {
                 const cleanCode = cleanVoucherCodeValue(v.code).toUpperCase();
                 return (
                   <option
