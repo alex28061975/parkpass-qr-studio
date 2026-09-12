@@ -193,6 +193,20 @@ export function DispatchCentre({
   const [wardDropdownOpen, setWardDropdownOpen] = useState(false);
   const [selectedRowRecord, setSelectedRowRecord] = useState<CsvPermitRecord | null>(null);
 
+  // Sync selectedRowRecord when replacement code is assigned
+  useEffect(() => {
+    if (formData?.voucherCodesText && selectedRowRecord) {
+      if (formData.emailType === "RESEND_CONCESSION" || formData.isResend) {
+        setSelectedRowRecord(prev => prev ? ({
+          ...prev,
+          voucherCode: formData.voucherCodesText,
+          voucherCodesText: formData.voucherCodesText,
+          prePaidCode: formData.voucherCodesText
+        }) : null);
+      }
+    }
+  }, [formData?.voucherCodesText, formData?.emailType, formData?.isResend]);
+
   const handleRowClick = (record: CsvPermitRecord) => {
     setSelectedRowRecord(record);
     onSelectRecord(record);
@@ -1520,12 +1534,15 @@ export function DispatchCentre({
                   return "";
                 })();
 
+                const replacementPending = !isBlocked && isReplacementPending(record);
                 let displayCode = recordCodeMap.get(recordKey);
 
                 if (isBlocked) {
                   displayCode = "BLOCKED";
                 } else if (isCancelled) {
                   displayCode = "CANCELLED";
+                } else if (replacementPending && isSameSelectedRecord(record) && formData?.voucherCodesText) {
+                  displayCode = formData.voucherCodesText;
                 } else if (displayCode === undefined || displayCode === null || displayCode === "CANCELLED" || displayCode === "BLOCKED") {
                   const rawCode = (record.voucherCode || (customVouchers && (customVouchers[recordKey] || (record.vrm && customVouchers[`${String(record.vrm).toUpperCase().replace(/\s+/g, "")}_${reqDate}`]))) || "").trim();
                   const cleanRaw = cleanVoucherCodeValue(rawCode).toUpperCase();
@@ -1558,7 +1575,6 @@ export function DispatchCentre({
                 const rowKey = String(record.formId ?? record.id ?? record.vrm ?? index);
 
                 const isDispatched = checkIsRecordDispatched(record, record.vrm, record.driverName, record.dateRequired, dispatchedKeys, unsentKeys);
-                const replacementPending = !isBlocked && isReplacementPending(record);
 
                 const excelId = (() => {
                   if (record.formId !== undefined && record.formId !== null) {
@@ -1728,6 +1744,8 @@ export function DispatchCentre({
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
+                            setSelectedRowRecord(record);
+                            onSelectRecord(record);
                             if (onEditRecord) {
                               // Pass the actually-displayed voucher code (resolved via recordCodeMap),
                               // not just the raw record.voucherCode field, which is often blank —
@@ -1741,7 +1759,13 @@ export function DispatchCentre({
                                 ? "CANCELLED"
                                 : (isBlocked ? "BLOCKED" : resolvedCode);
                               onEditRecord(
-                                { ...record, voucherCode: finalVoucherForRecord, prePaidCode: finalVoucherForRecord },
+                                {
+                                  ...record,
+                                  voucherCode: finalVoucherForRecord,
+                                  prePaidCode: finalVoucherForRecord,
+                                  status: isDispatched ? "SENT" : (record.status || "PENDING"),
+                                  isDispatched
+                                },
                                 resolvedCode
                               );
                             } else {

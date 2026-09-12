@@ -1655,9 +1655,9 @@ export default function App() {
       voucherCodesText: enrichedRecord.voucherCode || "-",
       startTime: enrichedRecord.startTime,
       createdAt: enrichedRecord.createdAt,
-      isResend: isRecordDispatched ? prev.isResend : false,
-      emailType: isRecordDispatched ? prev.emailType : "SEND_CONCESSION",
-      emailTemplate: isRecordDispatched ? prev.emailTemplate : "new"
+      isResend: false,
+      emailType: "SEND_CONCESSION",
+      emailTemplate: "new"
     }));
   };
 
@@ -1707,9 +1707,9 @@ export default function App() {
       voucherCodesText: enrichedRecord.voucherCode || "-",
       startTime: enrichedRecord.startTime,
       createdAt: enrichedRecord.createdAt,
-      isResend: isRecordDispatched ? prev.isResend : false,
-      emailType: isRecordDispatched ? prev.emailType : "SEND_CONCESSION",
-      emailTemplate: isRecordDispatched ? prev.emailTemplate : "new"
+      isResend: false,
+      emailType: "SEND_CONCESSION",
+      emailTemplate: "new"
     }));
   };
 
@@ -1723,7 +1723,15 @@ export default function App() {
       return Boolean((recFormId && rFormId === recFormId) || (recId && rId === recId));
     }) || record;
 
-    setEditingRecord(target);
+    handleSelectRecord(target);
+    const recordToEdit: CsvPermitRecord = {
+      ...target,
+      voucherCode: record.voucherCode || target.voucherCode,
+      prePaidCode: record.prePaidCode || target.prePaidCode,
+      status: record.status || target.status,
+      isDispatched: record.isDispatched !== undefined ? record.isDispatched : target.isDispatched
+    };
+    setEditingRecord(recordToEdit);
     setEditingResolvedVoucherCode(resolvedCode || record.voucherCode || "");
     setIsEditModalOpen(true);
   };
@@ -1807,7 +1815,10 @@ export default function App() {
         phone: formatPhoneNumber(updatedRecord.phone || ""),
         email: (updatedRecord.email || "").toLowerCase(),
         voucherCodesText: updatedRecord.voucherCode || prev.voucherCodesText,
-        status: updatedRecord.status
+        status: updatedRecord.status,
+        isResend: false,
+        emailType: "SEND_CONCESSION",
+        emailTemplate: "new"
       }));
     }
 
@@ -2166,6 +2177,7 @@ export default function App() {
           setEditingResolvedVoucherCode("");
         }}
         onSave={handleSaveRecord}
+        onChangeFormData={handleUpdate}
       />
     </div>
   );

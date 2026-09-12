@@ -22,6 +22,7 @@ interface EditRecordModalProps {
   onClose: () => void;
   onSave: (updatedRecord: CsvPermitRecord) => void;
   resolvedVoucherCode?: string;
+  onChangeFormData?: (updates: any) => void;
 }
 
 export function EditRecordModal({
@@ -31,7 +32,8 @@ export function EditRecordModal({
   vouchersDatabase,
   onClose,
   onSave,
-  resolvedVoucherCode
+  resolvedVoucherCode,
+  onChangeFormData
 }: EditRecordModalProps) {
   const [formVrm, setFormVrm] = useState("");
   const [formDriverName, setFormDriverName] = useState("");
@@ -310,6 +312,24 @@ export function EditRecordModal({
 
     setFormVoucherCode(selectedCode);
     setFormStatus("PENDING"); // matches the header's status: "Pending" reset on reassignment
+
+    onChangeFormData?.({
+      id: record?.id,
+      formId: record?.formId,
+      vrm: formVrm || record?.vrm,
+      name: formDriverName || record?.driverName || record?.name,
+      site: formHospital || record?.hospital || record?.site,
+      ward: formWard || record?.ward,
+      validFrom: formDateRequired,
+      validTo: formDateExpiry,
+      dateRequired: formDateRequired,
+      todayDate: formDateRequired,
+      voucherCodesText: selectedCode,
+      status: "Pending",
+      emailType: "RESEND_CONCESSION",
+      isResend: true,
+      emailTemplate: "replacement"
+    });
   };
 
   // Populate form fields whenever `record` changes or modal opens
@@ -342,10 +362,11 @@ export function EditRecordModal({
         initialStatus = "CANCELLED";
       } else if (record.isCancelled || (record.status && record.status.toUpperCase() === "CANCELLED")) {
         initialStatus = "CANCELLED";
+      } else if (record.isDispatched || (record.status && (record.status.toUpperCase() === "SENT" || record.status.toUpperCase() === "DISPATCHED"))) {
+        initialStatus = "SENT";
       } else if (record.status) {
         const sUpper = record.status.toUpperCase();
-        if (sUpper === "SENT" || sUpper === "DISPATCHED") initialStatus = "SENT";
-        else if (sUpper === "UNSENT") initialStatus = "UNSENT";
+        if (sUpper === "UNSENT") initialStatus = "UNSENT";
         else if (sUpper === "CANCELLED") initialStatus = "CANCELLED";
         else initialStatus = "PENDING";
       }
