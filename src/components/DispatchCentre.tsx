@@ -1756,51 +1756,59 @@ export function DispatchCentre({
                           <Pencil className="w-2.5 h-2.5 text-slate-500 dark:text-slate-400" />
                           <span>Edit</span>
                         </button>
-                        <div className="inline-flex items-center justify-center rounded-md overflow-hidden shadow-xs">
-                          <button 
-                            type="button" 
-                            disabled={busyKey === rowKey || isBlocked} 
-                            onClick={() => { if (!isBlocked) handleAction(record, isDispatched, replacementPending); }} 
-                            title={isBlocked ? "This VRM is on the Manage Blocklist — dispatch disabled" : undefined}
-                            className={`flex items-center gap-1 px-2 py-0.5 text-white text-[10px] font-medium transition-colors disabled:opacity-50 whitespace-nowrap ${
-                              isBlocked
-                                ? "bg-slate-400 dark:bg-slate-700 cursor-not-allowed opacity-60"
-                                : "cursor-pointer " + (replacementPending
-                                    ? "bg-amber-600 hover:bg-amber-700 dark:bg-amber-600 dark:hover:bg-amber-700"
-                                    : isDispatched
-                                      ? "bg-[#dc2626] hover:bg-[#b91c1c]"
-                                      : "bg-[#1d75f2] hover:bg-[#1565d8]")
-                            }`}
-                          >
-                            {busyKey === rowKey ? (
-                              <RefreshCw className="w-2.5 h-2.5 animate-spin" />
-                            ) : (
-                              replacementPending ? (
-                                <span className="inline-block animate-spin text-[10px]">⟳</span>
-                              ) : (
-                                <Mail className="w-2.5 h-2.5" />
-                              )
-                            )}
-                            <span>{isBlocked ? "Blocked" : (replacementPending ? "Resend" : (isDispatched ? "Unsend" : "Send"))}</span>
-                          </button>
-                          <button 
-                            type="button" 
-                            disabled={isBlocked}
-                            onClick={() => { if (!isBlocked) onSelectRecord(record); }} 
-                            className={`px-1.5 py-0.5 text-white transition-colors ${
-                              isBlocked
-                                ? "bg-slate-500/80 dark:bg-slate-600/80 cursor-not-allowed opacity-60 border-l border-slate-600"
-                                : "cursor-pointer " + (replacementPending
-                                  ? "bg-amber-700 hover:bg-amber-800 border-l border-amber-600"
-                                  : isDispatched
-                                    ? "bg-[#b91c1c] hover:bg-[#991b1b] border-l border-[#991b1b]"
-                                    : "bg-[#1565d8] hover:bg-[#0f4eb0] border-l border-[#0f4eb0]")
-                            }`}
-                            title={isBlocked ? "Disabled" : "Select Record"}
-                          >
-                            <ChevronDown className="w-2.5 h-2.5" />
-                          </button>
-                        </div>
+                        {(() => {
+                          const splitActionClasses = isBlocked
+                            ? {
+                                main: "bg-slate-400 dark:bg-slate-700 cursor-not-allowed opacity-60",
+                                chevron: "bg-slate-400 dark:bg-slate-700 cursor-not-allowed opacity-60 border-l border-slate-500/50",
+                              }
+                            : replacementPending
+                              ? {
+                                  main: "cursor-pointer bg-amber-600 hover:bg-amber-700 dark:bg-amber-600 dark:hover:bg-amber-700",
+                                  chevron: "cursor-pointer bg-amber-600 hover:bg-amber-700 dark:bg-amber-600 dark:hover:bg-amber-700 border-l border-amber-700/60",
+                                }
+                              : isDispatched
+                                ? {
+                                    main: "cursor-pointer bg-[#dc2626] hover:bg-[#b91c1c]",
+                                    chevron: "cursor-pointer bg-[#dc2626] hover:bg-[#b91c1c] border-l border-[#b91c1c]",
+                                  }
+                                : {
+                                    main: "cursor-pointer bg-[#1d75f2] hover:bg-[#1565d8]",
+                                    chevron: "cursor-pointer bg-[#1d75f2] hover:bg-[#1565d8] border-l border-[#1565d8]",
+                                  };
+
+                          return (
+                            <div className="inline-flex items-center justify-center rounded-md overflow-hidden shadow-xs">
+                              <button 
+                                type="button" 
+                                disabled={busyKey === rowKey || isBlocked} 
+                                onClick={() => { if (!isBlocked) handleAction(record, isDispatched, replacementPending); }} 
+                                title={isBlocked ? "This VRM is on the Manage Blocklist — dispatch disabled" : undefined}
+                                className={`flex items-center gap-1 px-2 py-0.5 text-white text-[10px] font-medium transition-colors disabled:opacity-50 whitespace-nowrap ${splitActionClasses.main}`}
+                              >
+                                {busyKey === rowKey ? (
+                                  <RefreshCw className="w-2.5 h-2.5 animate-spin" />
+                                ) : (
+                                  replacementPending ? (
+                                    <span className="inline-block animate-spin text-[10px]">⟳</span>
+                                  ) : (
+                                    <Mail className="w-2.5 h-2.5" />
+                                  )
+                                )}
+                                <span>{isBlocked ? "Blocked" : (replacementPending ? "Resend" : (isDispatched ? "Unsend" : "Send"))}</span>
+                              </button>
+                              <button 
+                                type="button" 
+                                disabled={isBlocked}
+                                onClick={() => { if (!isBlocked) onSelectRecord(record); }} 
+                                className={`px-1.5 py-0.5 text-white transition-colors ${splitActionClasses.chevron}`}
+                                title={isBlocked ? "Disabled" : "Select Record"}
+                              >
+                                <ChevronDown className="w-2.5 h-2.5" />
+                              </button>
+                            </div>
+                          );
+                        })()}
                       </div>
                     </td>
                   </tr>
