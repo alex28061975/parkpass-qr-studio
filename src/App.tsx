@@ -543,6 +543,7 @@ export default function App() {
   const [showBlocklist, setShowBlocklist] = useState<boolean>(false);
   const [syncToast, setSyncToast] = useState<{ message: string; type: "success" | "info" | "warning" | "error" } | null>(null);
   const [editingRecord, setEditingRecord] = useState<CsvPermitRecord | null>(null);
+  const [editingResolvedVoucherCode, setEditingResolvedVoucherCode] = useState<string>("");
   const [isEditModalOpen, setIsEditModalOpen] = useState<boolean>(false);
 
   const showToast = (message: string, type: "success" | "info" | "warning" | "error" = "success") => {
@@ -1712,7 +1713,7 @@ export default function App() {
     }));
   };
 
-  const handleEditRecord = (record: CsvPermitRecord) => {
+  const handleEditRecord = (record: CsvPermitRecord, resolvedCode?: string) => {
     const recId = record.id !== undefined && record.id !== null ? String(record.id).trim() : "";
     const recFormId = record.formId !== undefined && record.formId !== null ? String(record.formId).trim() : "";
 
@@ -1723,6 +1724,7 @@ export default function App() {
     }) || record;
 
     setEditingRecord(target);
+    setEditingResolvedVoucherCode(resolvedCode || record.voucherCode || "");
     setIsEditModalOpen(true);
   };
 
@@ -2155,11 +2157,13 @@ export default function App() {
       <EditRecordModal
         isOpen={isEditModalOpen}
         record={editingRecord}
+        resolvedVoucherCode={editingResolvedVoucherCode}
         database={enrichedDatabase}
         vouchersDatabase={vouchersDatabase}
         onClose={() => {
           setIsEditModalOpen(false);
           setEditingRecord(null);
+          setEditingResolvedVoucherCode("");
         }}
         onSave={handleSaveRecord}
       />

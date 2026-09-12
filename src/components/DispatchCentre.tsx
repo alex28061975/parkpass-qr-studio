@@ -98,7 +98,7 @@ interface DispatchCentreProps {
   isLoadingHistory?: boolean;
   onBrowseConcessions?: () => void;
   onBrowseVouchers?: () => void;
-  onEditRecord?: (record: CsvPermitRecord) => void;
+  onEditRecord?: (record: CsvPermitRecord, resolvedCode?: string) => void;
 }
 
 const formatDate = (dateStr?: string) => {
@@ -1739,7 +1739,7 @@ export function DispatchCentre({
                                 displayCode && displayCode !== "-" && displayCode !== "CANCELLED" && displayCode !== "BLOCKED"
                                   ? displayCode
                                   : record.voucherCode;
-                              onEditRecord({ ...record, voucherCode: resolvedCode, prePaidCode: resolvedCode });
+                              onEditRecord({ ...record, voucherCode: resolvedCode, prePaidCode: resolvedCode }, resolvedCode);
                             } else {
                               onSelectRecord(record);
                             }

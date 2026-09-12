@@ -11,6 +11,7 @@ interface EditRecordModalProps {
   vouchersDatabase: ParsedVoucherData[];
   onClose: () => void;
   onSave: (updatedRecord: CsvPermitRecord) => void;
+  resolvedVoucherCode?: string;
 }
 
 export function EditRecordModal({
@@ -19,7 +20,8 @@ export function EditRecordModal({
   database,
   vouchersDatabase,
   onClose,
-  onSave
+  onSave,
+  resolvedVoucherCode
 }: EditRecordModalProps) {
   const [formVrm, setFormVrm] = useState("");
   const [formDriverName, setFormDriverName] = useState("");
@@ -31,6 +33,107 @@ export function EditRecordModal({
   const [formDateExpiry, setFormDateExpiry] = useState("");
   const [formVoucherCode, setFormVoucherCode] = useState("");
   const [formStatus, setFormStatus] = useState("PENDING");
+
+  // Resolve any real code found directly on record itself,
+  // ignoring placeholder/display values like "-" or "CANCELLED".
+  const resolvedRecordCode = useMemo(() => {
+    if (!record) return "";
+    const candidates = [
+      record.voucherCode,
+      (record as any).prePaidCode,
+      (record as any).voucherCodesText,
+      (record as any).qrCode,
+      (record as any).serialNumber
+    ];
+    for (const raw of candidates) {
+      if (raw === undefined || raw === null) continue;
+      const first = String(raw).split(/[\n,;\s]+/)[0];
+      const clean = cleanVoucherCodeValue(first).toUpperCase();
+      if (
+        clean &&
+        clean !== "-" &&
+        clean !== "CANCELLED" &&
+        clean !== "PENDING" &&
+        clean !== "BLOCKED" &&
+        clean !== "N/A"
+      ) {
+        return clean;
+      }
+    }
+    return "";
+  }, [record]);
+
+  // Codes currently allocated to THIS record via vouchersDatabase VRM match.
+  // Mirrors DispatchCentre's getRowVoucherStats: a voucher counts as "assigned to
+  // this permit" when its VRM matches the record's VRM inside the date window.
+  const allocatedCodesForThisRecord = useMemo(() => {
+    const set = new Set<string>();
+    if (!record || !vouchersDatabase?.length) return set;
+
+    const recordVrmClean = (record.vrm || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (!recordVrmClean) return set;
+
+    const fromIso = parseDateToISO(record.dateRequired || record.validFrom || "") || "";
+    if (!fromIso) return set;
+    const toIso = record.validTo
+      ? (parseDateToISO(record.validTo) || "")
+      : (record.dateExpiry
+        ? (parseDateToISO(record.dateExpiry) || "")
+        : addDays(fromIso, 6));
+
+    vouchersDatabase.forEach(v => {
+      if (!v || !v.code) return;
+      const vVrmClean = (v.vrm || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+      if (!vVrmClean || vVrmClean !== recordVrmClean) return;
+      if (!isVoucherForPermitDateRange(v, fromIso, toIso)) return;
+      const clean = cleanVoucherCodeValue(v.code).toUpperCase();
+      if (
+        clean &&
+        clean !== "-" &&
+        clean !== "CANCELLED" &&
+        clean !== "PENDING" &&
+        clean !== "BLOCKED" &&
+        clean !== "N/A"
+      ) {
+        set.add(clean);
+      }
+    });
+
+    return set;
+  }, [record, vouchersDatabase]);
+
+  // ⭐ Canonical resolved voucher code with priority:
+  // (a) resolvedVoucherCode prop passed from caller
+  // (b) any real code found in record's own fields (voucherCode, prePaidCode, etc.)
+  // (c) VRM+date-matched voucher from vouchersDatabase
+  const canonicalRecordCode = useMemo(() => {
+    // (a) resolvedVoucherCode prop
+    if (resolvedVoucherCode) {
+      const cleanProp = cleanVoucherCodeValue(resolvedVoucherCode).trim().toUpperCase();
+      if (
+        cleanProp &&
+        cleanProp !== "-" &&
+        cleanProp !== "CANCELLED" &&
+        cleanProp !== "PENDING" &&
+        cleanProp !== "BLOCKED" &&
+        cleanProp !== "N/A"
+      ) {
+        return cleanProp;
+      }
+    }
+
+    // (b) Any real code found on record itself
+    if (resolvedRecordCode) {
+      return resolvedRecordCode;
+    }
+
+    // (c) VRM+date-matched voucher from vouchersDatabase
+    if (allocatedCodesForThisRecord.size > 0) {
+      return Array.from(allocatedCodesForThisRecord)[0];
+    }
+
+    return "";
+  }, [resolvedVoucherCode, resolvedRecordCode, allocatedCodesForThisRecord]);
 
   // Set of voucher codes already assigned to other records in database
   const assignedCodesInOtherRecords = useMemo(() => {
@@ -93,6 +196,8 @@ export function EditRecordModal({
   const activeDateCodes = useMemo(() => {
     if (!formDateRequired || !vouchersDatabase?.length) return [];
     const currentVoucherCode = formVoucherCode.trim().toUpperCase();
+    const underlyingCode = canonicalRecordCode;
+
     return vouchersDatabase.filter(v => {
       if (!isVoucherForPermitDateRange(v, formDateRequired, formDateExpiry || formDateRequired)) return false;
       if (v.isUsed === true || v.status === "used" || v.status === "dispatched") return false;
@@ -103,12 +208,26 @@ export function EditRecordModal({
       // once it's in that field (typed or picked), it shouldn't also appear as a pickable option here
       if (currentVoucherCode && codeUpper === currentVoucherCode) return false;
 
+      // ⭐ Exclude the record's true underlying canonical code
+      if (underlyingCode && codeUpper === underlyingCode) return false;
+
+      // Exclude codes already allocated to this record's VRM in its date window
+      if (allocatedCodesForThisRecord.has(codeUpper)) return false;
+
       // Exclude codes that are already assigned to another permit in database
       if (assignedCodesInOtherRecords.has(codeUpper)) return false;
 
       return true;
     });
-  }, [vouchersDatabase, formDateRequired, formDateExpiry, assignedCodesInOtherRecords, formVoucherCode]);
+  }, [
+    vouchersDatabase,
+    formDateRequired,
+    formDateExpiry,
+    assignedCodesInOtherRecords,
+    formVoucherCode,
+    canonicalRecordCode,
+    allocatedCodesForThisRecord
+  ]);
 
   // Code assignment check
   const codeFields = [
@@ -162,8 +281,10 @@ export function EditRecordModal({
           : (reqDateIso ? addDays(reqDateIso, 6) : ""));
       setFormDateExpiry(expDateIso);
 
-      const code = record.voucherCode || record.prePaidCode || "-";
-      setFormVoucherCode(code === "CANCELLED" ? "-" : code);
+      // ⭐ Use canonical code (priority: resolvedVoucherCode -> record field -> VRM allocation),
+      // falling back to "-" only if canonical code is truly empty
+      const codeToShow = canonicalRecordCode || "-";
+      setFormVoucherCode(codeToShow === "CANCELLED" ? "-" : codeToShow);
 
       let initialStatus = "PENDING";
       if (record.isCancelled || (record.status && record.status.toUpperCase() === "CANCELLED")) {
@@ -177,7 +298,7 @@ export function EditRecordModal({
       }
       setFormStatus(initialStatus);
     }
-  }, [record, isOpen]);
+  }, [record, isOpen, canonicalRecordCode]);
 
   // Handle ESC key to close modal
   useEffect(() => {
