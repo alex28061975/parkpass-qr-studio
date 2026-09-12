@@ -308,8 +308,32 @@ export function DispatchCentre({
       });
     }
 
+    // 4. Include current active formData voucher code if specified
+    if (formData?.voucherCodesText) {
+      const clean = cleanVoucherCodeValue(formData.voucherCodesText).toUpperCase();
+      if (clean && clean !== "-" && clean !== "CANCELLED" && clean !== "PENDING" && clean !== "N/A" && clean !== "BLOCKED") {
+        set.add(clean);
+      }
+    }
+
+    // 5. Include selectedRowRecord active voucher code if specified
+    if (selectedRowRecord?.voucherCode || selectedRowRecord?.prePaidCode) {
+      const clean = cleanVoucherCodeValue(selectedRowRecord.voucherCode || selectedRowRecord.prePaidCode || "").toUpperCase();
+      if (clean && clean !== "-" && clean !== "CANCELLED" && clean !== "PENDING" && clean !== "N/A" && clean !== "BLOCKED") {
+        set.add(clean);
+      }
+    }
+
     return set;
-  }, [database, customVouchers, processingDate, recordCodeMap]);
+  }, [
+    database,
+    customVouchers,
+    processingDate,
+    recordCodeMap,
+    formData?.voucherCodesText,
+    selectedRowRecord?.voucherCode,
+    selectedRowRecord?.prePaidCode
+  ]);
 
   // Active record is either the explicitly clicked row, or matching record from formData, or the first record in database
   const activeRecord = useMemo<CsvPermitRecord | null>(() => {
@@ -583,11 +607,9 @@ export function DispatchCentre({
     return "PENDING";
   };
 
-  // ⭐ PERFORMANCE OPTIMIZATION: Pre-index vouchersDatabase for O(1) table row and sort evaluations
+  // ⭐ Pre-index vouchersDatabase for O(1) table row lookups
   const voucherIndex = useMemo(() => {
     const codeMap = new Map<string, ParsedVoucherData[]>();
-    const periodMap = new Map<string, ParsedVoucherData[]>();
-    const stockCache = new Map<string, { total: number; remaining: number }>();
 
     (vouchersDatabase || []).forEach(v => {
       if (!v || !v.code) return;
@@ -600,48 +622,69 @@ export function DispatchCentre({
         codeMap.set(clean, cList);
       }
       cList.push(v);
-
-      const pKey = `${v.validFrom || ""}_${v.validTo || ""}`;
-      let pList = periodMap.get(pKey);
-      if (!pList) {
-        pList = [];
-        periodMap.set(pKey, pList);
-      }
-      pList.push(v);
     });
 
-    return { codeMap, periodMap, stockCache };
+    return { codeMap };
   }, [vouchersDatabase]);
 
-  const getRowVoucherStats = (permitFromISO: string, permitToISO: string, recordVrm: string) => {
-    const recordVrmClean = (recordVrm || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
-    const cacheKey = `${permitFromISO}_${permitToISO}_${recordVrmClean}`;
-    const cached = voucherIndex.stockCache.get(cacheKey);
+  // Dynamic stock cache keyed by date range, automatically invalidated when assigned codes or active vouchers change
+  const rowVoucherStatsCache = useMemo(() => {
+    return new Map<string, { total: number; remaining: number }>();
+  }, [vouchersDatabase, assignedVoucherCodesSet, unusedVouchersForDay]);
+
+  const getRowVoucherStats = useCallback((permitFromISO: string, permitToISO: string, _recordVrm?: string) => {
+    if (!permitFromISO || !vouchersDatabase || vouchersDatabase.length === 0) {
+      return { total: 0, remaining: 0 };
+    }
+    const validTo = permitToISO || (permitFromISO ? addDays(permitFromISO, 6) : permitFromISO);
+    const cacheKey = `${permitFromISO}_${validTo}`;
+    const cached = rowVoucherStatsCache.get(cacheKey);
     if (cached) return cached;
 
-    const periodBucket = voucherIndex.periodMap.get(`${permitFromISO}_${permitToISO}`);
-    const candidateVouchers = periodBucket ?? (vouchersDatabase || []);
+    // Fast-path: When row date range matches the header's active permit date range,
+    // read directly from the exact same source as the header's Active Date Codes counter
+    const activeValidTo = currentPermitValidToIso || (currentPermitValidFromIso ? addDays(currentPermitValidFromIso, 6) : currentPermitValidFromIso);
+    if (
+      currentPermitValidFromIso &&
+      permitFromISO === currentPermitValidFromIso &&
+      validTo === activeValidTo
+    ) {
+      const stats = {
+        total: totalForThisRange,
+        remaining: unusedVouchersForDay.length
+      };
+      rowVoucherStatsCache.set(cacheKey, stats);
+      return stats;
+    }
 
-    const matchingVouchers = candidateVouchers.filter(v => {
-      const dateMatch = isVoucherForPermitDateRange(v, permitFromISO, permitToISO);
-      if (!dateMatch) return false;
-      const vVrmClean = (v.vrm || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
-      return !vVrmClean || vVrmClean === recordVrmClean;
+    // Canonical calculation reading from vouchersDatabase and assignedVoucherCodesSet, matching unusedVouchersForDay
+    const matchingRangeVouchers = vouchersDatabase.filter(v => {
+      return isVoucherForPermitDateRange(v, permitFromISO, validTo);
     });
 
-    const total = matchingVouchers.length;
+    const total = matchingRangeVouchers.length;
     let remaining = 0;
-    matchingVouchers.forEach(v => {
+    matchingRangeVouchers.forEach(v => {
       if (v.isUsed === true || v.status === "used" || v.status === "dispatched") return;
-      const code = cleanVoucherCodeValue(v.code).toUpperCase();
-      if (!code || code === "-" || code === "CANCELLED" || code === "PENDING") return;
-      if (!assignedVoucherCodesSet.has(code)) remaining++;
+      const codeUpper = cleanVoucherCodeValue(v.code).toUpperCase();
+      if (!codeUpper || codeUpper === "-" || codeUpper === "CANCELLED" || codeUpper === "PENDING") return;
+      if (!assignedVoucherCodesSet.has(codeUpper)) {
+        remaining++;
+      }
     });
 
     const result = { total, remaining };
-    voucherIndex.stockCache.set(cacheKey, result);
+    rowVoucherStatsCache.set(cacheKey, result);
     return result;
-  };
+  }, [
+    rowVoucherStatsCache,
+    vouchersDatabase,
+    assignedVoucherCodesSet,
+    currentPermitValidFromIso,
+    currentPermitValidToIso,
+    totalForThisRange,
+    unusedVouchersForDay.length
+  ]);
 
   const todayISO = useMemo(() => getTodayISO(), []);
 
