@@ -1738,8 +1738,14 @@ export function DispatchCentre({
                               const resolvedCode =
                                 displayCode && displayCode !== "-" && displayCode !== "CANCELLED" && displayCode !== "BLOCKED"
                                   ? displayCode
-                                  : record.voucherCode;
-                              onEditRecord({ ...record, voucherCode: resolvedCode, prePaidCode: resolvedCode }, resolvedCode);
+                                  : "";
+                              const finalVoucherForRecord = isCancelled
+                                ? "CANCELLED"
+                                : (isBlocked ? "BLOCKED" : resolvedCode);
+                              onEditRecord(
+                                { ...record, voucherCode: finalVoucherForRecord, prePaidCode: finalVoucherForRecord },
+                                resolvedCode
+                              );
                             } else {
                               onSelectRecord(record);
                             }

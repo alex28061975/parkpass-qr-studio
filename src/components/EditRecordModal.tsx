@@ -1,6 +1,16 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { X, Check, Calendar, Car, User, Phone, Mail, Building2, MapPin, Tag } from "lucide-react";
-import { CsvPermitRecord, ParsedVoucherData, parseDateToISO, addDays, formatPhoneNumber, isVoucherCodeMatch } from "../utils/csvParser";
+import { 
+  CsvPermitRecord, 
+  ParsedVoucherData, 
+  parseDateToISO, 
+  addDays, 
+  formatPhoneNumber, 
+  isVoucherCodeMatch,
+  isRecordCancelled,
+  getRequestedPermitDateISO
+} from "../utils/csvParser";
+import { isVrmSilentBlockedSync } from "../lib/blocklist";
 import { isVoucherForPermitDateRange, cleanVoucherCodeValue } from "../utils/voucherValidation";
 import { HOSPITAL_SITES } from "../types";
 
@@ -192,6 +202,39 @@ export function EditRecordModal({
     return set;
   }, [database, record]);
 
+  // Check if record is cancelled using canonical helpers
+  const isCancelled = useMemo(() => {
+    if (!record) return false;
+    if (record.isCancelled === true) return true;
+    if (record.status && String(record.status).toLowerCase().includes("cancel")) return true;
+    if (
+      record.voucherCode === "CANCELLED" ||
+      (record as any).prePaidCode === "CANCELLED" ||
+      (record as any).voucherCodesText === "CANCELLED"
+    ) return true;
+    const reqDate = getRequestedPermitDateISO(record) || parseDateToISO(record.dateRequired || record.validFrom) || "";
+    if (isRecordCancelled(record, reqDate, database)) return true;
+    return false;
+  }, [record, database]);
+
+  // Check if record is blocked
+  const isBlocked = useMemo(() => {
+    if (!record) return false;
+    return isVrmSilentBlockedSync(record.vrm);
+  }, [record]);
+
+  // ⭐ Display code for the Voucher Code input:
+  // - CANCELLED → literal text "CANCELLED"
+  // - BLOCKED → literal text "BLOCKED"
+  // - No allocated code at all → "-"
+  // - Otherwise → the canonical resolved code (e.g. "JKBFBZSSM4S5H")
+  const displayVoucherCode = useMemo(() => {
+    if (isCancelled) return "CANCELLED";
+    if (isBlocked) return "BLOCKED";
+    if (canonicalRecordCode) return canonicalRecordCode;
+    return "-";
+  }, [isCancelled, isBlocked, canonicalRecordCode]);
+
   // Options list: filter vouchersDatabase by date range and exclude already-used/cancelled/pending/assigned codes
   const activeDateCodes = useMemo(() => {
     if (!formDateRequired || !vouchersDatabase?.length) return [];
@@ -202,11 +245,19 @@ export function EditRecordModal({
       if (!isVoucherForPermitDateRange(v, formDateRequired, formDateExpiry || formDateRequired)) return false;
       if (v.isUsed === true || v.status === "used" || v.status === "dispatched") return false;
       const codeUpper = cleanVoucherCodeValue(v.code).toUpperCase();
-      if (!codeUpper || codeUpper === "-" || codeUpper === "CANCELLED" || codeUpper === "PENDING") return false;
+      if (!codeUpper || codeUpper === "-" || codeUpper === "CANCELLED" || codeUpper === "PENDING" || codeUpper === "BLOCKED") return false;
 
       // Exclude whatever code is currently sitting in the Voucher Code field —
       // once it's in that field (typed or picked), it shouldn't also appear as a pickable option here
-      if (currentVoucherCode && codeUpper === currentVoucherCode) return false;
+      if (
+        currentVoucherCode &&
+        currentVoucherCode !== "-" &&
+        currentVoucherCode !== "CANCELLED" &&
+        currentVoucherCode !== "BLOCKED" &&
+        codeUpper === currentVoucherCode
+      ) {
+        return false;
+      }
 
       // ⭐ Exclude the record's true underlying canonical code
       if (underlyingCode && codeUpper === underlyingCode) return false;
@@ -250,7 +301,7 @@ export function EditRecordModal({
 
   const handleActiveDateCodeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const selectedCode = cleanVoucherCodeValue(e.target.value).toUpperCase();
-    if (!selectedCode || selectedCode === "-" || selectedCode === "CANCELLED") return;
+    if (!selectedCode || selectedCode === "-" || selectedCode === "CANCELLED" || selectedCode === "BLOCKED") return;
 
     if (assignedCodesInOtherRecords.has(selectedCode)) {
       console.warn(`Voucher ${selectedCode} is already assigned and cannot be reused.`);
@@ -281,13 +332,15 @@ export function EditRecordModal({
           : (reqDateIso ? addDays(reqDateIso, 6) : ""));
       setFormDateExpiry(expDateIso);
 
-      // ⭐ Use canonical code (priority: resolvedVoucherCode -> record field -> VRM allocation),
-      // falling back to "-" only if canonical code is truly empty
-      const codeToShow = canonicalRecordCode || "-";
-      setFormVoucherCode(codeToShow === "CANCELLED" ? "-" : codeToShow);
+      // ⭐ Use displayVoucherCode for the Voucher Code input:
+      // "CANCELLED" for cancelled records, "BLOCKED" for blocked records,
+      // canonicalRecordCode for normal records with allocated codes, or "-"
+      setFormVoucherCode(displayVoucherCode);
 
       let initialStatus = "PENDING";
-      if (record.isCancelled || (record.status && record.status.toUpperCase() === "CANCELLED")) {
+      if (isCancelled) {
+        initialStatus = "CANCELLED";
+      } else if (record.isCancelled || (record.status && record.status.toUpperCase() === "CANCELLED")) {
         initialStatus = "CANCELLED";
       } else if (record.status) {
         const sUpper = record.status.toUpperCase();
@@ -298,7 +351,7 @@ export function EditRecordModal({
       }
       setFormStatus(initialStatus);
     }
-  }, [record, isOpen, canonicalRecordCode]);
+  }, [record, isOpen, canonicalRecordCode, displayVoucherCode, isCancelled]);
 
   // Handle ESC key to close modal
   useEffect(() => {
@@ -328,6 +381,8 @@ export function EditRecordModal({
     const trimmedVrm = formVrm.trim().toUpperCase();
     const cleanVoucher = formVoucherCode.trim().toUpperCase() || "-";
 
+    const isCancelledFinal = formStatus === "CANCELLED" || cleanVoucher === "CANCELLED";
+
     const updatedRecord: CsvPermitRecord = {
       ...record,
       vrm: trimmedVrm,
@@ -346,9 +401,9 @@ export function EditRecordModal({
       voucherCode: cleanVoucher,
       prePaidCode: cleanVoucher,
       voucherCodesText: cleanVoucher,
-      status: formStatus,
-      isCancelled: formStatus === "CANCELLED",
-      isDispatched: formStatus === "SENT"
+      status: isCancelledFinal ? "CANCELLED" : formStatus,
+      isCancelled: isCancelledFinal,
+      isDispatched: !isCancelledFinal && formStatus === "SENT"
     };
 
     onSave(updatedRecord);
