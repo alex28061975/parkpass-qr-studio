@@ -308,32 +308,8 @@ export function DispatchCentre({
       });
     }
 
-    // 4. Include current active formData voucher code if specified
-    if (formData?.voucherCodesText) {
-      const clean = cleanVoucherCodeValue(formData.voucherCodesText).toUpperCase();
-      if (clean && clean !== "-" && clean !== "CANCELLED" && clean !== "PENDING" && clean !== "N/A" && clean !== "BLOCKED") {
-        set.add(clean);
-      }
-    }
-
-    // 5. Include selectedRowRecord active voucher code if specified
-    if (selectedRowRecord?.voucherCode || selectedRowRecord?.prePaidCode) {
-      const clean = cleanVoucherCodeValue(selectedRowRecord.voucherCode || selectedRowRecord.prePaidCode || "").toUpperCase();
-      if (clean && clean !== "-" && clean !== "CANCELLED" && clean !== "PENDING" && clean !== "N/A" && clean !== "BLOCKED") {
-        set.add(clean);
-      }
-    }
-
     return set;
-  }, [
-    database,
-    customVouchers,
-    processingDate,
-    recordCodeMap,
-    formData?.voucherCodesText,
-    selectedRowRecord?.voucherCode,
-    selectedRowRecord?.prePaidCode
-  ]);
+  }, [database, customVouchers, processingDate, recordCodeMap]);
 
   // Active record is either the explicitly clicked row, or matching record from formData, or the first record in database
   const activeRecord = useMemo<CsvPermitRecord | null>(() => {
@@ -627,39 +603,26 @@ export function DispatchCentre({
     return { codeMap };
   }, [vouchersDatabase]);
 
-  // Dynamic stock cache keyed by date range, automatically invalidated when assigned codes or active vouchers change
+  // Dynamic stock cache keyed by date range, automatically invalidated when assigned codes or vouchers change
   const rowVoucherStatsCache = useMemo(() => {
     return new Map<string, { total: number; remaining: number }>();
-  }, [vouchersDatabase, assignedVoucherCodesSet, unusedVouchersForDay]);
+  }, [vouchersDatabase, assignedVoucherCodesSet]);
 
-  const getRowVoucherStats = useCallback((permitFromISO: string, permitToISO: string, _recordVrm?: string) => {
+  const getRowVoucherStats = useCallback((permitFromISO: string, permitToISO: string, recordVrm?: string) => {
     if (!permitFromISO || !vouchersDatabase || vouchersDatabase.length === 0) {
       return { total: 0, remaining: 0 };
     }
     const validTo = permitToISO || (permitFromISO ? addDays(permitFromISO, 6) : permitFromISO);
-    const cacheKey = `${permitFromISO}_${validTo}`;
+    const recordVrmClean = (recordVrm || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+    const cacheKey = `${permitFromISO}_${validTo}_${recordVrmClean}`;
     const cached = rowVoucherStatsCache.get(cacheKey);
     if (cached) return cached;
 
-    // Fast-path: When row date range matches the header's active permit date range,
-    // read directly from the exact same source as the header's Active Date Codes counter
-    const activeValidTo = currentPermitValidToIso || (currentPermitValidFromIso ? addDays(currentPermitValidFromIso, 6) : currentPermitValidFromIso);
-    if (
-      currentPermitValidFromIso &&
-      permitFromISO === currentPermitValidFromIso &&
-      validTo === activeValidTo
-    ) {
-      const stats = {
-        total: totalForThisRange,
-        remaining: unusedVouchersForDay.length
-      };
-      rowVoucherStatsCache.set(cacheKey, stats);
-      return stats;
-    }
-
-    // Canonical calculation reading from vouchersDatabase and assignedVoucherCodesSet, matching unusedVouchersForDay
     const matchingRangeVouchers = vouchersDatabase.filter(v => {
-      return isVoucherForPermitDateRange(v, permitFromISO, validTo);
+      const dateMatch = isVoucherForPermitDateRange(v, permitFromISO, validTo);
+      if (!dateMatch) return false;
+      const vVrmClean = (v.vrm || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+      return !vVrmClean || vVrmClean === recordVrmClean;
     });
 
     const total = matchingRangeVouchers.length;
@@ -676,15 +639,7 @@ export function DispatchCentre({
     const result = { total, remaining };
     rowVoucherStatsCache.set(cacheKey, result);
     return result;
-  }, [
-    rowVoucherStatsCache,
-    vouchersDatabase,
-    assignedVoucherCodesSet,
-    currentPermitValidFromIso,
-    currentPermitValidToIso,
-    totalForThisRange,
-    unusedVouchersForDay.length
-  ]);
+  }, [rowVoucherStatsCache, vouchersDatabase, assignedVoucherCodesSet]);
 
   const todayISO = useMemo(() => getTodayISO(), []);
 
