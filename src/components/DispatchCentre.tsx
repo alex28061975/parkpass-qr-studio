@@ -1133,7 +1133,9 @@ export function DispatchCentre({
           {/* Right: Active Date Codes */}
           <div className="flex items-center gap-2 whitespace-nowrap shrink-0 ml-auto lg:ml-0">
             <label 
-              className="text-xs sm:text-sm font-medium text-[#10B981] whitespace-nowrap shrink-0"
+              className={`text-xs sm:text-sm font-medium whitespace-nowrap shrink-0 ${
+                isRangeStockLow ? "text-[#b91c1c]" : "text-[#15803d]"
+              }`}
             >
               Active Date Codes ({unusedVouchersForDay.length}):
             </label>
@@ -1141,7 +1143,11 @@ export function DispatchCentre({
               value={unusedVouchersForDay.some(v => cleanVoucherCodeValue(v.code).toUpperCase() === cleanVoucherCodeValue(formData?.voucherCodesText).toUpperCase()) ? cleanVoucherCodeValue(formData?.voucherCodesText).toUpperCase() : ""}
               onChange={handleActiveDateCodeChange}
               disabled={unusedVouchersForDay.length === 0}
-              className="h-8 px-2.5 py-1 bg-[#D1FAE5] text-[#065F46] border border-[#34D399] rounded-lg text-xs font-mono font-bold focus:outline-none transition shrink-0 cursor-pointer"
+              className={`h-8 px-2.5 py-1 border rounded-lg text-xs font-mono font-bold focus:outline-none transition shrink-0 ${
+                isRangeStockLow
+                  ? "bg-[#fee2e2] text-[#b91c1c] border-[#dc2626] cursor-pointer"
+                  : "bg-[#dcfce7] text-[#15803d] border-[#16a34a] cursor-pointer"
+              }`}
             >
               <option value="" disabled className="font-mono font-normal text-slate-700 bg-white">
                 {vouchersDatabase.length === 0
@@ -1725,7 +1731,15 @@ export function DispatchCentre({
                           onClick={(e) => {
                             e.stopPropagation();
                             if (onEditRecord) {
-                              onEditRecord(record);
+                              // Pass the actually-displayed voucher code (resolved via recordCodeMap),
+                              // not just the raw record.voucherCode field, which is often blank —
+                              // the Edit modal needs the real assigned code to filter it out of
+                              // its own Active Date Codes list correctly.
+                              const resolvedCode =
+                                displayCode && displayCode !== "-" && displayCode !== "CANCELLED" && displayCode !== "BLOCKED"
+                                  ? displayCode
+                                  : record.voucherCode;
+                              onEditRecord({ ...record, voucherCode: resolvedCode, prePaidCode: resolvedCode });
                             } else {
                               onSelectRecord(record);
                             }

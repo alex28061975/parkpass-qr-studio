@@ -32,16 +32,83 @@ export function EditRecordModal({
   const [formVoucherCode, setFormVoucherCode] = useState("");
   const [formStatus, setFormStatus] = useState("PENDING");
 
-  // Options list: filter vouchersDatabase by date range and exclude already-used/cancelled/pending codes
+  // Set of voucher codes already assigned to other records in database
+  const assignedCodesInOtherRecords = useMemo(() => {
+    const set = new Set<string>();
+    if (!database?.length) return set;
+
+    const codeFields = [
+      "voucherCode", "prePaidCode", "qrCode", "voucherCodesText", "serialNumber",
+      "voucher", "code", "qrOverride", "Voucher Code", "VOUCHER CODE",
+      "Pre-Paid Code", "Pre Paid Code", "QR Code", "QR CODE"
+    ];
+
+    database.forEach((r) => {
+      if (!r) return;
+      // Skip the record currently being edited so its own code isn't blocked
+      if (record) {
+        const id1 = String(r.id ?? "").trim();
+        const formId1 = String(r.formId ?? "").trim();
+        const id2 = String(record.id ?? "").trim();
+        const formId2 = String(record.formId ?? "").trim();
+        if (id1 || formId1 || id2 || formId2) {
+          if (
+            (id1 && id2 && id1 === id2) ||
+            (formId1 && formId2 && formId1 === formId2) ||
+            (id1 && formId2 && id1 === formId2) ||
+            (formId1 && id2 && formId1 === id2)
+          ) {
+            return;
+          }
+        } else {
+          const vrm1 = (r.vrm || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+          const vrm2 = (record.vrm || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+          if (vrm1 && vrm2 && vrm1 === vrm2) {
+            const d1 = parseDateToISO(r.validFrom || r.dateRequired) || "";
+            const d2 = parseDateToISO(record.validFrom || record.dateRequired) || "";
+            if (d1 && d2 && d1 === d2) return;
+          }
+        }
+      }
+
+      codeFields.forEach((field) => {
+        const raw = (r as any)[field];
+        if (raw !== undefined && raw !== null) {
+          String(raw)
+            .split(/[\n,;\s]+/)
+            .forEach((part) => {
+              const clean = cleanVoucherCodeValue(part).toUpperCase();
+              if (clean && clean !== "-" && clean !== "CANCELLED" && clean !== "PENDING" && clean !== "BLOCKED") {
+                set.add(clean);
+              }
+            });
+        }
+      });
+    });
+
+    return set;
+  }, [database, record]);
+
+  // Options list: filter vouchersDatabase by date range and exclude already-used/cancelled/pending/assigned codes
   const activeDateCodes = useMemo(() => {
     if (!formDateRequired || !vouchersDatabase?.length) return [];
+    const currentVoucherCode = formVoucherCode.trim().toUpperCase();
     return vouchersDatabase.filter(v => {
       if (!isVoucherForPermitDateRange(v, formDateRequired, formDateExpiry || formDateRequired)) return false;
       if (v.isUsed === true || v.status === "used" || v.status === "dispatched") return false;
       const codeUpper = cleanVoucherCodeValue(v.code).toUpperCase();
-      return !!codeUpper && codeUpper !== "-" && codeUpper !== "CANCELLED" && codeUpper !== "PENDING";
+      if (!codeUpper || codeUpper === "-" || codeUpper === "CANCELLED" || codeUpper === "PENDING") return false;
+
+      // Exclude whatever code is currently sitting in the Voucher Code field —
+      // once it's in that field (typed or picked), it shouldn't also appear as a pickable option here
+      if (currentVoucherCode && codeUpper === currentVoucherCode) return false;
+
+      // Exclude codes that are already assigned to another permit in database
+      if (assignedCodesInOtherRecords.has(codeUpper)) return false;
+
+      return true;
     });
-  }, [vouchersDatabase, formDateRequired, formDateExpiry]);
+  }, [vouchersDatabase, formDateRequired, formDateExpiry, assignedCodesInOtherRecords, formVoucherCode]);
 
   // Code assignment check
   const codeFields = [
@@ -66,15 +133,7 @@ export function EditRecordModal({
     const selectedCode = cleanVoucherCodeValue(e.target.value).toUpperCase();
     if (!selectedCode || selectedCode === "-" || selectedCode === "CANCELLED") return;
 
-    // exclude the record's own current code from the "already assigned" check,
-    // since re-picking its own code should always be allowed
-    const alreadyAssigned =
-      (database || []).some(r => {
-        if (record && (r.id === record.id || r.formId === record.formId)) return false;
-        return isCodeAssigned(r, selectedCode);
-      }) || isCodeAssigned(record, selectedCode);
-
-    if (alreadyAssigned) {
+    if (assignedCodesInOtherRecords.has(selectedCode)) {
       console.warn(`Voucher ${selectedCode} is already assigned and cannot be reused.`);
       return;
     }
@@ -371,7 +430,7 @@ export function EditRecordModal({
                 Active Date Codes ({activeDateCodes.length})
               </label>
               <select
-                value=""
+                value={activeDateCodes.some(v => cleanVoucherCodeValue(v.code).toUpperCase() === formVoucherCode) ? formVoucherCode : ""}
                 onChange={handleActiveDateCodeChange}
                 disabled={activeDateCodes.length === 0}
                 className="w-full px-3 py-2 text-sm font-mono rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#071728] text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
