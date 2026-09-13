@@ -152,12 +152,18 @@ export function resolveDateExpiry(rawDate: string, rawExpiry: string): string {
   return "";
 }
 
-export function formatDate(d: string): string {
-  if (!d) return "";
-  const iso = parseDateToISO(d);
-  if (!iso) return d;
-  const parts = iso.split("-");
-  return parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : d;
+export function formatDate(d?: any): string {
+  try {
+    if (d === undefined || d === null) return "";
+    const s = String(d).trim();
+    if (!s || s === "-" || s === "—" || s.toLowerCase() === "null" || s.toLowerCase() === "undefined") return "";
+    const iso = parseDateToISO(s);
+    if (!iso) return s;
+    const parts = iso.split("-");
+    return parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : s;
+  } catch (e) {
+    return "";
+  }
 }
 
 export function toTitleCase(str: string): string {
@@ -219,67 +225,92 @@ export interface CsvPermitRecord {
   replacementCount?: number;
 }
 
-export function getNumericFormId(record: CsvPermitRecord): number {
-  const val = record.formId !== undefined && record.formId !== null && record.formId !== "" ? record.formId : record.id;
-  if (typeof val === "number" && !isNaN(val)) return Math.floor(val);
-  const formatted = formatFormId(val);
-  if (!formatted || formatted === "-") return 0;
-  const match = String(formatted).match(/\d+/);
-  if (match) {
-    const num = parseInt(match[0], 10);
-    return isNaN(num) ? 0 : num;
-  }
+export function getNumericFormId(record?: any): number {
+  if (!record) return 0;
+  try {
+    const val = record?.formId !== undefined && record?.formId !== null && record?.formId !== "" ? record.formId : record?.id;
+    if (typeof val === "number" && !isNaN(val)) return Math.floor(val);
+    const formatted = formatFormId(val);
+    if (!formatted || formatted === "-") return 0;
+    const match = String(formatted).match(/\d+/);
+    if (match) {
+      const num = parseInt(match[0], 10);
+      return isNaN(num) ? 0 : num;
+    }
+  } catch (e) {}
   return 0;
 }
 
 export function sortRecordsBySubmissionTimeDesc(records: CsvPermitRecord[]): CsvPermitRecord[] {
+  if (!records || !Array.isArray(records)) return [];
   return [...records].sort((a, b) => {
-    const timeA = extractRecordSubmissionTimeMs(a);
-    const timeB = extractRecordSubmissionTimeMs(b);
-    if (timeA > 0 && timeB > 0 && timeA !== timeB) {
-      return timeB - timeA;
-    }
-    if (timeA > 0 && (!timeB || timeB === 0)) return -1;
-    if (timeB > 0 && (!timeA || timeA === 0)) return 1;
+    if (!a && !b) return 0;
+    if (!a) return 1;
+    if (!b) return -1;
+    try {
+      const timeA = extractRecordSubmissionTimeMs(a) || 0;
+      const timeB = extractRecordSubmissionTimeMs(b) || 0;
+      if (timeA > 0 && timeB > 0 && timeA !== timeB) {
+        return timeB - timeA;
+      }
+      if (timeA > 0 && (!timeB || timeB === 0)) return -1;
+      if (timeB > 0 && (!timeA || timeA === 0)) return 1;
 
-    const dateA = parseDateToISO(a.dateRequired || a.validFrom || "");
-    const dateB = parseDateToISO(b.dateRequired || b.validFrom || "");
-    if (dateA && dateB && dateA !== dateB) {
-      return dateB.localeCompare(dateA);
-    }
+      const dateA = parseDateToISO(a?.dateRequired || a?.validFrom || "") || "";
+      const dateB = parseDateToISO(b?.dateRequired || b?.validFrom || "") || "";
+      if (dateA && dateB && dateA !== dateB) {
+        return dateB.localeCompare(dateA);
+      }
 
-    return getNumericFormId(b) - getNumericFormId(a);
+      return (getNumericFormId(b) || 0) - (getNumericFormId(a) || 0);
+    } catch (e) {
+      return 0;
+    }
   });
 }
 
 export function sortRecordsByFormIdDesc(records: CsvPermitRecord[]): CsvPermitRecord[] {
+  if (!records || !Array.isArray(records)) return [];
   return [...records].sort((a, b) => {
-    const idA = getNumericFormId(a);
-    const idB = getNumericFormId(b);
-    if (idA !== idB) {
-      return idB - idA;
-    }
+    if (!a && !b) return 0;
+    if (!a) return 1;
+    if (!b) return -1;
+    try {
+      const idA = getNumericFormId(a) || 0;
+      const idB = getNumericFormId(b) || 0;
+      if (idA !== idB) {
+        return idB - idA;
+      }
 
-    const timeA = extractRecordSubmissionTimeMs(a);
-    const timeB = extractRecordSubmissionTimeMs(b);
-    if (timeA > 0 && timeB > 0 && timeA !== timeB) {
-      return timeB - timeA;
-    }
-    if (timeA > 0 && (!timeB || timeB === 0)) return -1;
-    if (timeB > 0 && (!timeA || timeA === 0)) return 1;
+      const timeA = extractRecordSubmissionTimeMs(a) || 0;
+      const timeB = extractRecordSubmissionTimeMs(b) || 0;
+      if (timeA > 0 && timeB > 0 && timeA !== timeB) {
+        return timeB - timeA;
+      }
+      if (timeA > 0 && (!timeB || timeB === 0)) return -1;
+      if (timeB > 0 && (!timeA || timeA === 0)) return 1;
 
-    const dateA = parseDateToISO(a.dateRequired || a.validFrom || "");
-    const dateB = parseDateToISO(b.dateRequired || b.validFrom || "");
-    if (dateA && dateB && dateA !== dateB) {
-      return dateB.localeCompare(dateA);
-    }
+      const dateA = parseDateToISO(a?.dateRequired || a?.validFrom || "") || "";
+      const dateB = parseDateToISO(b?.dateRequired || b?.validFrom || "") || "";
+      if (dateA && dateB && dateA !== dateB) {
+        return dateB.localeCompare(dateA);
+      }
 
-    return 0;
+      return 0;
+    } catch (e) {
+      return 0;
+    }
   });
 }
 
 export function sortRecordsByFormIdAsc(records: CsvPermitRecord[]): CsvPermitRecord[] {
-  return [...records].sort((a, b) => getNumericFormId(a) - getNumericFormId(b));
+  if (!records || !Array.isArray(records)) return [];
+  return [...records].sort((a, b) => {
+    if (!a && !b) return 0;
+    if (!a) return 1;
+    if (!b) return -1;
+    return (getNumericFormId(a) || 0) - (getNumericFormId(b) || 0);
+  });
 }
 
 export function getMaxFormId(records: CsvPermitRecord[]): number {
@@ -330,128 +361,143 @@ export function formatExportCreatedAt(createdAt?: string, created_at?: string, s
   return "-";
 }
 
-export function formatSubmittedDateTime(record: CsvPermitRecord): string {
+export function formatSubmittedDateTime(record?: any): string {
   if (!record) return "-";
 
-  const candidate = 
-    (record.completionTime && String(record.completionTime).trim() && String(record.completionTime).trim() !== "-")
-      ? String(record.completionTime).trim()
-      : ((record as any).completion_time && String((record as any).completion_time).trim() && String((record as any).completion_time).trim() !== "-")
-        ? String((record as any).completion_time).trim()
-        : (record.startTime && String(record.startTime).trim() && String(record.startTime).trim() !== "-")
-          ? String(record.startTime).trim()
-          : ((record as any).start_time && String((record as any).start_time).trim() && String((record as any).start_time).trim() !== "-")
-            ? String((record as any).start_time).trim()
-            : (record.createdAt && String(record.createdAt).trim() && String(record.createdAt).trim() !== "-")
-              ? String(record.createdAt).trim()
-              : ((record as any).created_at && String((record as any).created_at).trim() && String((record as any).created_at).trim() !== "-")
-                ? String((record as any).created_at).trim()
-                : "";
+  try {
+    const candidate = 
+      (record?.completionTime && String(record.completionTime).trim() && String(record.completionTime).trim() !== "-")
+        ? String(record.completionTime).trim()
+        : ((record as any)?.completion_time && String((record as any).completion_time).trim() && String((record as any).completion_time).trim() !== "-")
+          ? String((record as any).completion_time).trim()
+          : (record?.startTime && String(record.startTime).trim() && String(record.startTime).trim() !== "-")
+            ? String(record.startTime).trim()
+            : ((record as any)?.start_time && String((record as any).start_time).trim() && String((record as any).start_time).trim() !== "-")
+              ? String((record as any).start_time).trim()
+              : (record?.createdAt && String(record.createdAt).trim() && String(record.createdAt).trim() !== "-")
+                ? String(record.createdAt).trim()
+                : ((record as any)?.created_at && String((record as any).created_at).trim() && String((record as any).created_at).trim() !== "-")
+                  ? String((record as any).created_at).trim()
+                  : "";
 
-  const effectiveStr = String(candidate || "").trim();
+    const effectiveStr = String(candidate || "").trim();
 
-  if (!effectiveStr || effectiveStr === "-" || effectiveStr.toLowerCase() === "null" || effectiveStr.toLowerCase() === "undefined") {
+    if (!effectiveStr || effectiveStr === "-" || effectiveStr.toLowerCase() === "null" || effectiveStr.toLowerCase() === "undefined") {
+      return "-";
+    }
+
+    const ukMatch = effectiveStr.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?(?:\s*([AP]M))?)?/i);
+    if (ukMatch) {
+      let day = parseInt(ukMatch[1], 10);
+      let month = parseInt(ukMatch[2], 10);
+      let yearStr = ukMatch[3];
+      if (yearStr.length === 2) {
+        const yy = parseInt(yearStr, 10);
+        yearStr = (yy >= 70 ? "19" : "20") + yearStr;
+      }
+      const year = parseInt(yearStr, 10);
+      let hours = ukMatch[4] ? parseInt(ukMatch[4], 10) : 0;
+      const minutes = ukMatch[5] ? parseInt(ukMatch[5], 10) : 0;
+      const seconds = ukMatch[6] ? parseInt(ukMatch[6], 10) : 0;
+      const ampm = ukMatch[7];
+
+      if (ampm) {
+        if (/PM/i.test(ampm) && hours < 12) hours += 12;
+        if (/AM/i.test(ampm) && hours === 12) hours = 0;
+      }
+
+      if (month > 12 && day <= 12) {
+        const temp = day;
+        day = month;
+        month = temp;
+      }
+
+      const dd = String(day).padStart(2, "0");
+      const mm = String(month).padStart(2, "0");
+      const yyyy = String(year).padStart(4, "0");
+      const hh = String(hours).padStart(2, "0");
+      const min = String(minutes).padStart(2, "0");
+      const ss = String(seconds).padStart(2, "0");
+
+      return `${dd}/${mm}/${yyyy} ${hh}:${min}:${ss}`;
+    }
+
+    const isoMatch = effectiveStr.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?(?:\s*([AP]M))?)?/i);
+    if (isoMatch) {
+      const year = parseInt(isoMatch[1], 10);
+      const month = parseInt(isoMatch[2], 10);
+      const day = parseInt(isoMatch[3], 10);
+      let hours = isoMatch[4] ? parseInt(isoMatch[4], 10) : 0;
+      const minutes = isoMatch[5] ? parseInt(isoMatch[5], 10) : 0;
+      const seconds = isoMatch[6] ? parseInt(isoMatch[6], 10) : 0;
+      const ampm = isoMatch[7];
+
+      if (ampm) {
+        if (/PM/i.test(ampm) && hours < 12) hours += 12;
+        if (/AM/i.test(ampm) && hours === 12) hours = 0;
+      }
+
+      const dd = String(day).padStart(2, "0");
+      const mm = String(month).padStart(2, "0");
+      const yyyy = String(year).padStart(4, "0");
+      const hh = String(hours).padStart(2, "0");
+      const min = String(minutes).padStart(2, "0");
+      const ss = String(seconds).padStart(2, "0");
+
+      return `${dd}/${mm}/${yyyy} ${hh}:${min}:${ss}`;
+    }
+
+    const d = new Date(effectiveStr);
+    if (!isNaN(d.getTime()) && d.getTime() > 0) {
+      const dd = String(d.getDate()).padStart(2, "0");
+      const mm = String(d.getMonth() + 1).padStart(2, "0");
+      const yyyy = d.getFullYear();
+      const hh = String(d.getHours()).padStart(2, "0");
+      const min = String(d.getMinutes()).padStart(2, "0");
+      const ss = String(d.getSeconds()).padStart(2, "0");
+      return `${dd}/${mm}/${yyyy} ${hh}:${min}:${ss}`;
+    }
+
+    return effectiveStr;
+  } catch (e) {
     return "-";
   }
-
-  const ukMatch = effectiveStr.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?(?:\s*([AP]M))?)?/i);
-  if (ukMatch) {
-    let day = parseInt(ukMatch[1], 10);
-    let month = parseInt(ukMatch[2], 10);
-    const year = parseInt(ukMatch[3], 10);
-    let hours = ukMatch[4] ? parseInt(ukMatch[4], 10) : 0;
-    const minutes = ukMatch[5] ? parseInt(ukMatch[5], 10) : 0;
-    const seconds = ukMatch[6] ? parseInt(ukMatch[6], 10) : 0;
-    const ampm = ukMatch[7];
-
-    if (ampm) {
-      if (/PM/i.test(ampm) && hours < 12) hours += 12;
-      if (/AM/i.test(ampm) && hours === 12) hours = 0;
-    }
-
-    if (month > 12 && day <= 12) {
-      const temp = day;
-      day = month;
-      month = temp;
-    }
-
-    const dd = String(day).padStart(2, "0");
-    const mm = String(month).padStart(2, "0");
-    const yyyy = String(year).padStart(4, "0");
-    const hh = String(hours).padStart(2, "0");
-    const min = String(minutes).padStart(2, "0");
-    const ss = String(seconds).padStart(2, "0");
-
-    return `${dd}/${mm}/${yyyy} ${hh}:${min}:${ss}`;
-  }
-
-  const isoMatch = effectiveStr.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?(?:\s*([AP]M))?)?/i);
-  if (isoMatch) {
-    const year = parseInt(isoMatch[1], 10);
-    const month = parseInt(isoMatch[2], 10);
-    const day = parseInt(isoMatch[3], 10);
-    let hours = isoMatch[4] ? parseInt(isoMatch[4], 10) : 0;
-    const minutes = isoMatch[5] ? parseInt(isoMatch[5], 10) : 0;
-    const seconds = isoMatch[6] ? parseInt(isoMatch[6], 10) : 0;
-    const ampm = isoMatch[7];
-
-    if (ampm) {
-      if (/PM/i.test(ampm) && hours < 12) hours += 12;
-      if (/AM/i.test(ampm) && hours === 12) hours = 0;
-    }
-
-    const dd = String(day).padStart(2, "0");
-    const mm = String(month).padStart(2, "0");
-    const yyyy = String(year).padStart(4, "0");
-    const hh = String(hours).padStart(2, "0");
-    const min = String(minutes).padStart(2, "0");
-    const ss = String(seconds).padStart(2, "0");
-
-    return `${dd}/${mm}/${yyyy} ${hh}:${min}:${ss}`;
-  }
-
-  const d = new Date(effectiveStr);
-  if (!isNaN(d.getTime()) && d.getTime() > 0) {
-    const dd = String(d.getDate()).padStart(2, "0");
-    const mm = String(d.getMonth() + 1).padStart(2, "0");
-    const yyyy = d.getFullYear();
-    const hh = String(d.getHours()).padStart(2, "0");
-    const min = String(d.getMinutes()).padStart(2, "0");
-    const ss = String(d.getSeconds()).padStart(2, "0");
-    return `${dd}/${mm}/${yyyy} ${hh}:${min}:${ss}`;
-  }
-
-  return effectiveStr;
 }
 
-export function getRecordSubmittedTimeMs(record: CsvPermitRecord): number {
+export function getRecordSubmittedTimeMs(record?: any): number {
   if (!record) return 0;
-  const candidate = 
-    (record.completionTime && String(record.completionTime).trim() && String(record.completionTime).trim() !== "-")
-      ? String(record.completionTime).trim()
-      : ((record as any).completion_time && String((record as any).completion_time).trim() && String((record as any).completion_time).trim() !== "-")
-        ? String((record as any).completion_time).trim()
-        : (record.startTime && String(record.startTime).trim() && String(record.startTime).trim() !== "-")
-          ? String(record.startTime).trim()
-          : ((record as any).start_time && String((record as any).start_time).trim() && String((record as any).start_time).trim() !== "-")
-            ? String((record as any).start_time).trim()
-            : (record.createdAt && String(record.createdAt).trim() && String(record.createdAt).trim() !== "-")
-              ? String(record.createdAt).trim()
-              : ((record as any).created_at && String((record as any).created_at).trim() && String((record as any).created_at).trim() !== "-")
-                ? String((record as any).created_at).trim()
-                : "";
-  if (!candidate || candidate === "-" || candidate.toLowerCase() === "null" || candidate.toLowerCase() === "undefined") return 0;
+  try {
+    const candidate = 
+      (record?.completionTime && String(record.completionTime).trim() && String(record.completionTime).trim() !== "-")
+        ? String(record.completionTime).trim()
+        : ((record as any)?.completion_time && String((record as any).completion_time).trim() && String((record as any).completion_time).trim() !== "-")
+          ? String((record as any).completion_time).trim()
+          : (record?.startTime && String(record.startTime).trim() && String(record.startTime).trim() !== "-")
+            ? String(record.startTime).trim()
+            : ((record as any)?.start_time && String((record as any).start_time).trim() && String((record as any).start_time).trim() !== "-")
+              ? String((record as any).start_time).trim()
+              : (record?.createdAt && String(record.createdAt).trim() && String(record.createdAt).trim() !== "-")
+                ? String(record.createdAt).trim()
+                : ((record as any)?.created_at && String((record as any).created_at).trim() && String((record as any).created_at).trim() !== "-")
+                  ? String((record as any).created_at).trim()
+                  : "";
+    if (!candidate || candidate === "-" || candidate.toLowerCase() === "null" || candidate.toLowerCase() === "undefined") return 0;
 
-  const recDateISO = parseDateToISO(record.dateRequired || record.validFrom || record.todayDate || "") || "";
-  const ms = parseFullDateTimeMs(String(candidate), recDateISO);
-  if (ms !== null && ms > 0) return ms;
+    const directTs = safeParseDateToTimestamp(candidate);
+    if (directTs !== null && directTs > 0) return directTs;
 
-  const d = new Date(String(candidate));
-  if (!isNaN(d.getTime()) && d.getTime() > 0) return d.getTime();
-  return 0;
+    const recDateISO = parseDateToISO(record?.dateRequired || record?.validFrom || record?.todayDate || "") || "";
+    const ms = parseFullDateTimeMs(String(candidate), recDateISO);
+    if (ms !== null && ms > 0) return ms;
+
+    return 0;
+  } catch (e) {
+    return 0;
+  }
 }
 
-export function getRecordSubmittedDateISO(record: CsvPermitRecord): string {
+export function getRecordSubmittedDateISO(record?: any): string {
+  if (!record) return "";
   const ms = getRecordSubmittedTimeMs(record);
   if (!ms || ms <= 0) return "";
   const d = new Date(ms);
@@ -1431,11 +1477,17 @@ export function isDateRequiredOutsideValidWindow(dateRequiredStr?: string, refer
   if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return false;
 
   const refIso = referenceDateStr ? parseDateToISO(String(referenceDateStr)) : "";
-  const today = /^\d{4}-\d{2}-\d{2}$/.test(refIso) ? new Date(refIso + "T00:00:00") : new Date();
-  today.setHours(0, 0, 0, 0);
+  let today: Date;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(refIso)) {
+    const [ry, rm, rd] = refIso.split("-").map(Number);
+    today = new Date(ry, rm - 1, rd, 0, 0, 0, 0);
+  } else {
+    const now = new Date();
+    today = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+  }
 
-  const parkingDate = new Date(iso + "T00:00:00");
-  parkingDate.setHours(0, 0, 0, 0);
+  const [py, pm, pd] = iso.split("-").map(Number);
+  const parkingDate = new Date(py, pm - 1, pd, 0, 0, 0, 0);
 
   const daysDiff = Math.floor((parkingDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
   return daysDiff < -7 || daysDiff > 1;
@@ -1470,82 +1522,203 @@ export function parseUKDate(dateStr: string): string {
   return s;
 }
 
-export function parseDateToISO(dateStr: string): string {
-  if (!dateStr) return "";
-  let s = String(dateStr).trim();
-  if (!s) return "";
-
-  s = s.split(/[\sT]+/)[0].trim();
-  
-  const ymdMatch = s.match(/^(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})/);
-  if (ymdMatch) {
-    const year = ymdMatch[1];
-    const month = String(parseInt(ymdMatch[2], 10)).padStart(2, '0');
-    const day = String(parseInt(ymdMatch[3], 10)).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  }
-
-  if (!isNaN(Number(s)) && Number(s) > 30000 && Number(s) < 60000) {
-    const d = new Date((Number(s) - 25569) * 86400 * 1000);
-    if (!isNaN(d.getTime())) {
-      const year = d.getUTCFullYear();
-      const month = String(d.getUTCMonth() + 1).padStart(2, '0');
-      const day = String(d.getUTCDate()).padStart(2, '0');
-      return `${year}-${month}-${day}`;
-    }
-  }
-
-  let dateFormat = "UK";
+/**
+ * Safely parses various date/time formats into an epoch timestamp (ms) using local timezone methods.
+ * Safely handles:
+ * - DD/MM/YYYY HH:mm:ss, DD/MM/YYYY HH:mm, DD/MM/YYYY
+ * - DD-MM-YYYY or DD.MM.YYYY
+ * - YYYY-MM-DD HH:mm:ss, YYYY-MM-DD
+ * - ISO 8601 strings (e.g. 2026-09-13T01:12:32.000Z)
+ * - Numeric epoch ms or Excel serial dates
+ * Returns null if the value is missing, empty, or cannot be parsed.
+ */
+export function safeParseDateToTimestamp(raw?: any): number | null {
   try {
-    const saved = safeLocalStorage.getItem("concessions_date_format");
-    if (saved === "US" || saved === "UK") {
-      dateFormat = saved;
-    } else {
-      const resolved = safeLocalStorage.getItem("concessions_date_format_resolved");
-      if (resolved === "US") {
-        dateFormat = "US";
+    if (raw === undefined || raw === null || raw === "") return null;
+
+    if (typeof raw === "number") {
+      if (isNaN(raw) || raw <= 0) return null;
+      if (raw > 30000 && raw < 60000) {
+        const ms = (raw - 25569) * 86400 * 1000;
+        return isNaN(ms) ? null : ms;
       }
+      return raw;
+    }
+
+    const s = String(raw).trim();
+    if (!s || s === "-" || s === "—" || s.toLowerCase() === "null" || s.toLowerCase() === "undefined") {
+      return null;
+    }
+
+    // Handle date ranges e.g. "13/09/2026 - 19/09/2026" or "13/09/2026 to 19/09/2026"
+    if (s.includes(" - ") || s.toLowerCase().includes(" to ")) {
+      const parts = s.split(/\s+(?:to|\-)\s+/i);
+      if (parts[0]) {
+        return safeParseDateToTimestamp(parts[0]);
+      }
+    }
+
+    // 1. UK format: DD/MM/YYYY [HH:mm[:ss]]
+    const dmyMatch = s.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
+    if (dmyMatch) {
+      const day = parseInt(dmyMatch[1], 10);
+      const month = parseInt(dmyMatch[2], 10) - 1; // 0-indexed month
+      let yearStr = dmyMatch[3];
+      if (yearStr.length === 2) {
+        const yy = parseInt(yearStr, 10);
+        yearStr = (yy >= 70 ? "19" : "20") + yearStr;
+      }
+      const year = parseInt(yearStr, 10);
+      const hours = dmyMatch[4] ? parseInt(dmyMatch[4], 10) : 0;
+      const minutes = dmyMatch[5] ? parseInt(dmyMatch[5], 10) : 0;
+      const seconds = dmyMatch[6] ? parseInt(dmyMatch[6], 10) : 0;
+
+      if (day >= 1 && day <= 31 && month >= 0 && month <= 11 && year >= 1900 && year <= 2100) {
+        const d = new Date(year, month, day, hours, minutes, seconds);
+        const time = d.getTime();
+        if (!isNaN(time) && time > 0) return time;
+      }
+    }
+
+    // 2. ISO/Standard format: YYYY-MM-DD [HH:mm[:ss]]
+    const ymdMatch = s.match(/^(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
+    if (ymdMatch) {
+      const year = parseInt(ymdMatch[1], 10);
+      const month = parseInt(ymdMatch[2], 10) - 1;
+      const day = parseInt(ymdMatch[3], 10);
+      const hours = ymdMatch[4] ? parseInt(ymdMatch[4], 10) : 0;
+      const minutes = ymdMatch[5] ? parseInt(ymdMatch[5], 10) : 0;
+      const seconds = ymdMatch[6] ? parseInt(ymdMatch[6], 10) : 0;
+
+      if (day >= 1 && day <= 31 && month >= 0 && month <= 11 && year >= 1900 && year <= 2100) {
+        const d = new Date(year, month, day, hours, minutes, seconds);
+        const time = d.getTime();
+        if (!isNaN(time) && time > 0) return time;
+      }
+    }
+
+    // 3. ISO 8601 with timezone (e.g. 2026-09-13T01:12:32.000Z)
+    if (s.includes("T") || s.includes("Z")) {
+      const parsed = Date.parse(s);
+      if (!isNaN(parsed) && parsed > 0) return parsed;
+    }
+
+    // 4. Safe fallback using Date constructor
+    try {
+      const d = new Date(s);
+      if (!isNaN(d.getTime()) && d.getTime() > 0) {
+        return d.getTime();
+      }
+    } catch (e) {}
+
+    return null;
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * Safe parser from DMY (or general date input) to ISO string (YYYY-MM-DD).
+ * Sibling function to safeParseDateToTimestamp.
+ */
+export function safeParseDMYToISO(raw?: any): string {
+  try {
+    const ts = safeParseDateToTimestamp(raw);
+    if (ts === null || isNaN(ts)) return "";
+    const d = new Date(ts);
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}`;
+  } catch (e) {
+    return "";
+  }
+}
+
+export function parseDateToISO(dateStr?: string | null): string {
+  if (!dateStr) return "";
+  try {
+    let s = String(dateStr).trim();
+    if (!s || s === "-" || s === "—" || s.toLowerCase() === "null" || s.toLowerCase() === "undefined") {
+      return "";
+    }
+
+    s = s.split(/[\sT]+/)[0].trim();
+    
+    const ymdMatch = s.match(/^(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})/);
+    if (ymdMatch) {
+      const year = ymdMatch[1];
+      const month = String(parseInt(ymdMatch[2], 10)).padStart(2, '0');
+      const day = String(parseInt(ymdMatch[3], 10)).padStart(2, '0');
+      const mNum = parseInt(month, 10);
+      const dNum = parseInt(day, 10);
+      if (mNum >= 1 && mNum <= 12 && dNum >= 1 && dNum <= 31) {
+        return `${year}-${month}-${day}`;
+      }
+    }
+
+    if (!isNaN(Number(s)) && Number(s) > 30000 && Number(s) < 60000) {
+      const d = new Date((Number(s) - 25569) * 86400 * 1000);
+      if (!isNaN(d.getTime())) {
+        const year = d.getFullYear();
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+      }
+    }
+
+    let dateFormat = "UK";
+    try {
+      const saved = safeLocalStorage.getItem("concessions_date_format");
+      if (saved === "US" || saved === "UK") {
+        dateFormat = saved;
+      } else {
+        const resolved = safeLocalStorage.getItem("concessions_date_format_resolved");
+        if (resolved === "US") {
+          dateFormat = "US";
+        }
+      }
+    } catch (e) {}
+
+    const slashMatch = s.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})/);
+    if (slashMatch) {
+      const part1 = parseInt(slashMatch[1], 10);
+      const part2 = parseInt(slashMatch[2], 10);
+      let yearStr = slashMatch[3];
+      if (yearStr.length === 2) {
+        const yy = parseInt(yearStr, 10);
+        yearStr = (yy >= 70 ? "19" : "20") + yearStr;
+      }
+
+      let day = part1;
+      let month = part2;
+      
+      if (dateFormat === "US") {
+        day = part2;
+        month = part1;
+      }
+      
+      if (month > 12 && day <= 12) {
+        const temp = month;
+        month = day;
+        day = temp;
+      }
+      
+      if (day >= 1 && day <= 31 && month >= 1 && month <= 12) {
+        return `${yearStr}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      }
+    }
+
+    const parsed = new Date(s);
+    if (!isNaN(parsed.getTime())) {
+      const year = parsed.getFullYear();
+      const month = String(parsed.getMonth() + 1).padStart(2, '0');
+      const day = String(parsed.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
     }
   } catch (e) {}
 
-  const slashMatch = s.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})/);
-  if (slashMatch) {
-    const part1 = parseInt(slashMatch[1], 10);
-    const part2 = parseInt(slashMatch[2], 10);
-    let yearStr = slashMatch[3];
-    if (yearStr.length === 2) {
-      const yy = parseInt(yearStr, 10);
-      yearStr = (yy >= 70 ? "19" : "20") + yearStr;
-    }
-
-    let day = part1;
-    let month = part2;
-    
-    if (dateFormat === "US") {
-      day = part2;
-      month = part1;
-    }
-    
-    if (month > 12 && day <= 12) {
-      const temp = month;
-      month = day;
-      day = temp;
-    }
-    
-    if (day >= 1 && day <= 31 && month >= 1 && month <= 12) {
-      return `${yearStr}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-    }
-  }
-
-  const parsed = new Date(s);
-  if (!isNaN(parsed.getTime())) {
-    const year = parsed.getUTCFullYear();
-    const month = String(parsed.getUTCMonth() + 1).padStart(2, '0');
-    const day = String(parsed.getUTCDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  }
-
-  return dateStr;
+  return "";
 }
 
 export function addDays(dateStr: string, days: number): string {
@@ -1925,7 +2098,7 @@ export function parseVoucherFile(arrayBuffer: ArrayBuffer, fileName?: string): P
   }
 }
 
-export function addDaysSafe(dateStr: string, days: number): string {
+export function addDaysSafe(dateStr?: string | null, days: number = 0): string {
   if (!dateStr) return "";
   let iso = String(dateStr).trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
@@ -1937,11 +2110,11 @@ export function addDaysSafe(dateStr: string, days: number): string {
   const year = parseInt(parts[0], 10);
   const month = parseInt(parts[1], 10) - 1;
   const day = parseInt(parts[2], 10);
-  const d = new Date(Date.UTC(year, month, day));
-  d.setUTCDate(d.getUTCDate() + days);
-  const rYear = d.getUTCFullYear();
-  const rMonth = String(d.getUTCMonth() + 1).padStart(2, '0');
-  const rDay = String(d.getUTCDate()).padStart(2, '0');
+  const d = new Date(year, month, day);
+  d.setDate(d.getDate() + days);
+  const rYear = d.getFullYear();
+  const rMonth = String(d.getMonth() + 1).padStart(2, '0');
+  const rDay = String(d.getDate()).padStart(2, '0');
   return `${rYear}-${rMonth}-${rDay}`;
 }
 
@@ -2070,13 +2243,13 @@ export function getRequestedPermitDateISO(record?: any, fallbackDateStr?: string
   if (!record) {
     return fallbackDateStr ? (parseDateToISO(fallbackDateStr) || "") : "";
   }
-  const rawDate = record.dateRequired ||
-                  record.validFrom ||
-                  record.valid_from ||
-                  record["Date Required"] ||
-                  record["DATE REQUIRED"] ||
-                  record["Valid From"] ||
-                  record["VALID FROM"];
+  const rawDate = record?.dateRequired ??
+                  record?.validFrom ??
+                  record?.valid_from ??
+                  record?.["Date Required"] ??
+                  record?.["DATE REQUIRED"] ??
+                  record?.["Valid From"] ??
+                  record?.["VALID FROM"];
 
   if (rawDate) {
     const range = parseDateRange(String(rawDate));
@@ -2096,7 +2269,7 @@ export function getRequestedPermitDateISO(record?: any, fallbackDateStr?: string
     }
   }
 
-  const secondaryDate = record.startTime || record.completionTime || record.todayDate || record.createdAt || record.processingDate;
+  const secondaryDate = record?.startTime ?? record?.completionTime ?? record?.todayDate ?? record?.createdAt ?? record?.processingDate;
   if (secondaryDate) {
     const iso = parseDateToISO(String(secondaryDate));
     if (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso)) {
@@ -2742,93 +2915,109 @@ export function parseFullDateTimeMs(str?: string, fallbackIsoDate?: string): num
   return null;
 }
 
-export function extractRecordNumericFormId(record: any): number {
+export function extractRecordNumericFormId(record?: any): number {
   if (!record) return 0;
-  const raw = record.formId !== undefined && record.formId !== null && record.formId !== ""
-    ? record.formId
-    : (record.id !== undefined && record.id !== null && record.id !== "" ? record.id : undefined);
+  try {
+    const raw = record?.formId !== undefined && record?.formId !== null && record?.formId !== ""
+      ? record.formId
+      : (record?.id !== undefined && record?.id !== null && record?.id !== "" ? record.id : undefined);
 
-  if (raw === undefined || raw === null) return 0;
-  if (typeof raw === "number" && !isNaN(raw)) return raw;
+    if (raw === undefined || raw === null) return 0;
+    if (typeof raw === "number" && !isNaN(raw)) return raw;
 
-  const str = String(raw).trim();
-  const digits = str.replace(/\D/g, "");
-  if (digits) {
-    const parsed = parseInt(digits, 10);
-    if (!isNaN(parsed)) return parsed;
-  }
+    const str = String(raw).trim();
+    const digits = str.replace(/\D/g, "");
+    if (digits) {
+      const parsed = parseInt(digits, 10);
+      if (!isNaN(parsed)) return parsed;
+    }
+  } catch (e) {}
   return 0;
 }
 
-export function extractRecordSubmissionTimeMs(record: any, fallbackDateStr?: string): number {
+export function extractRecordSubmissionTimeMs(record?: any, fallbackDateStr?: string): number {
   if (!record) return 0;
 
-  const recDateRaw = record.dateRequired || record.validFrom || record.todayDate || fallbackDateStr || "";
-  const recDateISO = recDateRaw ? (parseDateToISO(recDateRaw) || "") : "";
+  try {
+    const recDateRaw = record?.dateRequired ?? 
+                       record?.validFrom ?? 
+                       record?.todayDate ?? 
+                       record?.["Date Required"] ?? 
+                       record?.["Valid From"] ?? 
+                       fallbackDateStr ?? 
+                       "";
+    const recDateISO = recDateRaw ? (parseDateToISO(String(recDateRaw)) || "") : "";
 
-  const timestampFields = [
-    record.startTime,
-    record.start_time,
-    record.submissionTime,
-    record.submission_time,
-    record.submittedAt,
-    record.submitted_at,
-    record.completionTime,
-    record.completion_time,
-    record.createdAt,
-    record.created_at
-  ];
+    const timestampFields = [
+      record?.startTime,
+      record?.start_time,
+      record?.submissionTime,
+      record?.submission_time,
+      record?.submittedAt,
+      record?.submitted_at,
+      record?.completionTime,
+      record?.completion_time,
+      record?.createdAt,
+      record?.created_at
+    ];
 
-  for (const field of timestampFields) {
-    if (field !== undefined && field !== null) {
-      const s = String(field).trim();
-      if (!s || s === "-" || s === "null" || s === "undefined") continue;
-      
-      const ms = parseFullDateTimeMs(s, recDateISO);
-      if (ms !== null && ms > 0) return ms;
+    for (const field of timestampFields) {
+      if (field !== undefined && field !== null) {
+        const s = String(field).trim();
+        if (!s || s === "-" || s.toLowerCase() === "null" || s.toLowerCase() === "undefined") continue;
+        
+        const ms = parseFullDateTimeMs(s, recDateISO);
+        if (ms !== null && ms > 0) return ms;
 
-      const dateObj = new Date(s);
-      if (!isNaN(dateObj.getTime()) && dateObj.getTime() > 0) {
-        return dateObj.getTime();
+        const dateObj = new Date(s);
+        if (!isNaN(dateObj.getTime()) && dateObj.getTime() > 0) {
+          return dateObj.getTime();
+        }
       }
     }
-  }
 
-  return 0;
+    return 0;
+  } catch (e) {
+    return 0;
+  }
 }
 
-export function isSamePermitRecord(a: any, b: any): boolean {
+export function isSamePermitRecord(a?: any, b?: any): boolean {
   if (a === b) return true;
   if (!a || !b) return false;
 
-  const idA = extractRecordNumericFormId(a);
-  const idB = extractRecordNumericFormId(b);
-  if (idA > 0 && idB > 0 && idA === idB) return true;
+  try {
+    const idA = extractRecordNumericFormId(a);
+    const idB = extractRecordNumericFormId(b);
+    if (idA > 0 && idB > 0 && idA === idB) return true;
 
-  const rawIdA = String(a.formId ?? a.id ?? "").trim();
-  const rawIdB = String(b.formId ?? b.id ?? "").trim();
-  if (rawIdA && rawIdB && rawIdA !== "-" && rawIdA === rawIdB) return true;
+    const rawIdA = String(a?.formId ?? a?.id ?? "").trim();
+    const rawIdB = String(b?.formId ?? b?.id ?? "").trim();
+    if (rawIdA && rawIdB && rawIdA !== "-" && rawIdA === rawIdB) return true;
 
-  const hasDistinctExplicitIds = (idA > 0 && idB > 0) || (rawIdA && rawIdB && rawIdA !== "-" && rawIdB !== "-");
-  if (hasDistinctExplicitIds) return false;
+    const hasDistinctExplicitIds = (idA > 0 && idB > 0) || (rawIdA && rawIdB && rawIdA !== "-" && rawIdB !== "-");
+    if (hasDistinctExplicitIds) return false;
 
-  const vrmA = (a.vrm || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
-  const vrmB = (b.vrm || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
-  if (vrmA && vrmB && vrmA === vrmB) {
-    const timeA = extractRecordSubmissionTimeMs(a);
-    const timeB = extractRecordSubmissionTimeMs(b);
-    if (timeA > 0 && timeB > 0 && timeA === timeB) return true;
+    const vrmA = (a?.vrm || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+    const vrmB = (b?.vrm || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (vrmA && vrmB && vrmA === vrmB) {
+      const timeA = extractRecordSubmissionTimeMs(a);
+      const timeB = extractRecordSubmissionTimeMs(b);
+      if (timeA > 0 && timeB > 0 && timeA === timeB) return true;
 
-    const nameA = (a.driverName || a.name || "").trim().toLowerCase();
-    const nameB = (b.driverName || b.name || "").trim().toLowerCase();
-    const dateA = parseDateToISO(a.dateRequired || a.validFrom || "");
-    const dateB = parseDateToISO(b.dateRequired || b.validFrom || "");
-    if (nameA && nameB && nameA === nameB && dateA && dateB && dateA === dateB && timeA === timeB) {
-      return true;
+      const nameA = (a?.driverName || a?.name || "").trim().toLowerCase();
+      const nameB = (b?.driverName || b?.name || "").trim().toLowerCase();
+      const dateA = parseDateToISO(a?.dateRequired || a?.validFrom || "");
+      const dateB = parseDateToISO(b?.dateRequired || b?.validFrom || "");
+      if (nameA && nameB && nameA === nameB && dateA && dateB && dateA === dateB && timeA === timeB) {
+        return true;
+      }
     }
-  }
 
-  return false;
+    return false;
+  } catch (e) {
+    return false;
+  }
 }
 
 export function getRecordDatasetIndex(
@@ -2838,81 +3027,96 @@ export function getRecordDatasetIndex(
   rawIdRecord?: string
 ): number {
   if (!database || database.length === 0) return -1;
-  let idx = database.indexOf(record);
-  if (idx !== -1) return idx;
+  try {
+    let idx = database.indexOf(record);
+    if (idx !== -1) return idx;
 
-  const numId = formIdRecord ?? extractRecordNumericFormId(record);
-  const rawId = rawIdRecord ?? String(record.formId ?? record.id ?? "").trim();
+    const numId = formIdRecord ?? extractRecordNumericFormId(record);
+    const rawId = rawIdRecord ?? String(record?.formId ?? record?.id ?? "").trim();
 
-  idx = database.findIndex(r => {
-    if (isSamePermitRecord(r, record)) return true;
-    const formIdR = extractRecordNumericFormId(r);
-    if (numId > 0 && formIdR > 0 && numId === formIdR) return true;
-    const rawIdR = String(r.formId ?? r.id ?? "").trim();
-    if (rawId && rawIdR && rawId !== "-" && rawId === rawIdR) return true;
-    return false;
-  });
+    idx = database.findIndex(r => {
+      if (isSamePermitRecord(r, record)) return true;
+      const formIdR = extractRecordNumericFormId(r);
+      if (numId > 0 && formIdR > 0 && numId === formIdR) return true;
+      const rawIdR = String(r?.formId ?? r?.id ?? "").trim();
+      if (rawId && rawIdR && rawId !== "-" && rawId === rawIdR) return true;
+      return false;
+    });
 
-  return idx;
+    return idx;
+  } catch (e) {
+    return -1;
+  }
 }
 
 export function isRecordStrictlyEarlier(
-  candidate: any,
-  target: any,
+  candidate?: any,
+  target?: any,
   database?: CsvPermitRecord[]
 ): boolean {
   if (!candidate || !target) return false;
-  if (isSamePermitRecord(candidate, target)) return false;
+  try {
+    if (isSamePermitRecord(candidate, target)) return false;
 
-  const formIdCandidate = extractRecordNumericFormId(candidate);
-  const formIdTarget = extractRecordNumericFormId(target);
+    const formIdCandidate = extractRecordNumericFormId(candidate);
+    const formIdTarget = extractRecordNumericFormId(target);
 
-  if (formIdCandidate > 0 && formIdTarget > 0 && formIdCandidate !== formIdTarget) {
-    return formIdCandidate < formIdTarget;
-  }
-
-  const timeCandidate = extractRecordSubmissionTimeMs(candidate);
-  const timeTarget = extractRecordSubmissionTimeMs(target);
-
-  if (timeCandidate > 0 && timeTarget > 0 && timeCandidate !== timeTarget) {
-    return timeCandidate < timeTarget;
-  }
-
-  if (formIdCandidate > 0 && formIdTarget === 0) {
-    return true;
-  }
-  if (formIdTarget > 0 && formIdCandidate === 0) {
-    return false;
-  }
-
-  if (timeCandidate > 0 && timeTarget === 0) {
-    return true;
-  }
-  if (timeTarget > 0 && timeCandidate === 0) {
-    return false;
-  }
-
-  if (database && database.length > 0) {
-    const idxCandidate = getRecordDatasetIndex(candidate, database, formIdCandidate);
-    const idxTarget = getRecordDatasetIndex(target, database, formIdTarget);
-
-    if (idxCandidate !== -1 && idxTarget !== -1 && idxCandidate !== idxTarget) {
-      const isDesc = database.length >= 2 && extractRecordNumericFormId(database[0]) > extractRecordNumericFormId(database[database.length - 1]);
-      if (isDesc) {
-        return idxCandidate > idxTarget;
-      }
-      return idxCandidate < idxTarget;
+    if (formIdCandidate > 0 && formIdTarget > 0 && formIdCandidate !== formIdTarget) {
+      return formIdCandidate < formIdTarget;
     }
-  }
 
-  return false;
+    const timeCandidate = extractRecordSubmissionTimeMs(candidate);
+    const timeTarget = extractRecordSubmissionTimeMs(target);
+
+    if (timeCandidate > 0 && timeTarget > 0 && timeCandidate !== timeTarget) {
+      return timeCandidate < timeTarget;
+    }
+
+    if (formIdCandidate > 0 && formIdTarget === 0) {
+      return true;
+    }
+    if (formIdTarget > 0 && formIdCandidate === 0) {
+      return false;
+    }
+
+    if (timeCandidate > 0 && timeTarget === 0) {
+      return true;
+    }
+    if (timeTarget > 0 && timeCandidate === 0) {
+      return false;
+    }
+
+    if (database && database.length > 0) {
+      const idxCandidate = getRecordDatasetIndex(candidate, database, formIdCandidate);
+      const idxTarget = getRecordDatasetIndex(target, database, formIdTarget);
+
+      if (idxCandidate !== -1 && idxTarget !== -1 && idxCandidate !== idxTarget) {
+        const isDesc = database.length >= 2 && extractRecordNumericFormId(database[0]) > extractRecordNumericFormId(database[database.length - 1]);
+        if (isDesc) {
+          return idxCandidate > idxTarget;
+        }
+        return idxCandidate < idxTarget;
+      }
+    }
+
+    return false;
+  } catch (e) {
+    return false;
+  }
 }
 
-export function compareRecordsBySubmissionOrder(a: any, b: any, fallbackDateStr?: string): number {
-  if (isSamePermitRecord(a, b)) return 0;
-  if (isRecordStrictlyEarlier(a, b)) return -1;
-  if (isRecordStrictlyEarlier(b, a)) return 1;
-  return 0;
+export function compareRecordsBySubmissionOrder(a?: any, b?: any, fallbackDateStr?: string): number {
+  if (!a && !b) return 0;
+  if (!a) return 1;
+  if (!b) return -1;
+  try {
+    if (isSamePermitRecord(a, b)) return 0;
+    if (isRecordStrictlyEarlier(a, b)) return -1;
+    if (isRecordStrictlyEarlier(b, a)) return 1;
+    return 0;
+  } catch (e) {
+    return 0;
+  }
 }
 
 // ⭐ Memoization cache for duplicate & cancellation checks to guarantee O(1) performance
@@ -2974,36 +3178,36 @@ export function checkIsBlockedDuplicate(
     return false;
   }
 
-  const reqTimeMsX = new Date(reqIsoX + "T00:00:00").getTime();
+  const reqTimeMsX = safeParseDateToTimestamp(reqIsoX) ?? 0;
 
   for (const earlier of strictlyEarlierRecords) {
-    const earlierDateRequired = earlier.dateRequired || earlier.validFrom || "";
-    const earlierRawRefDate = earlier.completionTime || earlier.startTime || earlier.createdAt || earlier.submissionDate;
+    const earlierDateRequired = earlier?.dateRequired || earlier?.validFrom || "";
+    const earlierRawRefDate = earlier?.completionTime || earlier?.startTime || earlier?.createdAt || earlier?.submissionDate;
     const earlierRefDate = earlierRawRefDate 
       ? (parseDateToISO(String(earlierRawRefDate)) || "") 
       : (parseDateToISO(earlierDateRequired) || refDateISO || "");
 
     // Fast check if earlier record is cancelled WITHOUT recursive deep database scanning
     const earlierIsCancelled = 
-      earlier.isCancelled === true ||
-      earlier.voucherCode === "CANCELLED" ||
-      earlier.voucherCodesText === "CANCELLED" ||
-      earlier.prePaidCode === "CANCELLED" ||
-      (typeof earlier.voucherCode === "string" && earlier.voucherCode.trim().toUpperCase() === "CANCELLED") ||
-      (typeof earlier.voucherCodesText === "string" && earlier.voucherCodesText.trim().toUpperCase() === "CANCELLED") ||
-      (typeof earlier.prePaidCode === "string" && earlier.prePaidCode.trim().toUpperCase() === "CANCELLED") ||
-      (typeof earlier.status === "string" && earlier.status.trim().toLowerCase().includes("cancel")) ||
-      isVrmSilentBlockedSync(earlier.vrm) ||
+      earlier?.isCancelled === true ||
+      earlier?.voucherCode === "CANCELLED" ||
+      earlier?.voucherCodesText === "CANCELLED" ||
+      earlier?.prePaidCode === "CANCELLED" ||
+      (typeof earlier?.voucherCode === "string" && earlier.voucherCode.trim().toUpperCase() === "CANCELLED") ||
+      (typeof earlier?.voucherCodesText === "string" && earlier.voucherCodesText.trim().toUpperCase() === "CANCELLED") ||
+      (typeof earlier?.prePaidCode === "string" && earlier.prePaidCode.trim().toUpperCase() === "CANCELLED") ||
+      (typeof earlier?.status === "string" && earlier.status.trim().toLowerCase().includes("cancel")) ||
+      isVrmSilentBlockedSync(earlier?.vrm) ||
       isDateRequiredOutsideValidWindow(earlierDateRequired, earlierRefDate);
 
     if (earlierIsCancelled) {
       continue;
     }
 
-    const earlierReqIso = parseDateToISO(earlier.dateRequired || earlier.validFrom || "") || 
-                          parseDateToISO(earlier.startTime || earlier.createdAt || "") || 
+    const earlierReqIso = parseDateToISO(earlier?.dateRequired || earlier?.validFrom || "") || 
+                          parseDateToISO(earlier?.startTime || earlier?.createdAt || "") || 
                           refDateISO || getTodayISO();
-    const earlierReqTimeMs = new Date(earlierReqIso + "T00:00:00").getTime();
+    const earlierReqTimeMs = safeParseDateToTimestamp(earlierReqIso) ?? 0;
 
     const diffDays = Math.round((reqTimeMsX - earlierReqTimeMs) / (1000 * 60 * 60 * 24));
 

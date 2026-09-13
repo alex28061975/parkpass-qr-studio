@@ -1,4 +1,4 @@
-import { CsvPermitRecord } from "./csvParser";
+import { CsvPermitRecord, getTodayISO } from "./csvParser";
 import { getSupabaseClient, syncDispatchedToSupabase, deleteDispatchedFromSupabase, deleteDispatchedKeysFromSupabase, fetchDispatchedFromSupabase } from "../lib/supabase";
 
 /**
@@ -278,7 +278,7 @@ export async function markRecordAsDispatched(
     return { success: false, error: 'Supabase client not available' };
   }
 
-  const todayISO = new Date().toISOString().split('T')[0];
+  const todayISO = getTodayISO();
   const dispatchedByName = dispatchedBy || 'System User';
 
   try {

@@ -53,7 +53,8 @@ import {
   toTitleCase,
   isValidVRM,
   isLikelyDriverName,
-  cleanVrm
+  cleanVrm,
+  safeParseDateToTimestamp
 } from "../utils/csvParser";
 import { checkIsRecordDispatched } from "../utils/dispatchUtils";
 import { isVrmSilentBlockedSync } from "../lib/blocklist";
@@ -101,15 +102,17 @@ interface DispatchCentreProps {
   onEditRecord?: (record: CsvPermitRecord, resolvedCode?: string) => void;
 }
 
-const formatDate = (dateStr?: string) => {
+const formatDate = (dateStr?: any) => {
   if (!dateStr) return "-";
-  const iso = parseDateToISO(dateStr);
-  if (!iso) return dateStr;
+  const s = String(dateStr).trim();
+  if (!s || s === "-" || s === "—" || s.toLowerCase() === "null" || s.toLowerCase() === "undefined") return "-";
+  const iso = parseDateToISO(s);
+  if (!iso) return s;
   const parts = iso.split("-");
   if (parts.length === 3) {
     return `${parts[2]}/${parts[1]}/${parts[0]}`;
   }
-  return dateStr;
+  return s;
 };
 
 export type SortKey = 
@@ -657,29 +660,72 @@ export function DispatchCentre({
 
   const todayISO = useMemo(() => getTodayISO(), []);
 
-  const dateRanges = useMemo(() => {
-    const addCalendarDays = (iso: string, delta: number): string => {
-      const [year, month, day] = iso.split("-").map(Number);
-      const ref = new Date(year, month - 1, day);
-      ref.setDate(ref.getDate() + delta);
-      const y = ref.getFullYear();
-      const m = String(ref.getMonth() + 1).padStart(2, "0");
-      const d = String(ref.getDate()).padStart(2, "0");
-      return `${y}-${m}-${d}`;
-    };
+  // Standardized local-time date boundaries (prevents UTC timezone offsets from shifting today)
+  const localDateBounds = useMemo(() => {
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const currentMonth = now.getMonth();
+    const currentDate = now.getDate();
+
+    // Start-of-day (00:00:00.000) and End-of-day (23:59:59.999) using local Date construction
+    const todayStartDate = new Date(currentYear, currentMonth, currentDate, 0, 0, 0, 0);
+    const todayEndDate = new Date(currentYear, currentMonth, currentDate, 23, 59, 59, 999);
+
+    // This Week: 6 days prior (00:00:00) through end of today (23:59:59.999)
+    const thisWeekStartDate = new Date(currentYear, currentMonth, currentDate - 6, 0, 0, 0, 0);
+    const thisWeekEndDate = new Date(currentYear, currentMonth, currentDate, 23, 59, 59, 999);
+
+    // This Month: 29 days prior (00:00:00) through end of today (23:59:59.999)
+    const thisMonthStartDate = new Date(currentYear, currentMonth, currentDate - 29, 0, 0, 0, 0);
+    const thisMonthEndDate = new Date(currentYear, currentMonth, currentDate, 23, 59, 59, 999);
+
+    // Custom date range bounds in local time
+    let customStartDateObj: Date | null = null;
+    if (customStartDate) {
+      const parsedStart = safeParseDateToTimestamp(customStartDate);
+      if (parsedStart !== null) {
+        const d = new Date(parsedStart);
+        customStartDateObj = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+      }
+    }
+
+    let customEndDateObj: Date | null = null;
+    if (customEndDate) {
+      const parsedEnd = safeParseDateToTimestamp(customEndDate);
+      if (parsedEnd !== null) {
+        const d = new Date(parsedEnd);
+        customEndDateObj = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
+      }
+    }
 
     return {
-      today: todayISO,
-      last7DaysStart: addCalendarDays(todayISO, -6),
-      last30DaysStart: addCalendarDays(todayISO, -29)
+      todayStartDate,
+      todayEndDate,
+      startOfToday: todayStartDate.getTime(),
+      endOfToday: todayEndDate.getTime(),
+
+      thisWeekStartDate,
+      thisWeekEndDate,
+      startOfThisWeek: thisWeekStartDate.getTime(),
+      endOfThisWeek: thisWeekEndDate.getTime(),
+
+      thisMonthStartDate,
+      thisMonthEndDate,
+      startOfThisMonth: thisMonthStartDate.getTime(),
+      endOfThisMonth: thisMonthEndDate.getTime(),
+
+      customStartDateObj,
+      customEndDateObj,
+      customStartMs: customStartDateObj ? customStartDateObj.getTime() : null,
+      customEndMs: customEndDateObj ? customEndDateObj.getTime() : null
     };
-  }, [todayISO]);
+  }, [customStartDate, customEndDate]);
 
   const allHospitalsList = useMemo(() => {
     const standardHospitals = ["Newham Hospital", "Whipps Cross Hospital"];
     const set = new Set<string>(standardHospitals);
     database.forEach(r => {
-      const h = (r.hospital || "").trim();
+      const h = (r?.hospital || "").trim();
       if (h && !h.toLowerCase().includes("royal london")) {
         set.add(h);
       }
@@ -700,7 +746,7 @@ export function DispatchCentre({
     ];
     const set = new Set<string>(standardWards);
     database.forEach(r => {
-      const w = (r.ward || "").trim();
+      const w = (r?.ward || "").trim();
       if (w) set.add(w);
     });
     return Array.from(set).sort((a, b) => a.localeCompare(b));
@@ -722,17 +768,19 @@ export function DispatchCentre({
   // ⭐ STEP 1: Filter first in O(N) linear scan
   const filteredRecords = useMemo(() => {
     return baseRecords.filter((record, idx) => {
+      if (!record) return false;
+
       if (searchQuery && searchQuery.trim()) {
         const q = searchQuery.trim().toLowerCase();
-        const cleanFormId = String(record.formId ?? record.id ?? "");
+        const cleanFormId = String(record?.formId ?? record?.id ?? "");
         const matchesSearch = (
           cleanFormId.toLowerCase().includes(q) ||
-          (record.driverName || "").toLowerCase().includes(q) ||
-          (record.vrm || "").toLowerCase().includes(q) ||
-          (record.hospital || "").toLowerCase().includes(q) ||
-          (record.ward || "").toLowerCase().includes(q) ||
-          (record.email || "").toLowerCase().includes(q) ||
-          (record.voucherCode || "").toLowerCase().includes(q)
+          (record?.driverName || "").toLowerCase().includes(q) ||
+          (record?.vrm || "").toLowerCase().includes(q) ||
+          (record?.hospital || "").toLowerCase().includes(q) ||
+          (record?.ward || "").toLowerCase().includes(q) ||
+          (record?.email || "").toLowerCase().includes(q) ||
+          (record?.voucherCode || "").toLowerCase().includes(q)
         );
         if (!matchesSearch) return false;
       }
@@ -754,7 +802,7 @@ export function DispatchCentre({
       }
 
       if (wardFilter !== "ALL") {
-        const w = (record.ward || "").toLowerCase();
+        const w = (record?.ward || "").toLowerCase();
         const target = wardFilter.toLowerCase();
         if (!w.includes(target) && w !== target) {
           return false;
@@ -762,21 +810,58 @@ export function DispatchCentre({
       }
 
       if (dateFilter !== "ALL") {
-        const recDate =
-          getRequestedPermitDateISO(record, processingDate) ||
-          getRecordSubmittedDateISO(record) ||
-          parseDateToISO(record.completionTime || record.startTime || record.createdAt || record.created_at);
-        if (!recDate) return false;
+        // Safe extraction with optional chaining (?.)
+        const rawReqDate = record?.dateRequired ?? 
+                           record?.validFrom ?? 
+                           record?.["Date Required"] ?? 
+                           record?.["Valid From"];
+        const rawSubDate = record?.completionTime ?? 
+                           (record as any)?.completion_time ?? 
+                           record?.startTime ?? 
+                           (record as any)?.start_time ?? 
+                           record?.createdAt ?? 
+                           (record as any)?.created_at;
+
+        const reqTs = safeParseDateToTimestamp(rawReqDate);
+        let subTs = safeParseDateToTimestamp(rawSubDate);
+        if (subTs === null) {
+          const fbSubMs = getRecordSubmittedTimeMs(record);
+          if (fbSubMs > 0) subTs = fbSubMs;
+        }
+
+        // One date, prioritized: pick the requested-permit-date if present, else the submitted-date
+        const targetTs = reqTs !== null ? reqTs : subTs;
+        if (targetTs === null) {
+          return false;
+        }
+
+        const isTsInRange = (ts: number | null, startMs: number, endMs: number): boolean => {
+          if (ts === null || isNaN(ts)) return false;
+          return ts >= startMs && ts <= endMs;
+        };
+
+        let rangeStart = 0;
+        let rangeEnd = 0;
 
         if (dateFilter === "TODAY") {
-          if (recDate !== todayISO) return false;
+          rangeStart = localDateBounds.todayStartDate.getTime();
+          rangeEnd = localDateBounds.todayEndDate.getTime();
         } else if (dateFilter === "THIS_WEEK") {
-          if (recDate < dateRanges.last7DaysStart || recDate > todayISO) return false;
+          rangeStart = localDateBounds.thisWeekStartDate.getTime();
+          rangeEnd = localDateBounds.thisWeekEndDate.getTime();
         } else if (dateFilter === "THIS_MONTH") {
-          if (recDate < dateRanges.last30DaysStart || recDate > todayISO) return false;
+          rangeStart = localDateBounds.thisMonthStartDate.getTime();
+          rangeEnd = localDateBounds.thisMonthEndDate.getTime();
         } else if (dateFilter === "CUSTOM") {
-          if (customStartDate && recDate < customStartDate) return false;
-          if (customEndDate && recDate > customEndDate) return false;
+          if (localDateBounds.customStartDateObj === null && localDateBounds.customEndDateObj === null) {
+            return true;
+          }
+          rangeStart = localDateBounds.customStartDateObj ? localDateBounds.customStartDateObj.getTime() : 0;
+          rangeEnd = localDateBounds.customEndDateObj ? localDateBounds.customEndDateObj.getTime() : Number.MAX_SAFE_INTEGER;
+        }
+
+        if (!isTsInRange(targetTs, rangeStart, rangeEnd)) {
+          return false;
         }
       }
 
@@ -789,10 +874,7 @@ export function DispatchCentre({
     hospitalFilter,
     wardFilter,
     dateFilter,
-    customStartDate,
-    customEndDate,
-    todayISO,
-    dateRanges,
+    localDateBounds,
     processingDate,
     database,
     dispatchedKeys,
@@ -808,36 +890,40 @@ export function DispatchCentre({
 
     const decorated = filteredRecords.map((r, i) => {
       let keyVal: string | number = 0;
+      if (!r) {
+        return { r, keyVal: 0, numId: i + 1, submittedTime: 0 };
+      }
+
       switch (sortKey) {
         case "id":
           keyVal = getNumericFormId(r) || (i + 1);
           break;
         case "submitted":
         case "qr":
-          keyVal = getRecordSubmittedTimeMs(r);
+          keyVal = getRecordSubmittedTimeMs(r) || 0;
           break;
         case "driverName":
-          keyVal = (r.driverName || "").trim().toLowerCase();
+          keyVal = (r?.driverName || "").trim().toLowerCase();
           break;
         case "vrm":
-          keyVal = (r.vrm || "").trim().toUpperCase();
+          keyVal = (r?.vrm || "").trim().toUpperCase();
           break;
         case "voucherCode": {
-          const isBlk = isVrmSilentBlockedSync(r.vrm);
+          const isBlk = isVrmSilentBlockedSync(r?.vrm);
           const isCanc = getIsCancelled(r, i);
-          keyVal = isBlk ? "BLOCKED" : (isCanc ? "CANCELLED" : (recordCodeMap.get(String(r.formId ?? r.id ?? i)) || r.voucherCode || ""));
+          keyVal = isBlk ? "BLOCKED" : (isCanc ? "CANCELLED" : (recordCodeMap.get(String(r?.formId ?? r?.id ?? i)) || r?.voucherCode || ""));
           break;
         }
         case "validFrom":
-          keyVal = parseDateToISO(r.dateRequired || r.validFrom) || "";
+          keyVal = parseDateToISO(r?.dateRequired || r?.validFrom) || "";
           break;
         case "validTo": {
-          const iso = parseDateToISO(r.dateRequired || r.validFrom);
-          keyVal = iso ? addDays(iso, 6) : "";
+          const iso = parseDateToISO(r?.dateRequired || r?.validFrom);
+          keyVal = r?.validTo ? (parseDateToISO(r.validTo) || "") : (iso ? addDays(iso, 6) : "");
           break;
         }
         case "ward":
-          keyVal = (r.ward || "").trim().toLowerCase();
+          keyVal = (r?.ward || "").trim().toLowerCase();
           break;
         case "hospital":
           keyVal = getHospital(r).toLowerCase();
@@ -847,7 +933,7 @@ export function DispatchCentre({
           break;
         case "actions": {
           const isCanc = getIsCancelled(r, i);
-          const isDisp = checkIsRecordDispatched(r, r.vrm, r.driverName, r.dateRequired, dispatchedKeys, unsentKeys);
+          const isDisp = checkIsRecordDispatched(r, r?.vrm, r?.driverName, r?.dateRequired, dispatchedKeys, unsentKeys);
           keyVal = isCanc ? "Unsend" : (isReplacementPending(r) ? "Resend" : (isDisp ? "Unsend" : "Send"));
           break;
         }
@@ -858,7 +944,7 @@ export function DispatchCentre({
         r,
         keyVal,
         numId: getNumericFormId(r) || (i + 1),
-        submittedTime: getRecordSubmittedTimeMs(r)
+        submittedTime: getRecordSubmittedTimeMs(r) || 0
       };
     });
 
@@ -867,10 +953,14 @@ export function DispatchCentre({
       if (typeof a.keyVal === "string" && typeof b.keyVal === "string") {
         comp = a.keyVal.localeCompare(b.keyVal, undefined, { sensitivity: "base", numeric: true });
       } else if (typeof a.keyVal === "number" && typeof b.keyVal === "number") {
-        comp = a.keyVal - b.keyVal;
+        comp = (Number.isFinite(a.keyVal) ? a.keyVal : 0) - (Number.isFinite(b.keyVal) ? b.keyVal : 0);
       }
       if (comp === 0) {
-        comp = a.numId - b.numId || a.submittedTime - b.submittedTime;
+        const numA = Number.isFinite(a.numId) ? a.numId : 0;
+        const numB = Number.isFinite(b.numId) ? b.numId : 0;
+        const subA = Number.isFinite(a.submittedTime) ? a.submittedTime : 0;
+        const subB = Number.isFinite(b.submittedTime) ? b.submittedTime : 0;
+        comp = (numA - numB) || (subA - subB);
       }
       return sortDirection === "asc" ? comp : -comp;
     });
@@ -1502,26 +1592,26 @@ export function DispatchCentre({
             <tbody className="divide-y divide-slate-100 dark:divide-[#102947]">
               {paginatedRecords.map((record, pIdx) => {
                 const index = startIndex + pIdx;
-                const recordIso = parseDateToISO(record.dateRequired || record.validFrom);
+                const recordIso = parseDateToISO(record?.dateRequired || record?.validFrom);
                 const expiresIso = recordIso ? addDays(recordIso, 6) : "";
 
                 const reqDate = getRequestedPermitDateISO(record, processingDate);
-                const isBlocked = isVrmSilentBlockedSync(record.vrm);
+                const isBlocked = isVrmSilentBlockedSync(record?.vrm);
                 const isCancelled = isRecordCancelled(record, reqDate, database);
-                const recordKey = String(record.formId ?? record.id ?? index);
+                const recordKey = String(record?.formId ?? record?.id ?? index);
 
                 // ⭐ FIX: CODES Column & VOUCHER CODE Column - canonical date range matching
-                const permitFromISO = getRequestedPermitDateISO(record) || parseDateToISO(record.validFrom || record.dateRequired) || "";
+                const permitFromISO = getRequestedPermitDateISO(record) || parseDateToISO(record?.validFrom || record?.dateRequired) || "";
                 const permitToISO = (() => {
-                  if (record.validTo) {
+                  if (record?.validTo) {
                     const iso = parseDateToISO(record.validTo);
                     if (iso) return iso;
                   }
-                  if (record.dateExpiry) {
+                  if (record?.dateExpiry) {
                     const iso = parseDateToISO(record.dateExpiry);
                     if (iso) return iso;
                   }
-                  const rawDate = record.dateRequired || record.validFrom;
+                  const rawDate = record?.dateRequired || record?.validFrom;
                   if (rawDate) {
                     const range = parseDateRange(String(rawDate));
                     if (range && range.endISO) {
@@ -1697,11 +1787,11 @@ export function DispatchCentre({
                     </td>
 
                     <td className="py-3 px-3 font-mono font-normal text-slate-700 dark:text-slate-200 border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-[10px]">
-                      {formatDate(record.dateRequired || record.validFrom)}
+                      {formatDate(record?.dateRequired || record?.validFrom)}
                     </td>
 
                     <td className="py-3 px-3 font-mono font-normal text-slate-700 dark:text-slate-200 border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-[10px]">
-                      {formatDate(expiresIso)}
+                      {formatDate(record?.validTo || record?.dateExpiry || expiresIso)}
                     </td>
 
                     <td className="py-3 px-3 font-normal text-slate-700 dark:text-slate-200 border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-[10px]">

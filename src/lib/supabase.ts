@@ -1,5 +1,5 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { CsvPermitRecord, ParsedVoucherData, resolveDateExpiry, cleanVoucherCodeValue, parseDateToISO } from '../utils/csvParser';
+import { CsvPermitRecord, ParsedVoucherData, resolveDateExpiry, cleanVoucherCodeValue, parseDateToISO, getTodayISO } from '../utils/csvParser';
 
 let runtimeSupabaseUrl: string | undefined = undefined;
 let runtimeSupabaseAnonKey: string | undefined = undefined;
@@ -546,7 +546,7 @@ export const bulkSyncDispatchedToSupabase = async (
       .filter(item => item && item.key && String(item.key).trim())
       .map(item => ({
         key: String(item.key).trim(),
-        dispatch_date: item.date || new Date().toISOString().split('T')[0],
+        dispatch_date: item.date || getTodayISO(),
         dispatch_by: item.by || 'System User',
         vrm: item.vrm ? String(item.vrm).trim() : null,
         email: item.email ? String(item.email).trim() : null
@@ -593,7 +593,7 @@ export const syncDispatchedToSupabase = async (
   }
 
   const cleanKey = String(key).trim();
-  const dateVal = date || new Date().toISOString().split('T')[0];
+  const dateVal = date || getTodayISO();
   const byVal = by || 'System User';
 
   const fullPayload = {
