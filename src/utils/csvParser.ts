@@ -1518,22 +1518,6 @@ export function parseDateToISO(dateStr: string): string {
       yearStr = (yy >= 70 ? "19" : "20") + yearStr;
     }
 
-    // Diagnostic console.log for 9/3/2026 requested by user
-    if ((s === "9/3/2026" || s.startsWith("9/3/2026")) || (part1 === 9 && part2 === 3 && (yearStr === "2026" || yearStr === "26"))) {
-      console.log("[parseDateToISO diagnostic]", {
-        rawInput: s,
-        resolvedDateFormat: dateFormat,
-        output: "2026-09-03"
-      });
-    }
-
-    // UK-based fix: ensure "9/3/2026" and "3/9/2026" return "2026-09-03" (3 Sept 2026) regardless of detected format
-    if ((part1 === 9 && part2 === 3) || (part1 === 3 && part2 === 9)) {
-      if (yearStr === "2026" || yearStr === "26") {
-        return "2026-09-03";
-      }
-    }
-    
     let day = part1;
     let month = part2;
     
