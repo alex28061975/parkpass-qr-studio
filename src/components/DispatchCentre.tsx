@@ -54,7 +54,8 @@ import {
   isValidVRM,
   isLikelyDriverName,
   cleanVrm,
-  safeParseDateToTimestamp
+  safeParseDateToTimestamp,
+  safeParseDMYToISO
 } from "../utils/csvParser";
 import { checkIsRecordDispatched } from "../utils/dispatchUtils";
 import { isVrmSilentBlockedSync } from "../lib/blocklist";
@@ -811,26 +812,51 @@ export function DispatchCentre({
 
       if (dateFilter !== "ALL") {
         // Safe extraction with optional chaining (?.)
-        const rawReqDate = record?.dateRequired ?? 
-                           record?.validFrom ?? 
-                           record?.["Date Required"] ?? 
-                           record?.["Valid From"];
-        const rawSubDate = record?.completionTime ?? 
-                           (record as any)?.completion_time ?? 
-                           record?.startTime ?? 
-                           (record as any)?.start_time ?? 
-                           record?.createdAt ?? 
-                           (record as any)?.created_at;
-
-        const reqTs = safeParseDateToTimestamp(rawReqDate);
-        let subTs = safeParseDateToTimestamp(rawSubDate);
-        if (subTs === null) {
-          const fbSubMs = getRecordSubmittedTimeMs(record);
-          if (fbSubMs > 0) subTs = fbSubMs;
+        // Priority 1: Check actual Submission / Creation timestamp
+        let subTs: number | null = null;
+        const subMs = getRecordSubmittedTimeMs(record);
+        if (subMs > 0) {
+          subTs = subMs;
+        } else {
+          const rawSubDate = record?.completionTime ?? 
+                             (record as any)?.completion_time ?? 
+                             record?.startTime ?? 
+                             (record as any)?.start_time ?? 
+                             record?.createdAt ?? 
+                             (record as any)?.created_at;
+          subTs = safeParseDateToTimestamp(rawSubDate);
         }
 
-        // One date, prioritized: pick the requested-permit-date if present, else the submitted-date
-        const targetTs = reqTs !== null ? reqTs : subTs;
+        // Priority 2: Fallback to requested permit date if submission timestamp is unavailable
+        let reqTs: number | null = null;
+        const rawReqDate = record?.dateRequired ?? 
+                           record?.validFrom ?? 
+                           record?.todayDate ?? 
+                           record?.["Date Required"] ?? 
+                           record?.["Valid From"];
+        reqTs = safeParseDateToTimestamp(rawReqDate);
+        if (reqTs === null) {
+          const iso = getRequestedPermitDateISO(record, processingDate);
+          if (iso) {
+            reqTs = safeParseDateToTimestamp(iso);
+          }
+        }
+
+        // Priority 1: Target the SUBMITTED timestamp first, then fallback to requested permit date
+        let targetTs = subTs !== null ? subTs : reqTs;
+
+        // Extra fallback: check extracted ISO date string if timestamp was still null
+        if (targetTs === null) {
+          const recDateISO = 
+            getRecordSubmittedDateISO(record) ||
+            getRequestedPermitDateISO(record, processingDate) ||
+            parseDateToISO(record?.completionTime || record?.startTime || record?.createdAt || (record as any)?.created_at || "") ||
+            safeParseDMYToISO(record?.completionTime ?? record?.startTime ?? record?.createdAt ?? (record as any)?.created_at ?? null);
+          if (recDateISO) {
+            targetTs = safeParseDateToTimestamp(recDateISO);
+          }
+        }
+
         if (targetTs === null) {
           return false;
         }
