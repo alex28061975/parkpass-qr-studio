@@ -762,8 +762,8 @@ export function DispatchCentre({
       }
 
       if (dateFilter !== "ALL") {
-        // Filter by SUBMITTED date
         const recDate =
+          getRequestedPermitDateISO(record, processingDate) ||
           getRecordSubmittedDateISO(record) ||
           parseDateToISO(record.completionTime || record.startTime || record.createdAt || record.created_at);
         if (!recDate) return false;
