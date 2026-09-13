@@ -520,13 +520,10 @@ export const cleanupCorruptedDispatchedKeys = async (): Promise<{ count: number;
     const deletedKeys: string[] = invalidRows.map((item: SupabaseDispatched) => item.key);
 
     if (deletedKeys.length > 0) {
-      console.log('[Supabase Cleanup] Found corrupted/collision keys to purge:', deletedKeys);
       for (const badKey of deletedKeys) {
         const { error: delErr } = await client.from('dispatched_history').delete().eq('key', badKey);
         if (delErr) {
-          console.error('[Supabase Cleanup Error] Failed to delete key:', badKey, delErr);
-        } else {
-          console.log('[Supabase Cleanup Success] Deleted corrupted key:', badKey);
+          console.error('[Supabase Cleanup Error] Failed to delete corrupted key:', delErr.message);
         }
       }
     }
@@ -592,7 +589,6 @@ export const syncDispatchedToSupabase = async (
 ): Promise<boolean> => {
   const client = getSupabaseClient();
   if (!client || !key || !key.trim()) {
-    console.warn('syncDispatchedToSupabase called with invalid parameters:', { key, date, by });
     return false;
   }
 
@@ -609,15 +605,11 @@ export const syncDispatchedToSupabase = async (
   };
 
   try {
-    console.log('[Supabase Write] Upserting dispatched record:', fullPayload);
     const { error } = await client.from('dispatched_history').upsert(fullPayload, { onConflict: 'key' });
 
     if (!error) {
-      console.log('[Supabase Write Success] Upsert succeeded for key:', cleanKey);
       return true;
     }
-
-    console.warn('[Supabase Write Warning] Full payload upsert error, attempting basic payload upsert:', error.message);
 
     const basicPayload = {
       key: cleanKey,
@@ -628,14 +620,13 @@ export const syncDispatchedToSupabase = async (
     const { error: basicErr } = await client.from('dispatched_history').upsert(basicPayload, { onConflict: 'key' });
 
     if (!basicErr) {
-      console.log('[Supabase Write Success] Basic payload upsert succeeded for key:', cleanKey);
       return true;
     }
 
-    console.error('[Supabase Write Error] Basic payload upsert failed:', basicErr.message);
+    console.error('[Supabase Write Error] Upsert failed:', basicErr.message);
     return false;
   } catch (err) {
-    console.error('[Supabase Write Exception] Exception in syncDispatchedToSupabase:', err);
+    console.error('[Supabase Write Exception]', err);
     return false;
   }
 };
@@ -646,20 +637,14 @@ export const deleteDispatchedFromSupabase = async (key: string): Promise<boolean
 
   const cleanKey = String(key).trim();
   try {
-    console.log('[Supabase Delete] Removing key from dispatched_history:', cleanKey);
     const { error } = await client.from('dispatched_history').delete().eq('key', cleanKey);
     if (error) {
-      console.error('[Supabase Delete Error] Delete failed:', {
-        code: error.code,
-        message: error.message,
-        key: cleanKey
-      });
+      console.error('[Supabase Delete Error] Delete failed:', error.message);
       return false;
     }
-    console.log('[Supabase Delete Success] Deleted key:', cleanKey);
     return true;
   } catch (err) {
-    console.error('[Supabase Delete Exception] Exception in deleteDispatchedFromSupabase:', err, cleanKey);
+    console.error('[Supabase Delete Exception]', err);
     return false;
   }
 };
@@ -672,7 +657,6 @@ export const deleteDispatchedKeysFromSupabase = async (keys: string[]): Promise<
   if (cleanKeys.length === 0) return true;
 
   try {
-    console.log('[Supabase Delete] Removing keys from dispatched_history:', cleanKeys);
     const { error } = await client.from('dispatched_history').delete().in('key', cleanKeys);
     if (error) {
       console.warn('[Supabase Delete Warning] Batch delete failed, falling back to individual deletes:', error.message);
@@ -683,7 +667,6 @@ export const deleteDispatchedKeysFromSupabase = async (keys: string[]): Promise<
       }
       return allOk;
     }
-    console.log('[Supabase Delete Success] Deleted keys:', cleanKeys);
     return true;
   } catch (err) {
     console.error('[Supabase Delete Exception]', err);

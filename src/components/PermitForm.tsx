@@ -137,14 +137,6 @@ export function PermitForm({
     const totalForDate = dailyVouchers.length;
     const assignedCount = Math.max(0, totalForDate - finalFiltered.length);
 
-    console.log('🔍 Unused Codes Debug:', {
-      targetISO: targetIso,
-      totalVouchers: totalForDate,
-      assignedCount: assignedCount,
-      unusedCount: finalFiltered.length,
-      unusedCodes: finalFiltered.map(v => v.code)
-    });
-
     return finalFiltered;
   }, [vouchersDatabase, database, matchingPermits, targetIso, data]);
 

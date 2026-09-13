@@ -110,7 +110,7 @@ const autoCancelDuplicates = (records: CsvPermitRecord[]): CsvPermitRecord[] => 
       });
 
       if (isDuplicateOfKept) {
-        console.log(`🔄 Auto-cancelling duplicate for VRM: ${vrm} (within 7-day window of an earlier request)`);
+        console.log("🔄 Auto-cancelling duplicate record (within 7-day window of an earlier request)");
         results[entry.index] = {
           ...entry.record,
           isCancelled: true,
@@ -676,7 +676,7 @@ export default function App() {
         unsentKeysRef.current = next;
         return next;
       });
-      console.log("💾 [Offline Storage] Record marked as dispatched locally:", pk);
+      console.log("💾 [Offline Storage] Record marked as dispatched locally");
       return true;
     }
 
@@ -723,7 +723,7 @@ export default function App() {
         return false;
       }
 
-      console.log("✅ [Supabase Dispatch Write Success] Record marked as dispatched in database:", pk);
+      console.log("✅ [Supabase Dispatch Write Success] Record marked as dispatched in database");
 
       // 2. Fetch fresh keys from Supabase or apply verified keys to state
       const freshResult = await fetchDispatchedFromSupabase();
@@ -810,7 +810,7 @@ export default function App() {
 
     // If in Offline Local Storage mode, state and storage are already updated
     if (storageModeRef.current === "offline") {
-      console.log("💾 [Offline Storage] Record unmarked as dispatched locally:", pk);
+      console.log("💾 [Offline Storage] Record unmarked as dispatched locally");
       return true;
     }
 
@@ -830,7 +830,7 @@ export default function App() {
         return false;
       }
 
-      console.log("✅ [Supabase Unmark Success] Record unmarked as dispatched:", pk);
+      console.log("✅ [Supabase Unmark Success] Record unmarked as dispatched");
 
       // Local optimistic state is already updated and persisted cleanly.
       // Do NOT run immediate background refreshes that could overwrite local Unsend overrides.
@@ -1176,8 +1176,8 @@ export default function App() {
 
   const handlePurgeCorruptedKeys = async () => {
     if (isSupabaseConfigured()) {
-      const { count, deletedKeys } = await cleanupCorruptedDispatchedKeys();
-      console.log(`[Purge Keys] Cleaned ${count} corrupted collision keys:`, deletedKeys);
+      const { count } = await cleanupCorruptedDispatchedKeys();
+      console.log(`[Purge Keys] Cleaned ${count} corrupted collision keys`);
     }
     await refreshDatabase();
   };

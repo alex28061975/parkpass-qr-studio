@@ -2596,15 +2596,6 @@ export function getUnusedVouchersForDate(
     }
   });
 
-  console.log(`🔒 [Global Voucher Availability - ${targetDateISO}]`, {
-    targetDate: targetDateISO,
-    totalVouchersForDate: dailyVouchersMap.size,
-    globallyAssignedCodes: allAssignedCodesSet.size,
-    unusedCodesCount: activeUnassignedCodes.length,
-    assignedCodes: Array.from(allAssignedCodesSet),
-    availableCodes: activeUnassignedCodes.map((v) => v.code),
-  });
-
   return activeUnassignedCodes;
 }
 
@@ -3153,7 +3144,6 @@ export function cleanVrm(value: string, driverName: string): { vrm: string; driv
   // If VRM looks like a name, move it to driver name
   if (isLikelyDriverName(raw)) {
     const newDriverName = driverName ? `${driverName} ${toTitleCase(raw)}` : toTitleCase(raw);
-    console.log(`🔄 Auto-corrected VRM: "${raw}" → moved to driver name as "${newDriverName}"`);
     return { vrm: "PENDING", driverName: newDriverName };
   }
   
