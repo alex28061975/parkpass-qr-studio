@@ -561,7 +561,7 @@ export function DispatchCentre({
     (formData?.emailType === "RESEND_CONCESSION" || formData?.isResend === true || formData?.emailTemplate === "replacement");
 
   const getHospital = (record: CsvPermitRecord) => {
-    const raw = (record?.hospital || "").trim();
+    const raw = String(record?.hospital ?? "").trim();
     if (raw && !raw.toLowerCase().includes("royal london")) {
       return raw;
     }
@@ -1725,7 +1725,11 @@ export function DispatchCentre({
                 } else if (replacementPending && isSameSelectedRecord(record) && formData?.voucherCodesText) {
                   displayCode = formData.voucherCodesText;
                 } else if (displayCode === undefined || displayCode === null || displayCode === "CANCELLED" || displayCode === "BLOCKED") {
-                  const rawCode = (record.voucherCode || (customVouchers && (customVouchers[recordKey] || (record.vrm && customVouchers[`${String(record.vrm).toUpperCase().replace(/\s+/g, "")}_${reqDate}`]))) || "").trim();
+                  const rawCode = String(
+                    record.voucherCode ||
+                    (customVouchers && (customVouchers[recordKey] || (record.vrm && customVouchers[`${String(record.vrm).toUpperCase().replace(/\s+/g, "")}_${reqDate}`]))) ||
+                    ""
+                  ).trim();
                   const cleanRaw = cleanVoucherCodeValue(rawCode).toUpperCase();
                   
                   // ⭐ O(1) check if code exists in current vouchersDatabase
@@ -1813,7 +1817,7 @@ export function DispatchCentre({
                     </td>
 
                     <td className="py-3 px-3 font-normal text-slate-900 dark:text-white border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-[10px]">
-                      {record.driverName ? toTitleCase(record.driverName) : "-"}
+                      {record.driverName ? toTitleCase(String(record.driverName)) : "-"}
                     </td>
 
                     <td className="py-3 px-3 font-normal text-slate-700 dark:text-slate-200 border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-[10px]">
@@ -1821,7 +1825,7 @@ export function DispatchCentre({
                     </td>
 
                     <td className="py-3 px-3 font-mono font-normal text-slate-900 dark:text-white uppercase border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-[10px]">
-                      {record.vrm ? record.vrm.toUpperCase() : "-"}
+                      {record.vrm ? String(record.vrm).toUpperCase() : "-"}
                     </td>
 
                     <td className="py-3 px-3 font-mono font-normal border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-[10px]">
@@ -1886,7 +1890,7 @@ export function DispatchCentre({
                     </td>
 
                     <td className="py-3 px-3 font-normal text-slate-700 dark:text-slate-200 border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap text-[10px]">
-                      {record.ward ? toTitleCase(record.ward) : "-"}
+                      {record.ward ? toTitleCase(String(record.ward)) : "-"}
                     </td>
 
                     <td className="py-3 px-3.5 font-normal text-slate-700 dark:text-slate-200 border-r border-slate-100 dark:border-[#102947]/60 whitespace-nowrap min-w-[185px] text-[10px]">
@@ -1898,7 +1902,7 @@ export function DispatchCentre({
                         <span className="border border-rose-300 dark:border-rose-800/60 bg-rose-50 dark:bg-rose-950/30 text-rose-700 dark:text-rose-300 font-bold px-2 py-0.5 rounded text-[9px] tracking-wider uppercase inline-flex items-center justify-center whitespace-nowrap">
                           BLOCKED
                         </span>
-                      ) : (isCancelled || (record.status && record.status.trim().toUpperCase() === "CANCELLED")) ? (
+                      ) : (isCancelled || (record.status && String(record.status).trim().toUpperCase() === "CANCELLED")) ? (
                         <span className="border border-red-300 dark:border-red-800/60 bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-400 font-bold px-2 py-0.5 rounded text-[9px] tracking-wider uppercase inline-flex items-center justify-center whitespace-nowrap">
                           CANCELLED
                         </span>

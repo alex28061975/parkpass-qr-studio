@@ -188,16 +188,16 @@ export function enrichRecordsWithVouchers(
     } else if (record.formId && customVouchersMap[String(record.formId)]) {
       code = customVouchersMap[String(record.formId)];
     } else {
-      const rawCode = record.voucherCode || defaultVal;
-      if (rawCode && rawCode.toUpperCase() === "CANCELLED") {
+      const rawCode = (record.voucherCode !== undefined && record.voucherCode !== null && record.voucherCode !== "") ? record.voucherCode : defaultVal;
+      if (rawCode && String(rawCode).toUpperCase() === "CANCELLED") {
         code = defaultVal;
       } else {
-        code = rawCode;
+        code = String(rawCode ?? "");
       }
     }
 
     if (code && code !== "-") {
-      const codeUpper = code.toUpperCase();
+      const codeUpper = String(code).toUpperCase();
       if (checkIsAssigned(codeUpper, new Set())) {
         code = "-";
       } else {
@@ -290,16 +290,16 @@ export function enrichRecordsWithVouchers(
     const existingCode = record.voucherCode || record.prePaidCode || record.qrCode || record.serialNumber;
 
     // Fast O(1) check: Only accept customOverride if it exists in current vouchersDb and matches permit date
-    if (customOverride && customOverride !== "-" && customOverride.toUpperCase() !== "CANCELLED") {
-      const clean = cleanVoucherCodeValue(customOverride).toUpperCase();
+    if (customOverride && String(customOverride) !== "-" && String(customOverride).toUpperCase() !== "CANCELLED") {
+      const clean = cleanVoucherCodeValue(String(customOverride)).toUpperCase();
       const matchingVoucherInDb = voucherByCleanCode.get(clean);
       const dateMatches = !reqIso || !matchingVoucherInDb || isVoucherForPermitDateRange(matchingVoucherInDb, reqIso, reqIsoTo);
       if (matchingVoucherInDb && dateMatches && clean && clean !== "-" && clean !== "CANCELLED" && !checkIsAssigned(clean, custAssignedSet)) {
         registerCodeGlobally(clean, custAssignedSet);
         recordClaimedCodes.set(index, clean);
       }
-    } else if (existingCode && existingCode !== "-" && existingCode.toUpperCase() !== "CANCELLED") {
-      const clean = cleanVoucherCodeValue(existingCode).toUpperCase();
+    } else if (existingCode && String(existingCode) !== "-" && String(existingCode).toUpperCase() !== "CANCELLED") {
+      const clean = cleanVoucherCodeValue(String(existingCode)).toUpperCase();
       
       // Fast O(1) check: only accept if the code exists in current vouchersDatabase and matches permit date
       const matchingVoucherInDb = voucherByCleanCode.get(clean);
