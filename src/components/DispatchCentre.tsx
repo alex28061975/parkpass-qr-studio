@@ -324,22 +324,33 @@ export function DispatchCentre({
         }
       }
 
-      const raw = rec.voucherCode || rec.prePaidCode || "";
-      if (raw && typeof raw === "string") {
-        const clean = cleanVoucherCodeValue(raw).toUpperCase();
+      // IMPORTANT: replacement does not release the original assigned voucher.
+      // Keep every live assignment consumed until its record is genuinely cancelled.
+      const assignedCodeFields = [
+        rec.originalVoucherCode,
+        rec.voucherCode,
+        rec.prePaidCode
+      ];
+
+      assignedCodeFields.forEach((raw) => {
+        if (raw === null || raw === undefined || raw === "") return;
+
+        const clean = cleanVoucherCodeValue(String(raw)).toUpperCase();
         if (clean && clean !== "-" && clean !== "CANCELLED" && clean !== "PENDING" && clean !== "N/A" && clean !== "BLOCKED") {
           set.add(clean);
         }
-      }
+      });
     });
 
-    // Also include active replacementCode from formData if present
-    if (formData?.replacementCode && typeof formData.replacementCode === "string") {
-      const clean = cleanVoucherCodeValue(formData.replacementCode).toUpperCase();
+    // Also include active replacement/original codes from formData while replacement is in progress.
+    [formData?.originalVoucherCode, formData?.replacementCode].forEach((raw) => {
+      if (raw === null || raw === undefined || raw === "") return;
+
+      const clean = cleanVoucherCodeValue(String(raw)).toUpperCase();
       if (clean && clean !== "-" && clean !== "CANCELLED" && clean !== "PENDING" && clean !== "N/A" && clean !== "BLOCKED") {
         set.add(clean);
       }
-    }
+    });
 
     // 3. Include customVouchers
     if (customVouchers) {
@@ -363,7 +374,7 @@ export function DispatchCentre({
     }
 
     return set;
-  }, [database, customVouchers, processingDate, recordCodeMap, formData?.replacementCode]);
+  }, [database, customVouchers, processingDate, recordCodeMap, formData?.replacementCode, formData?.originalVoucherCode]);
 
   // Active record is either the explicitly clicked row, or matching record from formData, or the first record in database
   const activeRecord = useMemo<CsvPermitRecord | null>(() => {
@@ -541,9 +552,12 @@ export function DispatchCentre({
       return;
     }
 
+    const originalVoucherCode = currentRec?.originalVoucherCode || currentRec?.voucherCode || currentRec?.prePaidCode;
+
     if (currentRec) {
       setSelectedRowRecord({
         ...currentRec,
+        originalVoucherCode: originalVoucherCode || currentRec.originalVoucherCode,
         replacementCode: selectedCode,
         isResend: true,
         emailType: "RESEND_CONCESSION",
@@ -552,6 +566,7 @@ export function DispatchCentre({
     }
 
     onChangeFormData?.({
+      originalVoucherCode: originalVoucherCode || undefined,
       replacementCode: selectedCode,
       voucherCodesText: selectedCode,
       status: "Pending",
