@@ -25,6 +25,7 @@ export interface PermitData {
   emailType?: "SEND_CONCESSION" | "RESEND_CONCESSION" | string;
   isResend?: boolean;
   emailTemplate?: "new" | "replacement";
+  replacementCode?: string;
   voucherCode?: string;
   prePaidCode?: string;
   qrCode?: string;

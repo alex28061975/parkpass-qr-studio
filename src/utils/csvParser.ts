@@ -221,6 +221,7 @@ export interface CsvPermitRecord {
   emailType?: "SEND_CONCESSION" | "RESEND_CONCESSION" | string;
   isResend?: boolean;
   emailTemplate?: "new" | "replacement";
+  replacementCode?: string;
   originalVoucherCode?: string;
   replacementCount?: number;
 }
@@ -2198,7 +2199,8 @@ export function getMatchingPermits(database: CsvPermitRecord[], activeDateStr: s
 
 export function extractRecordVoucherCode(record: any): string {
   if (!record) return "";
-  const raw = record.voucherCode ??
+  const raw = record.replacementCode ??
+              record.voucherCode ??
               record.prePaidCode ??
               record.qrCode ??
               record.voucherCodesText ??
@@ -2676,6 +2678,8 @@ export function getUnusedVouchersForDate(
       return;
     }
 
+    consumeAssignedCode(permit.replacementCode);
+    consumeAssignedCode(permit.originalVoucherCode);
     consumeAssignedCode(permit.voucherCode);
     consumeAssignedCode(permit.prePaidCode);
     consumeAssignedCode(permit.qrCode);

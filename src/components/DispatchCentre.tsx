@@ -199,17 +199,38 @@ export function DispatchCentre({
 
   // Sync selectedRowRecord when replacement code is assigned
   useEffect(() => {
-    if (formData?.voucherCodesText && selectedRowRecord) {
-      if (formData.emailType === "RESEND_CONCESSION" || formData.isResend) {
+    if ((formData?.voucherCodesText || formData?.replacementCode) && selectedRowRecord) {
+      if (formData.emailType === "RESEND_CONCESSION" || formData.isResend || formData.replacementCode) {
         setSelectedRowRecord(prev => prev ? ({
           ...prev,
-          voucherCode: formData.voucherCodesText,
-          voucherCodesText: formData.voucherCodesText,
-          prePaidCode: formData.voucherCodesText
+          replacementCode: formData.replacementCode || formData.voucherCodesText || prev.replacementCode,
+          isResend: true,
+          emailType: "RESEND_CONCESSION",
+          emailTemplate: "replacement"
         }) : null);
       }
     }
-  }, [formData?.voucherCodesText, formData?.emailType, formData?.isResend]);
+  }, [formData?.voucherCodesText, formData?.replacementCode, formData?.emailType, formData?.isResend]);
+
+  // Keep selectedRowRecord up to date with latest database updates without stripping replacement flags
+  useEffect(() => {
+    if (selectedRowRecord && database) {
+      const updated = database.find(r => isRecordMatch(r, selectedRowRecord));
+      if (updated) {
+        setSelectedRowRecord(prev => {
+          if (!prev) return null;
+          return {
+            ...prev,
+            ...updated,
+            replacementCode: updated.replacementCode ?? prev.replacementCode,
+            isResend: updated.isResend ?? prev.isResend,
+            emailType: updated.emailType ?? prev.emailType,
+            emailTemplate: updated.emailTemplate ?? prev.emailTemplate
+          };
+        });
+      }
+    }
+  }, [database]);
 
   const handleRowClick = (record: CsvPermitRecord) => {
     setSelectedRowRecord(record);
@@ -296,6 +317,13 @@ export function DispatchCentre({
         return;
       }
 
+      if (rec.replacementCode && typeof rec.replacementCode === "string") {
+        const clean = cleanVoucherCodeValue(rec.replacementCode).toUpperCase();
+        if (clean && clean !== "-" && clean !== "CANCELLED" && clean !== "PENDING" && clean !== "N/A" && clean !== "BLOCKED") {
+          set.add(clean);
+        }
+      }
+
       const raw = rec.voucherCode || rec.prePaidCode || "";
       if (raw && typeof raw === "string") {
         const clean = cleanVoucherCodeValue(raw).toUpperCase();
@@ -304,6 +332,14 @@ export function DispatchCentre({
         }
       }
     });
+
+    // Also include active replacementCode from formData if present
+    if (formData?.replacementCode && typeof formData.replacementCode === "string") {
+      const clean = cleanVoucherCodeValue(formData.replacementCode).toUpperCase();
+      if (clean && clean !== "-" && clean !== "CANCELLED" && clean !== "PENDING" && clean !== "N/A" && clean !== "BLOCKED") {
+        set.add(clean);
+      }
+    }
 
     // 3. Include customVouchers
     if (customVouchers) {
@@ -327,7 +363,7 @@ export function DispatchCentre({
     }
 
     return set;
-  }, [database, customVouchers, processingDate, recordCodeMap]);
+  }, [database, customVouchers, processingDate, recordCodeMap, formData?.replacementCode]);
 
   // Active record is either the explicitly clicked row, or matching record from formData, or the first record in database
   const activeRecord = useMemo<CsvPermitRecord | null>(() => {
@@ -460,6 +496,8 @@ export function DispatchCentre({
     }
 
     const codeFields = [
+      "replacementCode",
+      "originalVoucherCode",
       "voucherCode",
       "prePaidCode",
       "qrCode",
@@ -506,13 +544,15 @@ export function DispatchCentre({
     if (currentRec) {
       setSelectedRowRecord({
         ...currentRec,
-        voucherCode: selectedCode,
-        voucherCodesText: selectedCode,
-        prePaidCode: selectedCode
+        replacementCode: selectedCode,
+        isResend: true,
+        emailType: "RESEND_CONCESSION",
+        emailTemplate: "replacement"
       });
     }
 
     onChangeFormData?.({
+      replacementCode: selectedCode,
       voucherCodesText: selectedCode,
       status: "Pending",
       emailType: "RESEND_CONCESSION",
@@ -556,9 +596,21 @@ export function DispatchCentre({
     return isRecordMatch(record, formData);
   };
 
-  const isReplacementPending = (record: CsvPermitRecord) =>
-    isSameSelectedRecord(record) &&
-    (formData?.emailType === "RESEND_CONCESSION" || formData?.isResend === true || formData?.emailTemplate === "replacement");
+  const isReplacementPending = (record: CsvPermitRecord) => {
+    if (!record) return false;
+    if (
+      Boolean(record.replacementCode) ||
+      record.emailType === "RESEND_CONCESSION" ||
+      record.isResend === true ||
+      record.emailTemplate === "replacement"
+    ) {
+      return true;
+    }
+    return Boolean(
+      isSameSelectedRecord(record) &&
+      (formData?.emailType === "RESEND_CONCESSION" || formData?.isResend === true || formData?.emailTemplate === "replacement" || Boolean(formData?.replacementCode))
+    );
+  };
 
   const getHospital = (record: CsvPermitRecord) => {
     const raw = String(record?.hospital ?? "").trim();
@@ -1722,8 +1774,8 @@ export function DispatchCentre({
                   displayCode = "BLOCKED";
                 } else if (isCancelled) {
                   displayCode = "CANCELLED";
-                } else if (replacementPending && isSameSelectedRecord(record) && formData?.voucherCodesText) {
-                  displayCode = formData.voucherCodesText;
+                } else if (replacementPending) {
+                  displayCode = record.replacementCode || (isSameSelectedRecord(record) && formData?.voucherCodesText ? formData.voucherCodesText : (recordCodeMap.get(recordKey) || record.voucherCode || "-"));
                 } else if (displayCode === undefined || displayCode === null || displayCode === "CANCELLED" || displayCode === "BLOCKED") {
                   const rawCode = String(
                     record.voucherCode ||

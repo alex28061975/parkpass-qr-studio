@@ -44,6 +44,7 @@ export function EditRecordModal({
   const [formDateRequired, setFormDateRequired] = useState("");
   const [formDateExpiry, setFormDateExpiry] = useState("");
   const [formVoucherCode, setFormVoucherCode] = useState("");
+  const [formReplacementCode, setFormReplacementCode] = useState("");
   const [formStatus, setFormStatus] = useState("PENDING");
 
   // Resolve any real code found directly on record itself,
@@ -154,8 +155,8 @@ export function EditRecordModal({
 
     const codeFields = [
       "voucherCode", "prePaidCode", "qrCode", "voucherCodesText", "serialNumber",
-      "voucher", "code", "qrOverride", "Voucher Code", "VOUCHER CODE",
-      "Pre-Paid Code", "Pre Paid Code", "QR Code", "QR CODE"
+      "voucher", "code", "qrOverride", "replacementCode", "originalVoucherCode",
+      "Voucher Code", "VOUCHER CODE", "Pre-Paid Code", "Pre Paid Code", "QR Code", "QR CODE"
     ];
 
     database.forEach((r) => {
@@ -242,6 +243,7 @@ export function EditRecordModal({
     if (!formDateRequired || !vouchersDatabase?.length) return [];
     const currentVoucherCode = formVoucherCode.trim().toUpperCase();
     const underlyingCode = canonicalRecordCode;
+    const currentReplacement = formReplacementCode.trim().toUpperCase();
 
     return vouchersDatabase.filter(v => {
       if (!isVoucherForPermitDateRange(v, formDateRequired, formDateExpiry || formDateRequired)) return false;
@@ -257,6 +259,17 @@ export function EditRecordModal({
         currentVoucherCode !== "CANCELLED" &&
         currentVoucherCode !== "BLOCKED" &&
         codeUpper === currentVoucherCode
+      ) {
+        return false;
+      }
+
+      // ⭐ Exclude chosen replacement code in the modal so count decrements to 23
+      if (
+        currentReplacement &&
+        currentReplacement !== "-" &&
+        currentReplacement !== "CANCELLED" &&
+        currentReplacement !== "BLOCKED" &&
+        codeUpper === currentReplacement
       ) {
         return false;
       }
@@ -278,6 +291,7 @@ export function EditRecordModal({
     formDateExpiry,
     assignedCodesInOtherRecords,
     formVoucherCode,
+    formReplacementCode,
     canonicalRecordCode,
     allocatedCodesForThisRecord
   ]);
@@ -285,8 +299,8 @@ export function EditRecordModal({
   // Code assignment check
   const codeFields = [
     "voucherCode", "prePaidCode", "qrCode", "voucherCodesText", "serialNumber",
-    "voucher", "code", "qrOverride", "Voucher Code", "VOUCHER CODE",
-    "Pre-Paid Code", "Pre Paid Code", "QR Code", "QR CODE"
+    "voucher", "code", "qrOverride", "replacementCode", "originalVoucherCode",
+    "Voucher Code", "VOUCHER CODE", "Pre-Paid Code", "Pre Paid Code", "QR Code", "QR CODE"
   ];
 
   const isCodeAssigned = (rec: any, selectedCode: string) => {
@@ -303,33 +317,18 @@ export function EditRecordModal({
 
   const handleActiveDateCodeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const selectedCode = cleanVoucherCodeValue(e.target.value).toUpperCase();
-    if (!selectedCode || selectedCode === "-" || selectedCode === "CANCELLED" || selectedCode === "BLOCKED") return;
+    if (!selectedCode || selectedCode === "-" || selectedCode === "CANCELLED" || selectedCode === "BLOCKED") {
+      setFormReplacementCode("");
+      return;
+    }
 
     if (assignedCodesInOtherRecords.has(selectedCode)) {
       console.warn(`Voucher ${selectedCode} is already assigned and cannot be reused.`);
       return;
     }
 
-    setFormVoucherCode(selectedCode);
-    setFormStatus("PENDING"); // matches the header's status: "Pending" reset on reassignment
-
-    onChangeFormData?.({
-      id: record?.id,
-      formId: record?.formId,
-      vrm: formVrm || record?.vrm,
-      name: formDriverName || record?.driverName || record?.name,
-      site: formHospital || record?.hospital || record?.site,
-      ward: formWard || record?.ward,
-      validFrom: formDateRequired,
-      validTo: formDateExpiry,
-      dateRequired: formDateRequired,
-      todayDate: formDateRequired,
-      voucherCodesText: selectedCode,
-      status: "Pending",
-      emailType: "RESEND_CONCESSION",
-      isResend: true,
-      emailTemplate: "replacement"
-    });
+    setFormReplacementCode(selectedCode);
+    setFormStatus("PENDING");
   };
 
   // Populate form fields whenever `record` changes or modal opens
@@ -356,6 +355,7 @@ export function EditRecordModal({
       // "CANCELLED" for cancelled records, "BLOCKED" for blocked records,
       // canonicalRecordCode for normal records with allocated codes, or "-"
       setFormVoucherCode(displayVoucherCode);
+      setFormReplacementCode(record.replacementCode || "");
 
       let initialStatus = "PENDING";
       if (isCancelled) {
@@ -403,6 +403,7 @@ export function EditRecordModal({
     const cleanVoucher = formVoucherCode.trim().toUpperCase() || "-";
 
     const isCancelledFinal = formStatus === "CANCELLED" || cleanVoucher === "CANCELLED";
+    const hasReplacement = Boolean(formReplacementCode && formReplacementCode !== "-" && !isCancelledFinal);
 
     const updatedRecord: CsvPermitRecord = {
       ...record,
@@ -424,7 +425,12 @@ export function EditRecordModal({
       voucherCodesText: cleanVoucher,
       status: isCancelledFinal ? "CANCELLED" : formStatus,
       isCancelled: isCancelledFinal,
-      isDispatched: !isCancelledFinal && formStatus === "SENT"
+      isDispatched: !isCancelledFinal && formStatus === "SENT",
+      // Replacement fields
+      replacementCode: hasReplacement ? formReplacementCode : undefined,
+      emailType: hasReplacement ? "RESEND_CONCESSION" : (record.emailType === "RESEND_CONCESSION" ? "SEND_CONCESSION" : record.emailType),
+      isResend: hasReplacement ? true : false,
+      emailTemplate: hasReplacement ? "replacement" : (record.emailTemplate === "replacement" ? "new" : record.emailTemplate)
     };
 
     onSave(updatedRecord);
@@ -627,20 +633,37 @@ export function EditRecordModal({
                 Active Date Codes ({activeDateCodes.length})
               </label>
               <select
-                value={activeDateCodes.some(v => cleanVoucherCodeValue(v.code).toUpperCase() === formVoucherCode) ? formVoucherCode : ""}
+                value={formReplacementCode}
                 onChange={handleActiveDateCodeChange}
-                disabled={activeDateCodes.length === 0}
+                disabled={activeDateCodes.length === 0 && !formReplacementCode}
                 className="w-full px-3 py-2 text-sm font-mono rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#071728] text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
               >
                 <option value="">
-                  {activeDateCodes.length === 0 ? "No active codes for this date" : "-- Choose Code --"}
+                  {activeDateCodes.length === 0 && !formReplacementCode ? "No active codes for this date" : "-- Choose Replacement Code --"}
                 </option>
+                {formReplacementCode && !activeDateCodes.some(v => cleanVoucherCodeValue(v.code).toUpperCase() === formReplacementCode) && (
+                  <option value={formReplacementCode}>
+                    {formReplacementCode} (Selected Replacement)
+                  </option>
+                )}
                 {activeDateCodes.map((v, i) => (
                   <option key={`${v.code}_${i}`} value={cleanVoucherCodeValue(v.code).toUpperCase()}>
                     {cleanVoucherCodeValue(v.code).toUpperCase()}
                   </option>
                 ))}
               </select>
+              {formReplacementCode && (
+                <div className="flex items-center justify-between text-[11px] text-amber-600 dark:text-amber-400 font-medium mt-1 px-0.5">
+                  <span>Replacement code to dispatch: <strong className="font-mono">{formReplacementCode}</strong></span>
+                  <button
+                    type="button"
+                    onClick={() => setFormReplacementCode("")}
+                    className="text-xs text-slate-400 hover:text-rose-500 cursor-pointer underline"
+                  >
+                    Remove
+                  </button>
+                </div>
+              )}
             </div>
 
           </div>

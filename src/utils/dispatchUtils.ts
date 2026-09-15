@@ -1,4 +1,4 @@
-import { CsvPermitRecord, getTodayISO } from "./csvParser";
+import { CsvPermitRecord, getTodayISO, parseDateToISO } from "./csvParser";
 import { getSupabaseClient, syncDispatchedToSupabase, deleteDispatchedFromSupabase, deleteDispatchedKeysFromSupabase, fetchDispatchedFromSupabase } from "../lib/supabase";
 
 /**
@@ -386,4 +386,31 @@ export async function getRecordDispatchHistory(
     console.error('Error getting dispatch history:', error);
     return [];
   }
+}
+
+/**
+ * Checks if two permit records or record-like objects match by Form ID, ID, or VRM + Date
+ */
+export function isRecordMatch(r1?: any, r2?: any): boolean {
+  if (!r1 || !r2) return false;
+  const id1 = String(r1.id ?? "").trim();
+  const formId1 = String(r1.formId ?? "").trim();
+  const id2 = String(r2.id ?? "").trim();
+  const formId2 = String(r2.formId ?? "").trim();
+  if (id1 || formId1 || id2 || formId2) {
+    return Boolean(
+      (id1 && id2 && id1 === id2) ||
+      (formId1 && formId2 && formId1 === formId2) ||
+      (id1 && formId2 && id1 === formId2) ||
+      (formId1 && id2 && formId1 === id2)
+    );
+  }
+  const vrm1 = String(r1.vrm || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const vrm2 = String(r2.vrm || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (vrm1 && vrm2 && vrm1 === vrm2) {
+    const d1 = parseDateToISO(r1.validFrom || r1.dateRequired || r1.todayDate) || "";
+    const d2 = parseDateToISO(r2.validFrom || r2.dateRequired || r2.todayDate) || "";
+    if (d1 && d2 && d1 === d2) return true;
+  }
+  return false;
 }

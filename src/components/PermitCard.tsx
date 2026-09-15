@@ -1928,7 +1928,7 @@ function PermitCardInner({
       (typeof targetRec.prePaidCode === 'string' && targetRec.prePaidCode.toUpperCase() === 'CANCELLED') ||
       (!targetRecord && isCancelled)
     );
-    const targetPayloadCode = targetRec.voucherCode || targetRec.prePaidCode || targetRec.voucherCodesText || (!targetRecord ? (data.qrOverride?.trim() || activeVoucherCode || currentSelectedCode || "") : "");
+    const targetPayloadCode = targetRec.replacementCode || targetRec.voucherCode || targetRec.prePaidCode || targetRec.voucherCodesText || (!targetRecord ? (data.qrOverride?.trim() || activeVoucherCode || currentSelectedCode || "") : "");
 
     // 2. Kick off clipboard write ONLY if permit is NOT cancelled!
     // If cancelled, skip navigator.clipboard.write() call completely and clear clipboard text
@@ -2001,7 +2001,14 @@ function PermitCardInner({
       mailBody = cancelContent.plainText;
       htmlText = cancelContent.htmlText;
     } else {
-      const effectiveTemplate = (!targetRecord && isReplacement) ? "replacement" : emailTemplate;
+      const isTargetReplacement = Boolean(
+        targetRec.replacementCode ||
+        targetRec.emailType === "RESEND_CONCESSION" ||
+        targetRec.isResend ||
+        targetRec.emailTemplate === "replacement" ||
+        (!targetRecord && isReplacement)
+      );
+      const effectiveTemplate = isTargetReplacement ? "replacement" : emailTemplate;
       const content = (effectiveTemplate === "replacement") ? getReplacementEmailContent(params) : getSendEmailContent(params);
       subject = content.subject;
       mailBody = content.plainText;

@@ -472,6 +472,8 @@ export function PermitForm({
                 // since that list was calculated. Never allow a code that is
                 // already present on ANY permit record to be assigned again.
                 const codeFields = [
+                  "replacementCode",
+                  "originalVoucherCode",
                   "voucherCode",
                   "prePaidCode",
                   "qrCode",

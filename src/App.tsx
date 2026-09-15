@@ -16,7 +16,8 @@ import {
   markRecordAsDispatched,
   unmarkRecordAsDispatched,
   getAllDispatchedKeys,
-  batchCheckIsRecordDispatched
+  batchCheckIsRecordDispatched,
+  isRecordMatch
 } from "./utils/dispatchUtils";
 
 // CSV Database Imports
@@ -631,6 +632,83 @@ export default function App() {
   const [lastProcessedDate, setLastProcessedDate] = useState<string>("");
   const [lastDbLength, setLastDbLength] = useState<number>(0);
 
+  // Helper to clear replacement state and promote replacement code to primary code on successful dispatch
+  const handleReplacementSuccessCleanup = (targetRecord: CsvPermitRecord) => {
+    const isTargetReplacement = Boolean(
+      targetRecord.replacementCode ||
+      targetRecord.emailType === "RESEND_CONCESSION" ||
+      targetRecord.isResend ||
+      targetRecord.emailTemplate === "replacement" ||
+      (isRecordMatch(targetRecord, formData) && (formData.emailType === "RESEND_CONCESSION" || formData.isResend || formData.replacementCode))
+    );
+
+    if (isTargetReplacement) {
+      const repCode = targetRecord.replacementCode || (isRecordMatch(targetRecord, formData) ? formData.replacementCode : undefined);
+
+      setDatabase(prevDb => {
+        let matched = false;
+        const nextDb = prevDb.map(item => {
+          if (isRecordMatch(item, targetRecord)) {
+            matched = true;
+            return {
+              ...item,
+              voucherCode: repCode || item.voucherCode,
+              voucherCodesText: repCode || item.voucherCodesText,
+              prePaidCode: repCode || item.prePaidCode,
+              originalVoucherCode: item.voucherCode || item.originalVoucherCode,
+              replacementCode: undefined,
+              emailType: undefined,
+              isResend: false,
+              emailTemplate: undefined,
+              status: "SENT",
+              isDispatched: true
+            };
+          }
+          return item;
+        });
+        if (matched) {
+          databaseRef.current = nextDb;
+          safeLocalStorage.setItem("concessions_permit_db", JSON.stringify(nextDb));
+          if (storageModeRef.current === "cloud" && isSupabaseConfigured()) {
+            syncPermitsToSupabase(nextDb, false).catch(e => console.error("Sync after replacement send failed:", e));
+          }
+        }
+        return nextDb;
+      });
+
+      if (repCode) {
+        setCustomVouchers(prev => {
+          const next = { ...prev };
+          if (targetRecord.formId) next[String(targetRecord.formId)] = repCode;
+          if (targetRecord.id) next[String(targetRecord.id)] = repCode;
+          if (targetRecord.vrm) {
+            const cleanVrm = targetRecord.vrm.toUpperCase().replace(/\s+/g, "");
+            const dateISO = parseDateToISO(targetRecord.dateRequired || "") || getTodayISO();
+            next[cleanVrm] = repCode;
+            if (dateISO) next[`${cleanVrm}_${dateISO}`] = repCode;
+          }
+          safeLocalStorage.setItem("concessions_custom_vouchers", JSON.stringify(next));
+          return next;
+        });
+      }
+
+      setFormData(prev => {
+        if (isRecordMatch(targetRecord, prev)) {
+          return {
+            ...prev,
+            voucherCodesText: repCode || prev.voucherCodesText,
+            replacementCode: undefined,
+            isResend: false,
+            emailType: "SEND_CONCESSION",
+            emailTemplate: "new",
+            status: "SENT"
+          };
+        }
+        return prev;
+      });
+    }
+  };
+
   // 🔥 DISPATCH STATUS HANDLER: Writes to Supabase first, then syncs React state
   const markAsDispatched = async (vrm?: string, email?: string, record?: CsvPermitRecord): Promise<boolean> => {
     lastUserActionTimestampRef.current = Date.now();
@@ -676,6 +754,7 @@ export default function App() {
         unsentKeysRef.current = next;
         return next;
       });
+      handleReplacementSuccessCleanup(targetRecord);
       console.log("💾 [Offline Storage] Record marked as dispatched locally");
       return true;
     }
@@ -757,6 +836,8 @@ export default function App() {
         unsentKeysRef.current = next;
         return next;
       });
+
+      handleReplacementSuccessCleanup(targetRecord);
 
       return true;
     } catch (err: any) {
@@ -1638,6 +1719,13 @@ export default function App() {
       unsentKeys
     );
 
+    const isRepPending = Boolean(
+      enrichedRecord.replacementCode ||
+      enrichedRecord.emailType === "RESEND_CONCESSION" ||
+      enrichedRecord.isResend ||
+      enrichedRecord.emailTemplate === "replacement"
+    );
+
     setFormData((prev) => ({
       ...prev,
       id: enrichedRecord.id,
@@ -1652,12 +1740,13 @@ export default function App() {
       todayDate: fromISO,
       phone: formatPhoneNumber(enrichedRecord.phone || ""),
       email: (enrichedRecord.email || "").toLowerCase(),
-      voucherCodesText: enrichedRecord.voucherCode || "-",
+      voucherCodesText: isRepPending ? (enrichedRecord.replacementCode || enrichedRecord.voucherCode || "-") : (enrichedRecord.voucherCode || "-"),
       startTime: enrichedRecord.startTime,
       createdAt: enrichedRecord.createdAt,
-      isResend: false,
-      emailType: "SEND_CONCESSION",
-      emailTemplate: "new"
+      replacementCode: isRepPending ? enrichedRecord.replacementCode : undefined,
+      isResend: isRepPending,
+      emailType: isRepPending ? "RESEND_CONCESSION" : "SEND_CONCESSION",
+      emailTemplate: isRepPending ? "replacement" : "new"
     }));
   };
 
@@ -1690,6 +1779,13 @@ export default function App() {
       unsentKeys
     );
 
+    const isRepPendingQuick = Boolean(
+      enrichedRecord.replacementCode ||
+      enrichedRecord.emailType === "RESEND_CONCESSION" ||
+      enrichedRecord.isResend ||
+      enrichedRecord.emailTemplate === "replacement"
+    );
+
     setFormData((prev) => ({
       ...prev,
       id: enrichedRecord.id,
@@ -1704,12 +1800,13 @@ export default function App() {
       todayDate: fromISO,
       phone: formatPhoneNumber(enrichedRecord.phone || ""),
       email: (enrichedRecord.email || "").toLowerCase(),
-      voucherCodesText: enrichedRecord.voucherCode || "-",
+      voucherCodesText: isRepPendingQuick ? (enrichedRecord.replacementCode || enrichedRecord.voucherCode || "-") : (enrichedRecord.voucherCode || "-"),
       startTime: enrichedRecord.startTime,
       createdAt: enrichedRecord.createdAt,
-      isResend: false,
-      emailType: "SEND_CONCESSION",
-      emailTemplate: "new"
+      replacementCode: isRepPendingQuick ? enrichedRecord.replacementCode : undefined,
+      isResend: isRepPendingQuick,
+      emailType: isRepPendingQuick ? "RESEND_CONCESSION" : "SEND_CONCESSION",
+      emailTemplate: isRepPendingQuick ? "replacement" : "new"
     }));
   };
 
@@ -1737,20 +1834,9 @@ export default function App() {
   };
 
   const handleSaveRecord = async (updatedRecord: CsvPermitRecord) => {
-    const recId = updatedRecord.id !== undefined && updatedRecord.id !== null ? String(updatedRecord.id).trim() : "";
-    const recFormId = updatedRecord.formId !== undefined && updatedRecord.formId !== null ? String(updatedRecord.formId).trim() : "";
-
     let recordFound = false;
     const updatedDb = (database || []).map(item => {
-      const itemId = item.id !== undefined && item.id !== null ? String(item.id).trim() : "";
-      const itemFormId = item.formId !== undefined && item.formId !== null ? String(item.formId).trim() : "";
-
-      const isMatch = Boolean(
-        (recFormId && (itemFormId === recFormId || itemId === recFormId)) ||
-        (recId && (itemId === recId || itemFormId === recId))
-      );
-
-      if (isMatch) {
+      if (isRecordMatch(item, updatedRecord)) {
         recordFound = true;
         return { ...item, ...updatedRecord };
       }
@@ -1770,11 +1856,11 @@ export default function App() {
     const nowTimestamp = Date.now();
     safeLocalStorage.setItem("concessions_permit_db_last_modified", String(nowTimestamp));
 
-    // Persist custom voucher override if edited
-    if (updatedRecord.voucherCode !== undefined) {
+    // Persist custom voucher override if edited or replacement assigned
+    if (updatedRecord.replacementCode !== undefined || updatedRecord.voucherCode !== undefined) {
       const cleanVrm = updatedRecord.vrm ? updatedRecord.vrm.toUpperCase().replace(/\s+/g, "") : "";
       const dateISO = parseDateToISO(updatedRecord.dateRequired || "") || getTodayISO();
-      const codeVal = updatedRecord.voucherCode || "-";
+      const codeVal = updatedRecord.replacementCode || updatedRecord.voucherCode || "-";
 
       const nextCustom = { ...customVouchers };
       if (updatedRecord.formId) nextCustom[String(updatedRecord.formId)] = codeVal;
@@ -1801,9 +1887,8 @@ export default function App() {
     }
 
     // Update active permit formData if this edited record is currently loaded
-    const activeFormId = String(formData.formId || formData.id || "").trim();
-    const updatedFormId = String(updatedRecord.formId || updatedRecord.id || "").trim();
-    if (activeFormId && activeFormId === updatedFormId) {
+    if (isRecordMatch(updatedRecord, formData)) {
+      const hasReplacement = Boolean(updatedRecord.replacementCode);
       setFormData(prev => ({
         ...prev,
         site: updatedRecord.hospital,
@@ -1814,11 +1899,12 @@ export default function App() {
         validTo: updatedRecord.validTo || updatedRecord.dateExpiry || prev.validTo,
         phone: formatPhoneNumber(updatedRecord.phone || ""),
         email: (updatedRecord.email || "").toLowerCase(),
-        voucherCodesText: updatedRecord.voucherCode || prev.voucherCodesText,
+        voucherCodesText: hasReplacement ? (updatedRecord.replacementCode || prev.voucherCodesText) : (updatedRecord.voucherCode || prev.voucherCodesText),
         status: updatedRecord.status,
-        isResend: false,
-        emailType: "SEND_CONCESSION",
-        emailTemplate: "new"
+        replacementCode: hasReplacement ? updatedRecord.replacementCode : undefined,
+        isResend: hasReplacement,
+        emailType: hasReplacement ? "RESEND_CONCESSION" : "SEND_CONCESSION",
+        emailTemplate: hasReplacement ? "replacement" : "new"
       }));
     }
 
