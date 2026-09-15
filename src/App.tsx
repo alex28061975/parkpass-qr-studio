@@ -1918,86 +1918,76 @@ export default function App() {
     setEditingRecord(null);
   };
 
-  // ⭐ UPDATED: handleDatabaseChange with auto-cancel (VRM-ONLY grouping)
+  // ⭐ FIXED: reconcile incoming Excel records with the existing database BEFORE duplicate cancellation.
+  // This is important when an older record was previously marked CANCELLED but a fresh Excel
+  // import contains the same record in its original/active form. The earliest request must win.
   const handleDatabaseChange = async (incomingDb: CsvPermitRecord[]) => {
     safeLocalStorage.removeItem("concessions_unsent_keys");
     clearDuplicateCheckCache();
-    
-    // ⭐ STEP 1: Auto-cancel duplicates against BOTH the incoming upload and
-    // the existing database.  This is important when a new request is added
-    // after an earlier request for the same VRM already exists in `database`.
-    // The earlier active record remains authoritative; only the incoming
-    // duplicate is marked CANCELLED.
-    const existingActiveRecords = (database || []).filter(r =>
-      r && r.status !== "CANCELLED" && r.isCancelled !== true
-    );
-    const processedIncoming = autoCancelDuplicates([
-      ...existingActiveRecords,
-      ...(incomingDb || [])
-    ]);
 
-    const existingKeys = new Set<string>();
-    existingActiveRecords.forEach(r => {
-      const idKey = r.id !== undefined && r.id !== null ? String(r.id).trim() : "";
-      const formIdKey = r.formId !== undefined && r.formId !== null ? String(r.formId).trim() : "";
-      if (idKey) existingKeys.add(`id:${idKey}`);
-      if (formIdKey) existingKeys.add(`form:${formIdKey}`);
+    const incoming = Array.isArray(incomingDb) ? incomingDb : [];
+
+    const getKey = (record: CsvPermitRecord): string => {
+      const formId = record?.formId !== undefined && record?.formId !== null && record?.formId !== ""
+        ? String(record.formId).trim()
+        : "";
+      const id = record?.id !== undefined && record?.id !== null && record?.id !== ""
+        ? String(record.id).trim()
+        : "";
+      return formId || id;
+    };
+
+    // Merge by ID/formId. A fresh incoming active record replaces an existing CANCELLED copy;
+    // otherwise preserve the existing edited record exactly as before.
+    const mergedByKey = new Map<string, CsvPermitRecord>();
+    const unkeyed: CsvPermitRecord[] = [];
+
+    (database || []).forEach(existing => {
+      const key = getKey(existing);
+      if (key) mergedByKey.set(key, { ...existing });
+      else unkeyed.push({ ...existing });
     });
 
-    // Keep only records belonging to the current upload. Existing records are
-    // used as duplicate anchors but must not be re-imported or replaced.
-    const processedRecords = (processedIncoming || []).filter(record => {
-      const idKey = record.id !== undefined && record.id !== null ? String(record.id).trim() : "";
-      const formIdKey = record.formId !== undefined && record.formId !== null ? String(record.formId).trim() : "";
-      const isExisting =
-        (idKey && existingKeys.has(`id:${idKey}`)) ||
-        (formIdKey && existingKeys.has(`form:${formIdKey}`));
-      return !isExisting;
+    incoming.forEach(item => {
+      const key = getKey(item);
+      if (!key) {
+        unkeyed.push({ ...item });
+        return;
+      }
+
+      const existing = mergedByKey.get(key);
+      const existingCancelled = existing?.isCancelled === true ||
+        String(existing?.status || "").trim().toUpperCase() === "CANCELLED";
+      const incomingCancelled = item?.isCancelled === true ||
+        String(item?.status || "").trim().toUpperCase() === "CANCELLED";
+
+      // If the existing copy is cancelled but the source Excel row is active, restore the
+      // source row. This prevents a stale persisted CANCELLED state from winning the merge.
+      if (!existing || (existingCancelled && !incomingCancelled)) {
+        mergedByKey.set(key, { ...item });
+      }
+      // If both are active, retain the existing edited version as the original app intended.
+      // If the incoming row is itself cancelled, retain an existing active record rather than
+      // allowing a stale cancellation to overwrite a valid concession.
     });
-    
-    // ⭐ STEP 2: Count how many were cancelled
-    const cancelledCount = processedRecords.filter(r => r.status === "CANCELLED").length;
-    
+
+    const reconciled = [...Array.from(mergedByKey.values()), ...unkeyed];
+
+    // ⭐ CRITICAL: run duplicate cancellation across the FULL reconciled database, not just
+    // the newly uploaded rows. This catches cases where an older request was already stored
+    // and a later duplicate was created by a subsequent submission.
+    const processedRecords = autoCancelDuplicates(reconciled);
+
+    const cancelledCount = processedRecords.filter(r =>
+      String(r?.status || "").trim().toUpperCase() === "CANCELLED"
+    ).length;
+
     if (cancelledCount > 0) {
       showToast(`✅ Processed ${processedRecords.length} records. ${cancelledCount} duplicate(s) auto-cancelled.`, "success");
       console.log(`🔄 Auto-cancelled ${cancelledCount} duplicate records`);
     }
-    
-    // Build lookup maps for existing database records:
-    const recordMap = new Map<string, CsvPermitRecord>();
-    const formIdMap = new Map<string, CsvPermitRecord>();
-    const idMap = new Map<string, CsvPermitRecord>();
 
-    (database || []).forEach(item => {
-      const idKey = item.id !== undefined && item.id !== null ? String(item.id).trim() : "";
-      const formIdKey = item.formId !== undefined && item.formId !== null ? String(item.formId).trim() : "";
-      const primaryKey = formIdKey || idKey;
-      if (primaryKey) {
-        recordMap.set(primaryKey, { ...item });
-      }
-      if (idKey) idMap.set(idKey, item);
-      if (formIdKey) formIdMap.set(formIdKey, item);
-    });
-
-    // Merge logic using processedRecords instead of incomingDb
-    (processedRecords || []).forEach(item => {
-      const idKey = item.id !== undefined && item.id !== null ? String(item.id).trim() : "";
-      const formIdKey = item.formId !== undefined && item.formId !== null ? String(item.formId).trim() : "";
-
-      const existing = (formIdKey && formIdMap.get(formIdKey)) || (idKey && idMap.get(idKey));
-      if (existing) {
-        // KEEP the existing (edited) version! Do not overwrite.
-      } else {
-        // If it doesn't exist, ADD the new record.
-        const primaryKey = formIdKey || idKey || `row_${Date.now()}_${Math.random()}`;
-        recordMap.set(primaryKey, { ...item });
-        if (idKey) idMap.set(idKey, item);
-        if (formIdKey) formIdMap.set(formIdKey, item);
-      }
-    });
-
-    const combinedDb = Array.from(recordMap.values());
-    const sorted = sortRecordsByFormIdDesc(combinedDb);
+    const sorted = sortRecordsByFormIdDesc(processedRecords);
 
     setDatabase(sorted);
     setTotalRecordsCount(prev => Math.max(prev, sorted.length));
@@ -2015,7 +2005,7 @@ export default function App() {
       const firstRecord = processedRecords[0];
       const fromISO = parseDateToISO(firstRecord.dateRequired) || getTodayISO();
       const toISO = addDays(fromISO, 6);
-      
+
       setFormData((prev) => ({
         ...prev,
         site: firstRecord.hospital,
