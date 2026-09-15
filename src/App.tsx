@@ -1923,8 +1923,37 @@ export default function App() {
     safeLocalStorage.removeItem("concessions_unsent_keys");
     clearDuplicateCheckCache();
     
-    // ⭐ STEP 1: Auto-cancel duplicates (VRM-ONLY grouping)
-    const processedRecords = autoCancelDuplicates(incomingDb);
+    // ⭐ STEP 1: Auto-cancel duplicates against BOTH the incoming upload and
+    // the existing database.  This is important when a new request is added
+    // after an earlier request for the same VRM already exists in `database`.
+    // The earlier active record remains authoritative; only the incoming
+    // duplicate is marked CANCELLED.
+    const existingActiveRecords = (database || []).filter(r =>
+      r && r.status !== "CANCELLED" && r.isCancelled !== true
+    );
+    const processedIncoming = autoCancelDuplicates([
+      ...existingActiveRecords,
+      ...(incomingDb || [])
+    ]);
+
+    const existingKeys = new Set<string>();
+    existingActiveRecords.forEach(r => {
+      const idKey = r.id !== undefined && r.id !== null ? String(r.id).trim() : "";
+      const formIdKey = r.formId !== undefined && r.formId !== null ? String(r.formId).trim() : "";
+      if (idKey) existingKeys.add(`id:${idKey}`);
+      if (formIdKey) existingKeys.add(`form:${formIdKey}`);
+    });
+
+    // Keep only records belonging to the current upload. Existing records are
+    // used as duplicate anchors but must not be re-imported or replaced.
+    const processedRecords = (processedIncoming || []).filter(record => {
+      const idKey = record.id !== undefined && record.id !== null ? String(record.id).trim() : "";
+      const formIdKey = record.formId !== undefined && record.formId !== null ? String(record.formId).trim() : "";
+      const isExisting =
+        (idKey && existingKeys.has(`id:${idKey}`)) ||
+        (formIdKey && existingKeys.has(`form:${formIdKey}`));
+      return !isExisting;
+    });
     
     // ⭐ STEP 2: Count how many were cancelled
     const cancelledCount = processedRecords.filter(r => r.status === "CANCELLED").length;
