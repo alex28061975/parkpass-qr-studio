@@ -483,12 +483,12 @@ export function getRecordSubmittedTimeMs(record?: any): number {
                   : "";
     if (!candidate || candidate === "-" || candidate.toLowerCase() === "null" || candidate.toLowerCase() === "undefined") return 0;
 
-    const directTs = safeParseDateToTimestamp(candidate);
-    if (directTs !== null && directTs > 0) return directTs;
-
     const recDateISO = parseDateToISO(record?.dateRequired || record?.validFrom || record?.todayDate || "") || "";
     const ms = parseFullDateTimeMs(String(candidate), recDateISO);
     if (ms !== null && ms > 0) return ms;
+
+    const directTs = safeParseDateToTimestamp(candidate);
+    if (directTs !== null && directTs > 0) return directTs;
 
     return 0;
   } catch (e) {

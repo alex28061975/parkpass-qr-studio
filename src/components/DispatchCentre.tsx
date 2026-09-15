@@ -836,8 +836,8 @@ export function DispatchCentre({
             return null;
           }
 
-          // Step 1: Call safeParseDMYToISO(rawStr) to produce canonical YYYY-MM-DD
-          const canonicalISO = safeParseDMYToISO(rawStr) || parseDateToISO(rawStr);
+          // Step 1: Call parseDateToISO(rawStr) to produce canonical YYYY-MM-DD (format-aware), fall back to safeParseDMYToISO
+          const canonicalISO = parseDateToISO(rawStr) || safeParseDMYToISO(rawStr);
           if (canonicalISO && /^\d{4}-\d{2}-\d{2}$/.test(canonicalISO)) {
             const [yStr, mStr, dStr] = canonicalISO.split("-");
             const year = parseInt(yStr, 10);
