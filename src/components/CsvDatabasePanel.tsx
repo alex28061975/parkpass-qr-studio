@@ -14,7 +14,8 @@ import {
   exportToExcel,
   formatPhoneNumber,
   cleanVoucherCodeValue,
-  formatFormId
+  formatFormId,
+  getRecordSubmittedDateISO
 } from "../utils/csvParser";
 import { safeLocalStorage } from "../utils/safeLocalStorage";
 import { isSupabaseConfigured } from "../lib/supabase";
@@ -490,16 +491,13 @@ export const CsvDatabasePanel = forwardRef<CsvDatabasePanelHandle, CsvDatabasePa
     if (!isSupabaseConfigured() && dateRangeFilter && dateRangeFilter !== 'all') {
       const days = dateRangeFilter === '7days' ? 7 : 30;
       result = result.filter(r => {
-        const rawDate = r.dateRequired || r.todayDate || r.createdAt || r.created_at;
-        if (rawDate) {
-          const iso = parseDateToISO(rawDate);
-          if (iso) {
-            const reqDate = new Date(iso);
-            const today = new Date("2026-08-06");
-            const diffTime = today.getTime() - reqDate.getTime();
-            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-            if (diffDays < 0 || diffDays > days) return false;
-          }
+        const iso = getRecordSubmittedDateISO(r);
+        if (iso) {
+          const subDate = new Date(iso);
+          const today = new Date(processingDate || getTodayISO());
+          const diffTime = today.getTime() - subDate.getTime();
+          const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+          if (diffDays < 0 || diffDays > days) return false;
         }
         return true;
       });
@@ -520,7 +518,7 @@ export const CsvDatabasePanel = forwardRef<CsvDatabasePanelHandle, CsvDatabasePa
         (r.voucherCode && r.voucherCode.toLowerCase().includes(q))
       );
     });
-  }, [sortedDatabase, debouncedSearchQuery, dateRangeFilter]);
+  }, [sortedDatabase, debouncedSearchQuery, dateRangeFilter, processingDate]);
 
   const effectiveTotalCount = totalRecordsCount && totalRecordsCount > 0 ? totalRecordsCount : database.length;
   const isFilteredBySearch = Boolean(debouncedSearchQuery.trim());
