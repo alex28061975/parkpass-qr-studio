@@ -224,6 +224,7 @@ export interface CsvPermitRecord {
   replacementCode?: string;
   originalVoucherCode?: string;
   replacementCount?: number;
+  cancellationReason?: "DUPLICATE_VRM" | "BLOCKLIST" | "EXPIRED" | "MANUAL" | string;
 }
 
 export function getNumericFormId(record?: any): number {
@@ -2353,7 +2354,9 @@ export function isRecordCancelledCanonical(record: any, todayDateOrReference?: s
   if (!record) return false;
   if (record.isCancelled === true) return true;
   if (typeof record.status === "string" && record.status.trim().toLowerCase().includes("cancel")) return true;
-  if (
+  if (record.isCancelled === false && String(record.status || "").trim().toUpperCase() === "ACTIVE") {
+    // Explicitly active record: do not let stale CANCELLED string in voucherCode override active status
+  } else if (
     record.voucherCode === "CANCELLED" ||
     record.voucherCodesText === "CANCELLED" ||
     record.prePaidCode === "CANCELLED" ||
@@ -3062,18 +3065,18 @@ export function isRecordStrictlyEarlier(
   try {
     if (isSamePermitRecord(candidate, target)) return false;
 
-    const formIdCandidate = extractRecordNumericFormId(candidate);
-    const formIdTarget = extractRecordNumericFormId(target);
-
-    if (formIdCandidate > 0 && formIdTarget > 0 && formIdCandidate !== formIdTarget) {
-      return formIdCandidate < formIdTarget;
-    }
-
     const timeCandidate = extractRecordSubmissionTimeMs(candidate);
     const timeTarget = extractRecordSubmissionTimeMs(target);
 
     if (timeCandidate > 0 && timeTarget > 0 && timeCandidate !== timeTarget) {
       return timeCandidate < timeTarget;
+    }
+
+    const formIdCandidate = extractRecordNumericFormId(candidate);
+    const formIdTarget = extractRecordNumericFormId(target);
+
+    if (formIdCandidate > 0 && formIdTarget > 0 && formIdCandidate !== formIdTarget) {
+      return formIdCandidate < formIdTarget;
     }
 
     if (formIdCandidate > 0 && formIdTarget === 0) {
@@ -3191,20 +3194,18 @@ export function checkIsBlockedDuplicate(
       ? (parseDateToISO(String(earlierRawRefDate)) || "") 
       : (parseDateToISO(earlierDateRequired) || refDateISO || "");
 
-    // Fast check if earlier record is cancelled WITHOUT recursive deep database scanning
-    const earlierIsCancelled = 
-      earlier?.isCancelled === true ||
-      earlier?.voucherCode === "CANCELLED" ||
-      earlier?.voucherCodesText === "CANCELLED" ||
-      earlier?.prePaidCode === "CANCELLED" ||
-      (typeof earlier?.voucherCode === "string" && earlier.voucherCode.trim().toUpperCase() === "CANCELLED") ||
-      (typeof earlier?.voucherCodesText === "string" && earlier.voucherCodesText.trim().toUpperCase() === "CANCELLED") ||
-      (typeof earlier?.prePaidCode === "string" && earlier.prePaidCode.trim().toUpperCase() === "CANCELLED") ||
-      (typeof earlier?.status === "string" && earlier.status.trim().toLowerCase().includes("cancel")) ||
+    // Check if earlier record is genuinely invalid (silent blocked on security blocklist or expired date)
+    // Note: Do not skip an earlier record if it was merely marked cancelled by duplicate-processing or stale state,
+    // because that would allow a later duplicate to erroneously appear active.
+    const earlierIsInvalid = 
       isVrmSilentBlockedSync(earlier?.vrm) ||
+      (typeof earlier?.status === "string" && earlier.status.trim().toUpperCase() === "BLOCKED") ||
+      earlier?.cancellationReason === "BLOCKLIST" ||
+      earlier?.cancellationReason === "MANUAL" ||
+      earlier?.cancellationReason === "EXPIRED" ||
       isDateRequiredOutsideValidWindow(earlierDateRequired, earlierRefDate);
 
-    if (earlierIsCancelled) {
+    if (earlierIsInvalid) {
       continue;
     }
 
@@ -3245,7 +3246,9 @@ export function isRecordCancelled(
 
   if (record.isCancelled === true) return true;
   if (typeof record.status === "string" && record.status.trim().toLowerCase().includes("cancel")) return true;
-  if (
+  if (record.isCancelled === false && String(record.status || "").trim().toUpperCase() === "ACTIVE") {
+    // Explicitly active record: do not let stale CANCELLED string in voucherCode override active status
+  } else if (
     record.voucherCode === "CANCELLED" ||
     record.voucherCodesText === "CANCELLED" ||
     record.prePaidCode === "CANCELLED" ||

@@ -40,6 +40,7 @@ export interface PermitData {
   hasOriginalVoucher?: boolean;
   processingDate?: string;
   submissionDate?: string;
+  cancellationReason?: "DUPLICATE_VRM" | "BLOCKLIST" | "EXPIRED" | "MANUAL" | string;
 }
 
 export const HOSPITAL_SITES = [

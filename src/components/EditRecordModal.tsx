@@ -210,7 +210,9 @@ export function EditRecordModal({
     if (!record) return false;
     if (record.isCancelled === true) return true;
     if (record.status && String(record.status).toLowerCase().includes("cancel")) return true;
-    if (
+    if (record.isCancelled === false && String(record.status || "").trim().toUpperCase() === "ACTIVE") {
+      // Explicitly active
+    } else if (
       record.voucherCode === "CANCELLED" ||
       (record as any).prePaidCode === "CANCELLED" ||
       (record as any).voucherCodesText === "CANCELLED"
@@ -425,6 +427,7 @@ export function EditRecordModal({
       voucherCodesText: cleanVoucher,
       status: isCancelledFinal ? "CANCELLED" : formStatus,
       isCancelled: isCancelledFinal,
+      cancellationReason: isCancelledFinal ? (record.cancellationReason || "MANUAL") : undefined,
       isDispatched: !isCancelledFinal && formStatus === "SENT",
       // Replacement fields
       replacementCode: hasReplacement ? formReplacementCode : undefined,

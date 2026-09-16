@@ -644,7 +644,9 @@ export function DispatchCentre({
     if (!record) return false;
     if (record.isCancelled === true) return true;
     if (typeof record.status === "string" && record.status.trim().toLowerCase().includes("cancel")) return true;
-    if (
+    if (record.isCancelled === false && String(record.status || "").trim().toUpperCase() === "ACTIVE") {
+      // Explicitly active record: do not let stale CANCELLED string in voucherCode override active status
+    } else if (
       record.voucherCode === "CANCELLED" ||
       record.voucherCodesText === "CANCELLED" ||
       record.prePaidCode === "CANCELLED" ||
