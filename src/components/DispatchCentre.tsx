@@ -1387,16 +1387,6 @@ export function DispatchCentre({
             <span className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 font-normal whitespace-nowrap">
               {totalVouchersCount} vouchers
             </span>
-            {totalVouchersCount > 0 && onResetVouchers && (
-              <button
-                type="button"
-                onClick={onResetVouchers}
-                title="Clear all vouchers from inventory"
-                className="text-xs text-rose-600 dark:text-rose-400 hover:text-rose-700 underline font-medium cursor-pointer transition ml-1 whitespace-nowrap"
-              >
-                Clear vouchers
-              </button>
-            )}
 
             <span className="whitespace-nowrap shrink-0 inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold text-emerald-400 bg-emerald-950/40 border border-emerald-800/40">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
