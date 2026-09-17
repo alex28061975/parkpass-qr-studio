@@ -43,7 +43,10 @@ import {
   deleteDispatchedFromSupabase,
   clearSupabaseDispatches,
   cleanupCorruptedDispatchedKeys,
-  subscribeToSupabaseChanges
+  subscribeToSupabaseChanges,
+  clearInvalidVoucherCodes,
+  resetVoucherInventory,
+  clearAllVouchers
 } from "./lib/supabase";
 
 // Helper to format string to Title Case (capitalize each word)
@@ -1471,6 +1474,18 @@ export default function App() {
       }
 
       await initSupabaseConfig();
+
+      // One-time startup cleanup: remove only the known voucher codes that are
+      // not present in the authoritative uploaded Vouchers.csv.
+      if (isSupabaseConfigured()) {
+        const { cleared } = await clearInvalidVoucherCodes();
+        if (cleared > 0) {
+          console.log(`Cleared ${cleared} invalid voucher codes`);
+          window.location.reload();
+          return;
+        }
+      }
+
       const configured = isSupabaseConfigured();
       if (!configured) {
         setIsSupabaseActive(false);
@@ -2275,6 +2290,38 @@ export default function App() {
     }
   };
 
+  const handleResetVouchers = async (): Promise<{ cleared: number; error: string | null }> => {
+    console.log('CLEAR ALL VOUCHERS STARTED');
+    showToast("Resetting voucher inventory...", "info");
+
+    let result = { cleared: 0, error: null as string | null };
+    if (isSupabaseConfigured()) {
+      result = await resetVoucherInventory();
+    }
+
+    setVouchersDatabase([]);
+    vouchersDatabaseRef.current = [];
+
+    safeLocalStorage.removeItem("concessions_vouchers_db");
+    safeLocalStorage.removeItem("vouchers");
+    safeLocalStorage.removeItem("activeCodes");
+    safeLocalStorage.removeItem("concessions_vouchers_db_last_modified");
+    safeLocalStorage.removeItem("concessions_uploaded_vouchers_file_name");
+    try {
+      sessionStorage.removeItem("concessions_vouchers_db");
+      sessionStorage.removeItem("vouchers");
+      sessionStorage.removeItem("activeCodes");
+    } catch (e) {}
+
+    showToast("Voucher inventory reset to 0.", "success");
+    return result;
+  };
+
+  useEffect(() => {
+    (window as any).resetVoucherInventory = handleResetVouchers;
+    (window as any).clearAllVouchers = handleResetVouchers;
+  }, []);
+
   const handleClear = () => {
     setFormData({
       title: "Patient & Visitor Concessions",
@@ -2416,6 +2463,7 @@ export default function App() {
             isLoadingHistory={isLoadingHistory}
             onBrowseConcessions={() => csvPanelRef.current?.browseConcessions()}
             onBrowseVouchers={() => csvPanelRef.current?.browseVouchers()}
+            onResetVouchers={handleResetVouchers}
             onEditRecord={handleEditRecord}
           />
 

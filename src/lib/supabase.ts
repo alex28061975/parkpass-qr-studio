@@ -7,12 +7,26 @@ let runtimeSupabaseAnonKey: string | undefined = undefined;
 const DEFAULT_SUPABASE_URL = "https://ihhkitfpjmhudyzdhlpg.supabase.co";
 const DEFAULT_SUPABASE_KEY = "sb_publishable_-7OtzoSb8zYjAXHR_Gk6dg_jAqiUyHQ";
 
+const getEnvVar = (key: string): string | undefined => {
+  try {
+    if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env[key]) {
+      return import.meta.env[key];
+    }
+  } catch (e) {}
+  try {
+    if (typeof process !== 'undefined' && process.env && process.env[key]) {
+      return process.env[key];
+    }
+  } catch (e) {}
+  return undefined;
+};
+
 const getRawUrl = (): string | undefined => {
-  return runtimeSupabaseUrl || import.meta.env.VITE_SUPABASE_URL || import.meta.env.SUPABASE_URL || (typeof window !== 'undefined' ? (window as any).__SUPABASE_URL__ : undefined) || DEFAULT_SUPABASE_URL;
+  return runtimeSupabaseUrl || getEnvVar('VITE_SUPABASE_URL') || getEnvVar('SUPABASE_URL') || (typeof window !== 'undefined' ? (window as any).__SUPABASE_URL__ : undefined) || DEFAULT_SUPABASE_URL;
 };
 
 const getRawKey = (): string | undefined => {
-  return runtimeSupabaseAnonKey || import.meta.env.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_KEY || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.meta.env.SUPABASE_KEY || import.meta.env.SUPABASE_PUBLISHABLE_KEY || import.meta.env.SUPABASE_ANON_KEY || (typeof window !== 'undefined' ? (window as any).__SUPABASE_ANON_KEY__ : undefined) || DEFAULT_SUPABASE_KEY;
+  return runtimeSupabaseAnonKey || getEnvVar('VITE_SUPABASE_ANON_KEY') || getEnvVar('VITE_SUPABASE_KEY') || getEnvVar('VITE_SUPABASE_PUBLISHABLE_KEY') || getEnvVar('SUPABASE_KEY') || getEnvVar('SUPABASE_PUBLISHABLE_KEY') || getEnvVar('SUPABASE_ANON_KEY') || (typeof window !== 'undefined' ? (window as any).__SUPABASE_ANON_KEY__ : undefined) || DEFAULT_SUPABASE_KEY;
 };
 
 const getSupabaseUrl = (): string | undefined => {
@@ -70,6 +84,82 @@ export const getSupabaseClient = (): SupabaseClient | null => {
     supabaseClient = createClient(url!, key!);
   }
   return supabaseClient;
+};
+
+export const resetVoucherInventory = async (): Promise<{ cleared: number; error: string | null }> => {
+  console.log('CLEAR ALL VOUCHERS STARTED');
+  const client = getSupabaseClient();
+  if (!client) {
+    console.log('CLEAR ALL VOUCHERS RESULT:', { cleared: 0, error: 'Supabase client not configured' });
+    return { cleared: 0, error: null };
+  }
+
+  try {
+    const { error, count } = await client
+      .from('vouchers')
+      .delete({ count: 'exact' })
+      .neq('code', '___non_existent_code___');
+
+    if (error) {
+      console.error('clearAllVouchers error:', {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        hint: error.hint,
+        fullError: error
+      });
+      console.log('CLEAR ALL VOUCHERS RESULT:', {
+        cleared: 0,
+        error: error.message
+      });
+      return { cleared: 0, error: error.message };
+    }
+
+    const clearedCount = count ?? 0;
+    console.log('CLEAR ALL VOUCHERS RESULT:', {
+      cleared: clearedCount,
+      error: null
+    });
+    return { cleared: clearedCount, error: null };
+  } catch (err: any) {
+    console.error('clearAllVouchers error:', {
+      message: err?.message || 'Unknown exception',
+      fullError: err
+    });
+    console.log('CLEAR ALL VOUCHERS RESULT:', {
+      cleared: 0,
+      error: err?.message || 'Unknown exception'
+    });
+    return { cleared: 0, error: err?.message || 'Unknown error' };
+  }
+};
+
+export const clearAllVouchers = resetVoucherInventory;
+
+export const clearInvalidVoucherCodes = async (): Promise<{ cleared: number }> => {
+  const client = getSupabaseClient();
+  if (!client) return { cleared: 0 };
+
+  const badCodes = [
+    '58CYWTPL0EN5H','WMFPJHQH1T3P2','14DPCBZ8CXC9A','AW5A4DIMZ6CNN',
+    'NTY4ZD21412R7','3Q1JWTQIX3LHP','CIP9GY566Q3BE','V49NKHZ52MYFJ',
+    'GIPM5RXTOVPRX','3O9P884XD8YFQ','4YQGWZ9HPJKLE','62ZCOVUAJP61S',
+    '79OFDC7J4T6GZ','CPHE1E39CQNR5','XBMFYXBE47JRG','X2WYK6AS5XQ9Q',
+    'CJOU7SMRF4MFG','REA4338YXRSBB','RE5BXW9I9DT67','R45EMSHO3WFDX',
+    '132GK198IVU5A','QC7P160BV9ZMS','Q7Z9DCMK8NAMA'
+  ];
+
+  const { error, count } = await client
+    .from('permits')
+    .update({ voucher_code: null }, { count: 'exact' })
+    .in('voucher_code', badCodes);
+
+  if (error) {
+    console.error('Failed to clear bad voucher codes:', error.message);
+    return { cleared: 0 };
+  }
+
+  return { cleared: count || 0 };
 };
 
 export const checkSupabaseConnection = async (): Promise<{ connected: boolean; error?: string }> => {

@@ -151,7 +151,7 @@ export const CsvDatabasePanel = forwardRef<CsvDatabasePanelHandle, CsvDatabasePa
   const [uploadedVouchersFileName, setUploadedVouchersFileName] = useState<string | null>(() => {
     const cachedName = safeLocalStorage.getItem("concessions_uploaded_vouchers_file_name");
     if (cachedName && !cachedName.includes("Codes")) return cachedName;
-    return "Vouchers.csv";
+    return null;
   });
 
   const { showLoading, hideLoading, updateProgress } = useLoading();
@@ -223,7 +223,7 @@ export const CsvDatabasePanel = forwardRef<CsvDatabasePanelHandle, CsvDatabasePa
     } else if (vouchersDatabase.length === 0) {
       setUploadedVouchersFileName(null);
     } else {
-      setUploadedVouchersFileName("Vouchers.csv");
+      setUploadedVouchersFileName(cachedName || null);
     }
   }, [vouchersDatabase]);
 

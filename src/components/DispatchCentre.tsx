@@ -100,6 +100,7 @@ interface DispatchCentreProps {
   isLoadingHistory?: boolean;
   onBrowseConcessions?: () => void;
   onBrowseVouchers?: () => void;
+  onResetVouchers?: () => Promise<any> | void;
   onEditRecord?: (record: CsvPermitRecord, resolvedCode?: string) => void;
 }
 
@@ -179,6 +180,7 @@ export function DispatchCentre({
   isLoadingHistory,
   onBrowseConcessions,
   onBrowseVouchers,
+  onResetVouchers,
   onEditRecord
 }: DispatchCentreProps) {
   const [internalSearchQuery, setInternalSearchQuery] = useState("");
@@ -1301,8 +1303,8 @@ export function DispatchCentre({
   }, [totalPages, safePage]);
 
   const count = filteredRecords.length;
-  const totalDbCount = totalRecordsCount && totalRecordsCount > 0 ? totalRecordsCount : (database.length || 889);
-  const totalVouchersCount = vouchersDatabase.length > 0 ? vouchersDatabase.length : 174;
+  const totalDbCount = totalRecordsCount && totalRecordsCount > 0 ? totalRecordsCount : database.length;
+  const totalVouchersCount = vouchersDatabase.length;
   const unusedVouchersCount = unusedVouchersForDay.length;
   const remainingVoucherPercent = totalVouchersCount > 0 
     ? (unusedVouchersCount / totalVouchersCount) * 100 
@@ -1385,6 +1387,16 @@ export function DispatchCentre({
             <span className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 font-normal whitespace-nowrap">
               {totalVouchersCount} vouchers
             </span>
+            {totalVouchersCount > 0 && onResetVouchers && (
+              <button
+                type="button"
+                onClick={onResetVouchers}
+                title="Clear all vouchers from inventory"
+                className="text-xs text-rose-600 dark:text-rose-400 hover:text-rose-700 underline font-medium cursor-pointer transition ml-1 whitespace-nowrap"
+              >
+                Clear vouchers
+              </button>
+            )}
 
             <span className="whitespace-nowrap shrink-0 inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold text-emerald-400 bg-emerald-950/40 border border-emerald-800/40">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
@@ -1808,21 +1820,30 @@ export function DispatchCentre({
                   displayCode = codeExists ? rawCode : "-";
                 }
 
-                // ⭐ O(1) candidate lookup: Verify displayCode exists in current vouchersDatabase for this permit's date range
+                // Every displayed voucher code must come from the loaded Vouchers.csv
+                // and match this permit's VALIDFROM/VALIDTO range. Never trust a
+                // stale Supabase/custom/replacement value.
                 if (
                   displayCode &&
                   displayCode !== "-" &&
                   displayCode !== "CANCELLED" &&
-                  displayCode !== "BLOCKED" &&
-                  vouchersDatabase &&
-                  vouchersDatabase.length > 0
+                  displayCode !== "BLOCKED"
                 ) {
                   const cleanDisplay = cleanVoucherCodeValue(displayCode).toUpperCase();
-                  const candidates = voucherIndex.codeMap.get(cleanDisplay);
-                  const validInDbForDate = candidates ? candidates.some(v =>
-                    !permitFromISO || isVoucherForPermitDateRange(v, permitFromISO, permitToISO)
-                  ) : false;
-                  if (!validInDbForDate) {
+                  const candidates = vouchersDatabase && vouchersDatabase.length > 0
+                    ? voucherIndex.codeMap.get(cleanDisplay)
+                    : undefined;
+
+                  const validInCsvForDate = Boolean(
+                    candidates &&
+                    permitFromISO &&
+                    permitToISO &&
+                    candidates.some(v =>
+                      isVoucherForPermitDateRange(v, permitFromISO, permitToISO)
+                    )
+                  );
+
+                  if (!validInCsvForDate) {
                     displayCode = "-";
                   }
                 }

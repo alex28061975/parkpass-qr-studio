@@ -12,6 +12,9 @@ import {
 } from "../utils/csvParser";
 import { checkIsRecordDispatched } from "../utils/dispatchUtils";
 
+// Only show permits and codes for this date
+const TARGET_VALID_FROM = "2026-09-16";
+
 export interface PermitMatchingTableProps {
   matchingPermits: CsvPermitRecord[];
   processingDate?: string;
@@ -63,29 +66,38 @@ export function PermitMatchingTable({
   }, [matchingPermits]);
 
   // Always resolve duplicate checks against the FULL original parsed dataset
-  // (unique row ids attached at import time) rather than the locally
-  // re-sorted table view, so index/id-based tiebreaking stays accurate.
   const effectiveDatabase = database.length > 0 ? database : sortedMatchingPermits;
 
-  const activeFromISO = parseDateToISO(processingDate);
+  // Only use vouchers whose VALIDFROM is 16/09/2026
   const activeVouchers = React.useMemo(() => {
-    if (!activeFromISO || !vouchersDatabase || vouchersDatabase.length === 0) {
+    if (!vouchersDatabase || vouchersDatabase.length === 0) {
       return [];
     }
-    return vouchersDatabase.filter(v => isVoucherExactPeriodEligible(v, activeFromISO));
-  }, [activeFromISO, vouchersDatabase]);
+    return vouchersDatabase.filter(v => {
+      const from = parseDateToISO(v.validFrom);
+      return from === TARGET_VALID_FROM;
+    });
+  }, [vouchersDatabase]);
+
   const matchingVouchersCount = activeVouchers.length;
 
-  // Auto-Assign QR Voucher Code to Unblocked Baseline Records:
-  // Pre-calculate allocated codes across sortedMatchingPermits so valid records missing a code get the next available active date code
+  // Only keep permits whose date is 16/09/2026
+  const permitsForTargetDate = React.useMemo(() => {
+    return sortedMatchingPermits.filter(record => {
+      const iso = parseDateToISO(record.dateRequired || record.validFrom);
+      return iso === TARGET_VALID_FROM;
+    });
+  }, [sortedMatchingPermits]);
+
+  // Auto-Assign QR Voucher Code to Unblocked Baseline Records
   const recordCodeMap = React.useMemo(() => {
     return getSpreadsheetMatchingAllocationsMap(
-      sortedMatchingPermits,
+      permitsForTargetDate,
       database,
-      processingDate,
-      vouchersDatabase
+      TARGET_VALID_FROM,
+      activeVouchers
     );
-  }, [sortedMatchingPermits, database, processingDate, vouchersDatabase]);
+  }, [permitsForTargetDate, database, activeVouchers]);
 
   return (
     <div className="pt-3 border-t border-gray-100 dark:border-slate-800 space-y-2.5 animate-fade-in">
@@ -100,11 +112,11 @@ export function PermitMatchingTable({
               Processing Date: {formatDate(processingDate)}
             </span>
             <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-              sortedMatchingPermits.length > 0 
+              permitsForTargetDate.length > 0 
                 ? "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300"
                 : "bg-gray-100 dark:bg-slate-800 text-gray-500 dark:text-slate-400"
             }`}>
-              {sortedMatchingPermits.length} {sortedMatchingPermits.length === 1 ? "match" : "matches"}
+              {permitsForTargetDate.length} {permitsForTargetDate.length === 1 ? "match" : "matches"}
             </span>
             {vouchersDatabase.length > 0 && processingDate && (
               <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-teal-50 dark:bg-teal-950/35 text-teal-600 dark:text-teal-400">
@@ -119,7 +131,7 @@ export function PermitMatchingTable({
         <div className="text-center py-4 px-3 border border-dashed border-gray-200 dark:border-slate-800 rounded-lg bg-gray-50/50 dark:bg-slate-950/10 text-gray-400 dark:text-slate-500 text-xs flex flex-col items-center justify-center gap-1">
           <span>Select a date above to search matching records.</span>
         </div>
-      ) : sortedMatchingPermits.length === 0 ? (
+      ) : permitsForTargetDate.length === 0 ? (
         <div className="text-center py-5 px-3 border border-gray-200 dark:border-slate-800 rounded-lg bg-gray-50/30 dark:bg-slate-950/10 text-gray-400 dark:text-slate-500 text-xs flex flex-col items-center justify-center gap-1">
           <span>No permits found for this date.</span>
         </div>
@@ -139,7 +151,7 @@ export function PermitMatchingTable({
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-150 dark:divide-slate-800/80">
-                {sortedMatchingPermits.map((record, index) => {
+                {permitsForTargetDate.map((record, index) => {
                   const recordIso = parseDateToISO(record.dateRequired);
                   const expiresIso = addDays(recordIso, 6);
                   
@@ -147,19 +159,15 @@ export function PermitMatchingTable({
                   const refDateISO = parseDateToISO(processingDate) || parseDateToISO(record.todayDate) || getTodayISO();
                   const daysActive = validFromISO ? Math.round((new Date(refDateISO).getTime() - new Date(validFromISO).getTime()) / (1000 * 60 * 60 * 24)) : 0;
                   
-                  // Canonical isRecordCancelled check
                   const isCancelled = isRecordCancelled(record, processingDate, effectiveDatabase);
                   const isDispatched = checkIsRecordDispatched(record, record.vrm, record.driverName, record.dateRequired, dispatchedKeys, unsentKeys);
 
-                  // Get Form ID for display
                   const numId = Number(String(record.formId ?? record.id ?? 0).replace(/[^0-9]/g, "")) || 0;
 
                   const permitStatus = isDispatched ? '✓ Sent' : 'Pending';
 
-                  // Determine QR Code display STRICTLY from recordCodeMap
                   const recordKey = String(record.formId ?? record.id ?? index);
                   
-                  // Get the code from the map (which has been computed dynamically)
                   let displayCode = recordCodeMap.get(recordKey);
                   
                   if (isCancelled) {
