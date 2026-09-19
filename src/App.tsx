@@ -1,11 +1,10 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { PermitData, StorageMode } from "./types";
-import { CheckCircle2, AlertCircle, Info, CloudUpload } from "lucide-react";
+import { CheckCircle2, AlertCircle, Info, CloudUpload, RefreshCw, Sparkles, Database } from "lucide-react";
 import { Header } from "./components/Header";
 import { PermitCard } from "./components/PermitCard";
 import type { PermitCardHandle } from "./components/PermitCard";
 import { DispatchCentre } from "./components/DispatchCentre";
-import { RefreshCw, Sparkles, Database } from "lucide-react";
 import { safeLocalStorage } from "./utils/safeLocalStorage";
 import { isMobileDevice } from "./utils/device";
 import { 
@@ -17,7 +16,8 @@ import {
   unmarkRecordAsDispatched,
   getAllDispatchedKeys,
   batchCheckIsRecordDispatched,
-  isRecordMatch
+  isRecordMatch,
+  syncPendingDispatches
 } from "./utils/dispatchUtils";
 
 // CSV Database Imports
@@ -677,12 +677,22 @@ export default function App() {
   const [editingResolvedVoucherCode, setEditingResolvedVoucherCode] = useState<string>("");
   const [isEditModalOpen, setIsEditModalOpen] = useState<boolean>(false);
 
-  const showToast = (message: string, type: "success" | "info" | "warning" | "error" = "success") => {
+  const showToast = (message: string, type: "success" | "info" | "warning" | "error" = "success", durationMs: number = 4500) => {
     setSyncToast({ message, type });
     setTimeout(() => {
       setSyncToast(prev => prev?.message === message ? null : prev);
-    }, 4500);
+    }, durationMs);
   };
+
+  useEffect(() => {
+    if (isSupabaseConfigured()) {
+      syncPendingDispatches().then(({ synced }) => {
+        if (synced > 0) {
+          showToast(`Synced ${synced} pending dispatch(es) to Supabase cloud!`, "success");
+        }
+      });
+    }
+  }, []);
 
   const databaseRef = useRef<CsvPermitRecord[]>(database);
   const vouchersDatabaseRef = useRef<ParsedVoucherData[]>(vouchersDatabase);
@@ -913,7 +923,7 @@ export default function App() {
       return next;
     });
 
-    // 1. Write dispatch log to Supabase FIRST
+    // 1. Attempt writing dispatch log to Supabase
     try {
       const result = await markRecordAsDispatched(
         targetRecord,
@@ -921,15 +931,49 @@ export default function App() {
       );
 
       if (!result.success) {
-        console.error("❌ [Supabase Dispatch Write Error]:", result.error);
-        // Rollback on error
-        setDispatchedKeys(prev => {
-          const next = prev.filter(k => !combinedKeys.includes(k));
-          dispatchedKeysRef.current = next;
-          return next;
-        });
-        alert(`❌ Database Error: ${result.error || 'Failed to save dispatch status in database.'}`);
-        return false;
+        console.warn("⚠️ [Supabase Dispatch Write Warning]:", result.error);
+        
+        // Persist to local storage immediately so user action is never lost or rolled back
+        safeLocalStorage.setItem("concessions_dispatched_keys", JSON.stringify(dispatchedKeysRef.current));
+        safeLocalStorage.setItem("concessions_dispatch_dates", JSON.stringify(dispatchDatesRef.current));
+        safeLocalStorage.setItem("concessions_dispatch_by", JSON.stringify(dispatchByRef.current));
+
+        // Enqueue to pending cloud sync
+        try {
+          const pendingRaw = safeLocalStorage.getItem("concessions_pending_dispatches");
+          const pendingList = pendingRaw ? JSON.parse(pendingRaw) : [];
+          if (!pendingList.some((p: any) => p.key === pk)) {
+            pendingList.push({
+              key: pk,
+              date: todayISO,
+              by: currentUser,
+              vrm: targetRecord.vrm,
+              email: targetRecord.email,
+              timestamp: Date.now()
+            });
+            safeLocalStorage.setItem("concessions_pending_dispatches", JSON.stringify(pendingList));
+          }
+        } catch (e) {
+          console.warn("Could not save to pending queue", e);
+        }
+
+        handleReplacementSuccessCleanup(targetRecord);
+
+        if (result.isRlsError) {
+          showToast(
+            "⚠️ Dispatched & saved locally. Cloud sync pending (RLS restricted).",
+            "warning",
+            6000
+          );
+        } else {
+          showToast(
+            `⚠️ Dispatched & saved locally. Cloud sync pending (${result.error || 'Database unavailable'}).`,
+            "warning",
+            6000
+          );
+        }
+
+        return true;
       }
 
       console.log("✅ [Supabase Dispatch Write Success] Record marked as dispatched in database");
@@ -972,8 +1016,13 @@ export default function App() {
       return true;
     } catch (err: any) {
       console.error("❌ [Supabase Dispatch Exception]:", err);
-      alert(`❌ Dispatch Exception: ${err.message || 'Unknown database error'}`);
-      return false;
+      // Persist locally rather than breaking the user's flow
+      safeLocalStorage.setItem("concessions_dispatched_keys", JSON.stringify(dispatchedKeysRef.current));
+      safeLocalStorage.setItem("concessions_dispatch_dates", JSON.stringify(dispatchDatesRef.current));
+      safeLocalStorage.setItem("concessions_dispatch_by", JSON.stringify(dispatchByRef.current));
+      handleReplacementSuccessCleanup(targetRecord);
+      showToast(`⚠️ Dispatched & saved locally. Cloud sync pending (${err.message || 'Database error'}).`, "warning", 6000);
+      return true;
     }
   };
 
@@ -1025,35 +1074,28 @@ export default function App() {
       return true;
     }
 
-    // 1. Remove from Supabase FIRST
+    // 1. Remove from Supabase
     try {
       const result = await unmarkRecordAsDispatched(targetRecord);
       if (!result.success) {
-        console.error("❌ [Supabase Unmark Error]:", result.error);
-        // The delete failed, so restore the previous dispatched state and
-        // remove the local unsent override.
-        dispatchedKeysRef.current = Array.from(new Set([...(dispatchedKeysRef.current || []), ...combinedKeys]));
-        setDispatchedKeys(dispatchedKeysRef.current);
-        const rolledBackUnsent = (unsentKeysRef.current || []).filter(k => !combinedKeys.includes(k));
-        unsentKeysRef.current = rolledBackUnsent;
-        setUnsentKeys(rolledBackUnsent);
-        alert(`❌ Database Error: ${result.error || 'Failed to remove dispatch status.'}`);
-        return false;
+        console.warn("⚠️ [Supabase Unmark Warning]:", result.error);
+        // Preserve the local unmark state so user is in full control
+        safeLocalStorage.setItem("concessions_dispatched_keys", JSON.stringify(dispatchedKeysRef.current));
+        safeLocalStorage.setItem("concessions_dispatch_dates", JSON.stringify(dispatchDatesRef.current));
+        safeLocalStorage.setItem("concessions_dispatch_by", JSON.stringify(dispatchByRef.current));
+        showToast(`⚠️ Unmarked locally. Cloud update pending (${result.error || 'Database unavailable'}).`, "warning", 6000);
+        return true;
       }
 
       console.log("✅ [Supabase Unmark Success] Record unmarked as dispatched");
-
-      // Local optimistic state is already updated and persisted cleanly.
-      // Do NOT run immediate background refreshes that could overwrite local Unsend overrides.
       return true;
     } catch (err: any) {
-      console.error("❌ [Supabase Unmark Exception]:", err);
-      dispatchedKeysRef.current = Array.from(new Set([...(dispatchedKeysRef.current || []), ...combinedKeys]));
-      setDispatchedKeys(dispatchedKeysRef.current);
-      const rolledBackUnsent = (unsentKeysRef.current || []).filter(k => !combinedKeys.includes(k));
-      unsentKeysRef.current = rolledBackUnsent;
-      setUnsentKeys(rolledBackUnsent);
-      return false;
+      console.warn("⚠️ [Supabase Unmark Exception]:", err);
+      safeLocalStorage.setItem("concessions_dispatched_keys", JSON.stringify(dispatchedKeysRef.current));
+      safeLocalStorage.setItem("concessions_dispatch_dates", JSON.stringify(dispatchDatesRef.current));
+      safeLocalStorage.setItem("concessions_dispatch_by", JSON.stringify(dispatchByRef.current));
+      showToast(`⚠️ Unmarked locally. Cloud update exception: ${err.message || 'Error'}`, "warning", 6000);
+      return true;
     }
   };
 

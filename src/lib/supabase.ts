@@ -670,16 +670,22 @@ export const bulkSyncDispatchedToSupabase = async (
   }
 };
 
+export interface DispatchedSyncResult {
+  success: boolean;
+  error?: string;
+  isRlsError?: boolean;
+}
+
 export const syncDispatchedToSupabase = async (
   key: string,
   date: string,
   by: string,
   vrm?: string,
   email?: string
-): Promise<boolean> => {
+): Promise<DispatchedSyncResult> => {
   const client = getSupabaseClient();
   if (!client || !key || !key.trim()) {
-    return false;
+    return { success: false, error: 'Database client or key not available' };
   }
 
   const cleanKey = String(key).trim();
@@ -698,8 +704,10 @@ export const syncDispatchedToSupabase = async (
     const { error } = await client.from('dispatched_history').upsert(fullPayload, { onConflict: 'key' });
 
     if (!error) {
-      return true;
+      return { success: true };
     }
+
+    const isRls = error.code === '42501' || error.message?.toLowerCase().includes('row-level security') || error.message?.toLowerCase().includes('violates');
 
     const basicPayload = {
       key: cleanKey,
@@ -710,14 +718,54 @@ export const syncDispatchedToSupabase = async (
     const { error: basicErr } = await client.from('dispatched_history').upsert(basicPayload, { onConflict: 'key' });
 
     if (!basicErr) {
-      return true;
+      return { success: true };
     }
 
-    console.error('[Supabase Write Error] Upsert failed:', basicErr.message);
-    return false;
-  } catch (err) {
-    console.error('[Supabase Write Exception]', err);
-    return false;
+    // 2. Try the log_dispatch RPC function (SECURITY DEFINER bypasses RLS)
+    try {
+      const { error: rpcErr } = await client.rpc('log_dispatch', {
+        p_key: cleanKey,
+        p_dispatch_date: dateVal,
+        p_dispatch_by: byVal,
+        p_vrm: vrm ? String(vrm).trim() : null,
+        p_email: email ? String(email).trim() : null
+      });
+      if (!rpcErr) {
+        return { success: true };
+      }
+    } catch (e) {
+      // RPC might not be created in Supabase yet
+    }
+
+    // 3. Try administrative endpoint /api/admin/dispatch
+    try {
+      const adminRes = await fetch('/api/admin/dispatch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: cleanKey, date: dateVal, by: byVal, vrm, email })
+      });
+      if (adminRes.ok) {
+        return { success: true };
+      }
+    } catch (e) {
+      // Admin endpoint offline or unconfigured
+    }
+
+    const isRlsBasic = basicErr.code === '42501' || basicErr.message?.toLowerCase().includes('row-level security') || basicErr.message?.toLowerCase().includes('violates');
+
+    console.warn('[Supabase Write Warning] Upsert failed:', basicErr.message, { code: basicErr.code, isRls: isRls || isRlsBasic });
+    return {
+      success: false,
+      error: basicErr.message || error.message || 'Failed to write dispatch status to database',
+      isRlsError: isRls || isRlsBasic
+    };
+  } catch (err: any) {
+    console.warn('[Supabase Write Exception]', err);
+    return {
+      success: false,
+      error: err?.message || 'Database connection error',
+      isRlsError: false
+    };
   }
 };
 

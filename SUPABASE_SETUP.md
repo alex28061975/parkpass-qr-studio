@@ -43,7 +43,53 @@ VITE_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 
 ---
 
-## Step 5: Start Using Supabase Sync
+## Step 5: Row Level Security (RLS) Configuration (Option A: Anon Client)
+
+If your app uses the standard anonymous client without individual user authentication, ensure public write (INSERT/UPDATE) access is enabled for the tables.
+
+Run the following SQL snippet in the **Supabase SQL Editor**:
+
+```sql
+-- Allow public write access on dispatched_history
+DROP POLICY IF EXISTS "Allow authenticated modifications on dispatched_history" ON public.dispatched_history;
+DROP POLICY IF EXISTS "Allow public insert and update on dispatched_history" ON public.dispatched_history;
+DROP POLICY IF EXISTS "Allow public all on dispatched_history" ON public.dispatched_history;
+
+CREATE POLICY "Allow public insert and update on dispatched_history"
+ON public.dispatched_history
+FOR ALL
+TO public
+USING (true)
+WITH CHECK (true);
+
+-- Allow public write access on permits
+DROP POLICY IF EXISTS "Allow authenticated modifications on permits" ON public.permits;
+DROP POLICY IF EXISTS "Allow public insert and update on permits" ON public.permits;
+DROP POLICY IF EXISTS "Allow public all on permits" ON public.permits;
+
+CREATE POLICY "Allow public insert and update on permits"
+ON public.permits
+FOR ALL
+TO public
+USING (true)
+WITH CHECK (true);
+
+-- Allow public write access on vouchers
+DROP POLICY IF EXISTS "Allow authenticated modifications on vouchers" ON public.vouchers;
+DROP POLICY IF EXISTS "Allow public insert and update on vouchers" ON public.vouchers;
+DROP POLICY IF EXISTS "Allow public all on vouchers" ON public.vouchers;
+
+CREATE POLICY "Allow public insert and update on vouchers"
+ON public.vouchers
+FOR ALL
+TO public
+USING (true)
+WITH CHECK (true);
+```
+
+---
+
+## Step 6: Start Using Supabase Sync
 
 Once `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` are defined:
 - The app automatically connects to Supabase on launch.

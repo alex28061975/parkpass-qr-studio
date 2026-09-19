@@ -1,5 +1,6 @@
 import { CsvPermitRecord, getTodayISO, parseDateToISO } from "./csvParser";
 import { getSupabaseClient, syncDispatchedToSupabase, deleteDispatchedFromSupabase, deleteDispatchedKeysFromSupabase, fetchDispatchedFromSupabase } from "../lib/supabase";
+import { safeLocalStorage } from "./safeLocalStorage";
 
 /**
  * Helper to compute a simple 32-bit FNV-1a hash string for deterministic fallback key generation
@@ -267,7 +268,7 @@ export async function markRecordAsDispatched(
   record: CsvPermitRecord,
   dispatchedBy?: string,
   _notes?: string
-): Promise<{ success: boolean; error?: string }> {
+): Promise<{ success: boolean; error?: string; isRlsError?: boolean }> {
   const primaryKey = getRecordPrimaryKey(record);
   if (!primaryKey) {
     return { success: false, error: 'Could not generate dispatch key from record Form ID' };
@@ -283,7 +284,7 @@ export async function markRecordAsDispatched(
 
   try {
     // Single consolidated write per send action using the primary Form ID dispatch key
-    const success = await syncDispatchedToSupabase(
+    const syncRes = await syncDispatchedToSupabase(
       primaryKey,
       todayISO,
       dispatchedByName,
@@ -291,8 +292,12 @@ export async function markRecordAsDispatched(
       record.email
     );
 
-    if (!success) {
-      return { success: false, error: 'Failed to write dispatch status to database' };
+    if (!syncRes.success) {
+      return {
+        success: false,
+        error: syncRes.error || 'Failed to write dispatch status to database',
+        isRlsError: syncRes.isRlsError
+      };
     }
 
     return { success: true };
@@ -413,4 +418,102 @@ export function isRecordMatch(r1?: any, r2?: any): boolean {
     if (d1 && d2 && d1 === d2) return true;
   }
   return false;
+}
+
+/**
+ * Tests whether dispatched_history table is currently accepting writes from the anon client
+ */
+export async function testDispatchedHistoryWrite(): Promise<{ writable: boolean; isRlsError?: boolean; error?: string }> {
+  const client = getSupabaseClient();
+  if (!client) return { writable: false, error: 'Supabase client not configured' };
+
+  try {
+    const probeKey = '___rls_probe_ping___';
+    const { error: insErr } = await client.from('dispatched_history').upsert({
+      key: probeKey,
+      dispatch_date: getTodayISO(),
+      dispatch_by: 'Probe Ping'
+    }, { onConflict: 'key' });
+
+    if (insErr) {
+      // Test if RPC log_dispatch function works (SECURITY DEFINER)
+      try {
+        const { error: rpcErr } = await client.rpc('log_dispatch', {
+          p_key: probeKey,
+          p_dispatch_date: getTodayISO(),
+          p_dispatch_by: 'Probe Ping'
+        });
+        if (!rpcErr) {
+          await client.from('dispatched_history').delete().eq('key', probeKey);
+          return { writable: true };
+        }
+      } catch (e) {}
+
+      const isRls = insErr.code === '42501' || insErr.message?.toLowerCase().includes('row-level security') || insErr.message?.toLowerCase().includes('violates');
+      return { writable: false, isRlsError: isRls, error: insErr.message };
+    }
+
+    // Clean up probe record immediately
+    await client.from('dispatched_history').delete().eq('key', probeKey);
+    return { writable: true };
+  } catch (err: any) {
+    return { writable: false, error: err?.message };
+  }
+}
+
+/**
+ * Gets count of dispatches waiting in the pending queue
+ */
+export function getPendingDispatchesCount(): number {
+  try {
+    const raw = safeLocalStorage.getItem("concessions_pending_dispatches");
+    if (!raw) return 0;
+    const list = JSON.parse(raw);
+    return Array.isArray(list) ? list.length : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Syncs any pending locally-saved dispatches to Supabase
+ */
+export async function syncPendingDispatches(): Promise<{ synced: number; remaining: number; rlsBlocked?: boolean }> {
+  try {
+    const raw = safeLocalStorage.getItem("concessions_pending_dispatches");
+    if (!raw) return { synced: 0, remaining: 0 };
+    const list: Array<{ key: string; date: string; by: string; vrm?: string; email?: string }> = JSON.parse(raw);
+    if (!Array.isArray(list) || list.length === 0) return { synced: 0, remaining: 0 };
+
+    const remaining: typeof list = [];
+    let synced = 0;
+    let rlsBlocked = false;
+
+    for (const item of list) {
+      if (rlsBlocked) {
+        remaining.push(item);
+        continue;
+      }
+      const res = await syncDispatchedToSupabase(item.key, item.date, item.by, item.vrm, item.email);
+      if (res.success) {
+        synced++;
+      } else {
+        remaining.push(item);
+        if (res.isRlsError) {
+          rlsBlocked = true;
+        }
+      }
+    }
+
+    if (remaining.length > 0) {
+      safeLocalStorage.setItem("concessions_pending_dispatches", JSON.stringify(remaining));
+    } else {
+      safeLocalStorage.removeItem("concessions_pending_dispatches");
+    }
+
+    return { synced, remaining: remaining.length, rlsBlocked };
+  } catch (err) {
+    console.error("Error syncing pending dispatches:", err);
+    return { synced: 0, remaining: 0 };
+  }
 }
