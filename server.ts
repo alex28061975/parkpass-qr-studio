@@ -105,17 +105,36 @@ async function startServer() {
       const { createClient } = await import("@supabase/supabase-js");
       const adminClient = createClient(rawUrl, apiKey);
 
-      const payload = {
-        key: String(key).trim(),
-        dispatch_date: date || new Date().toISOString().split("T")[0],
-        dispatch_by: by || "System User",
-        vrm: vrm ? String(vrm).trim() : null,
-        email: email ? String(email).trim() : null
-      };
+      // Try service_role RPC first
+      let written = false;
+      try {
+        const { error: rpcErr } = await adminClient.rpc("log_dispatch", {
+          p_key: String(key).trim(),
+          p_dispatch_date: date || new Date().toISOString().split("T")[0],
+          p_dispatch_by: by || "System User",
+          p_vrm: vrm ? String(vrm).trim() : null,
+          p_email: email ? String(email).trim() : null
+        });
+        if (!rpcErr) {
+          written = true;
+        }
+      } catch (e) {
+        // Fallback to direct upsert below
+      }
 
-      const { error } = await adminClient.from("dispatched_history").upsert(payload, { onConflict: "key" });
-      if (error) {
-        return res.status(error.code === "42501" ? 403 : 500).json({ error: error.message, code: error.code });
+      if (!written) {
+        const payload = {
+          key: String(key).trim(),
+          dispatch_date: date || new Date().toISOString().split("T")[0],
+          dispatch_by: by || "System User",
+          vrm: vrm ? String(vrm).trim() : null,
+          email: email ? String(email).trim() : null
+        };
+
+        const { error } = await adminClient.from("dispatched_history").upsert(payload, { onConflict: "key" });
+        if (error) {
+          return res.status(error.code === "42501" ? 403 : 500).json({ error: error.message, code: error.code });
+        }
       }
 
       return res.json({ success: true });

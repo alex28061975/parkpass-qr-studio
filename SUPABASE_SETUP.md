@@ -13,13 +13,17 @@ Supabase provides a free cloud PostgreSQL database that syncs your parking permi
 
 ---
 
-## Step 2: Set Up Database Tables
+## Step 2: Set Up Database Tables & Security Policies
 
 1. In your Supabase Dashboard left menu, click **SQL Editor**.
 2. Click **New query**.
-3. Copy and paste the entire contents of `supabase_schema.sql` (found in the root directory of this repository).
+3. Copy and paste the entire contents of `master_schema_and_security.sql` (found in the root directory of this repository).
 4. Click **Run** (or press `Ctrl + Enter`).
-5. You will see "Success. No rows returned" confirming that `permits`, `vouchers`, and `dispatched_history` tables have been created with Row Level Security policies.
+5. You will see "Success. No rows returned" confirming that:
+   - `permits`, `vouchers`, and `dispatched_history` tables are created with RLS enabled.
+   - Explicit `authenticated` policies are applied, with write access blocked for `anon`.
+   - The `log_dispatch` RPC function is secured with `SECURITY DEFINER` and restricted to `service_role`.
+   - The `tr_auto_enable_rls` event trigger is active to automatically enforce RLS on any future tables.
 
 ---
 
