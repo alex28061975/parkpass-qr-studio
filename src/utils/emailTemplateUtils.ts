@@ -5,7 +5,8 @@ import {
   toTitleCase,
   getTodayISO,
   checkIsBlockedDuplicate,
-  isRecordCancelled
+  isRecordCancelled,
+  isPermitExpiredBackdate
 } from "./csvParser";
 
 export type CancellationReason = 'future' | 'expired' | 'duplicate';
@@ -23,6 +24,7 @@ export interface EmailTemplateParams {
   currentExpiryDate?: string;
   earliestRenewalDate?: string;
   reason?: CancellationReason;
+  cancellationReason?: string;
 }
 
 export interface EmailContentResult {
@@ -52,8 +54,14 @@ export function resolveCancellationDetails(
     status?: string;
     isDispatched?: boolean;
     startTime?: string;
+    start_time?: string;
     createdAt?: string;
+    created_at?: string;
+    completionTime?: string;
+    completion_time?: string;
+    submissionDate?: string;
     validTo?: string;
+    cancellationReason?: "DUPLICATE_VRM" | "BLOCKLIST" | "EXPIRED" | "MANUAL" | string;
   },
   database?: any[],
   refDateStr?: string
@@ -66,8 +74,45 @@ export function resolveCancellationDetails(
     return { reason: 'future', currentExpiryDate: '', earliestRenewalDate: '' };
   }
 
+  // 0. Explicit cancellation reason check
+  const explicitReason = String(record.cancellationReason || "").trim().toUpperCase();
+  if (explicitReason === "EXPIRED") {
+    return {
+      reason: 'expired',
+      currentExpiryDate: '',
+      earliestRenewalDate: ''
+    };
+  }
+
+  // Submission / processing reference date resolution:
+  const rawSubTime = record.completionTime || (record as any).completion_time || record.startTime || (record as any).start_time || record.createdAt || (record as any).created_at || (record as any).submissionDate;
+  let subISO = "";
+  if (rawSubTime) {
+    subISO = parseDateToISO(String(rawSubTime)) || "";
+  }
+  let refDateISO = subISO;
+  if (!refDateISO && refDateStr) {
+    refDateISO = parseDateToISO(refDateStr) || "";
+  }
+  if (!refDateISO && record.todayDate) {
+    const tdISO = parseDateToISO(record.todayDate) || "";
+    if (tdISO && tdISO !== parseDateToISO(record.validFrom || record.dateRequired || "")) {
+      refDateISO = tdISO;
+    }
+  }
+  if (!refDateISO) {
+    refDateISO = getTodayISO();
+  }
+
+  if (isPermitExpiredBackdate(record, refDateISO)) {
+    return {
+      reason: 'expired',
+      currentExpiryDate: '',
+      earliestRenewalDate: ''
+    };
+  }
+
   const cleanVrm = (record.vrm || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
-  const refDateISO = parseDateToISO(refDateStr || record.todayDate) || getTodayISO();
 
   let isDuplicate = false;
   let activePermit: any = null;
@@ -181,7 +226,25 @@ export function resolveCancellationDetails(
 
   const validFromStr = record.validFrom || record.dateRequired || "";
   const validFromISO = parseDateToISO(validFromStr);
-  if (validFromISO && validFromISO < refDateISO) {
+  if (validFromISO) {
+    const [vy, vm, vd] = validFromISO.split("-").map(Number);
+    const validFromDate = new Date(vy, vm - 1, vd, 0, 0, 0, 0);
+
+    const [ry, rm, rd] = refDateISO.split("-").map(Number);
+    const refDate = new Date(ry, rm - 1, rd, 0, 0, 0, 0);
+
+    const daysDiff = Math.floor((validFromDate.getTime() - refDate.getTime()) / (1000 * 60 * 60 * 24));
+
+    // A permit requested 2+ days in advance is in the future
+    if (daysDiff > 1) {
+      return {
+        reason: 'future',
+        currentExpiryDate: '',
+        earliestRenewalDate: ''
+      };
+    }
+
+    // Any date in the past or whose validity period ended is expired
     return {
       reason: 'expired',
       currentExpiryDate: '',
@@ -190,7 +253,7 @@ export function resolveCancellationDetails(
   }
 
   return {
-    reason: 'future',
+    reason: 'expired',
     currentExpiryDate: '',
     earliestRenewalDate: ''
   };
@@ -369,8 +432,30 @@ export function getCancellationEmailContent(
   // Determine effective cancellation reason
   let reason: CancellationReason = reasonOverride || params.reason || 'future';
   if (!reasonOverride && !params.reason) {
-    if (params.currentExpiryDate || params.activePermitExpiry || params.earliestRenewalDate || params.reapplyDate) {
+    const rawReason = String(params.cancellationReason || "").trim().toUpperCase();
+    if (rawReason === "EXPIRED") {
+      reason = "expired";
+    } else if (rawReason === "DUPLICATE_VRM" || rawReason === "DUPLICATE") {
+      reason = "duplicate";
+    } else if (params.currentExpiryDate || params.activePermitExpiry || params.earliestRenewalDate || params.reapplyDate) {
       reason = 'duplicate';
+    } else {
+      const validFromIso = parseDateToISO(params.validFrom || params.dateRequired || "");
+      const refIso = parseDateToISO(params.todayDate) || getTodayISO();
+      if (validFromIso && refIso && validFromIso > refIso) {
+        reason = 'future';
+      } else {
+        reason = 'expired';
+      }
+    }
+  }
+
+  // Guard: a past date or date whose validity period ended can NEVER be "in the future"
+  if (reason === 'future') {
+    const validFromIso = parseDateToISO(params.validFrom || params.dateRequired || "");
+    const refIso = parseDateToISO(params.todayDate) || getTodayISO();
+    if (validFromIso && refIso && validFromIso <= refIso) {
+      reason = 'expired';
     }
   }
 
