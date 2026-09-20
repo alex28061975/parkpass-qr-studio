@@ -50,47 +50,54 @@ ALTER TABLE public.vouchers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.dispatched_history ENABLE ROW LEVEL SECURITY;
 
 -- ============================================================
--- RLS POLICIES (Explicit public INSERT, UPDATE, SELECT, DELETE)
+-- RLS POLICIES (Secure authenticated access; no open ALL true)
 -- ============================================================
 
--- 1. Policies for dispatched_history
+-- Clean up any overly permissive / obsolete policies
 DROP POLICY IF EXISTS "Allow authenticated modifications on dispatched_history" ON public.dispatched_history;
 DROP POLICY IF EXISTS "Allow public insert and update on dispatched_history" ON public.dispatched_history;
 DROP POLICY IF EXISTS "Allow public all on dispatched_history" ON public.dispatched_history;
 DROP POLICY IF EXISTS "Enable read access for all users" ON public.dispatched_history;
 DROP POLICY IF EXISTS "Enable insert for all users" ON public.dispatched_history;
 DROP POLICY IF EXISTS "Enable update for all users" ON public.dispatched_history;
+DROP POLICY IF EXISTS "dispatched_history_select_authenticated" ON public.dispatched_history;
+DROP POLICY IF EXISTS "dispatched_history_insert_authenticated" ON public.dispatched_history;
+DROP POLICY IF EXISTS "dispatched_history_update_authenticated" ON public.dispatched_history;
+DROP POLICY IF EXISTS "dispatched_history_delete_authenticated" ON public.dispatched_history;
 
-CREATE POLICY "Allow public insert and update on dispatched_history"
-ON public.dispatched_history
-FOR ALL
-TO public
-USING (true)
-WITH CHECK (true);
+CREATE POLICY "dispatched_history_select_authenticated" ON public.dispatched_history FOR SELECT TO authenticated USING (auth.role() = 'authenticated');
+CREATE POLICY "dispatched_history_insert_authenticated" ON public.dispatched_history FOR INSERT TO authenticated WITH CHECK (auth.role() = 'authenticated');
+CREATE POLICY "dispatched_history_update_authenticated" ON public.dispatched_history FOR UPDATE TO authenticated USING (auth.role() = 'authenticated') WITH CHECK (auth.role() = 'authenticated');
+CREATE POLICY "dispatched_history_delete_authenticated" ON public.dispatched_history FOR DELETE TO authenticated USING (auth.role() = 'authenticated');
 
--- 2. Policies for permits
+-- Permits policies
 DROP POLICY IF EXISTS "Allow authenticated modifications on permits" ON public.permits;
 DROP POLICY IF EXISTS "Allow public insert and update on permits" ON public.permits;
 DROP POLICY IF EXISTS "Allow public all on permits" ON public.permits;
+DROP POLICY IF EXISTS "Enable read access for all users" ON public.permits;
+DROP POLICY IF EXISTS "permits_select_authenticated" ON public.permits;
+DROP POLICY IF EXISTS "permits_insert_authenticated" ON public.permits;
+DROP POLICY IF EXISTS "permits_update_authenticated" ON public.permits;
+DROP POLICY IF EXISTS "permits_delete_authenticated" ON public.permits;
 
-CREATE POLICY "Allow public insert and update on permits"
-ON public.permits
-FOR ALL
-TO public
-USING (true)
-WITH CHECK (true);
+CREATE POLICY "permits_select_authenticated" ON public.permits FOR SELECT TO authenticated USING (auth.role() = 'authenticated');
+CREATE POLICY "permits_insert_authenticated" ON public.permits FOR INSERT TO authenticated WITH CHECK (auth.role() = 'authenticated');
+CREATE POLICY "permits_update_authenticated" ON public.permits FOR UPDATE TO authenticated USING (auth.role() = 'authenticated') WITH CHECK (auth.role() = 'authenticated');
+CREATE POLICY "permits_delete_authenticated" ON public.permits FOR DELETE TO authenticated USING (auth.role() = 'authenticated');
 
--- 3. Policies for vouchers
+-- Vouchers policies
 DROP POLICY IF EXISTS "Allow authenticated modifications on vouchers" ON public.vouchers;
 DROP POLICY IF EXISTS "Allow public insert and update on vouchers" ON public.vouchers;
 DROP POLICY IF EXISTS "Allow public all on vouchers" ON public.vouchers;
+DROP POLICY IF EXISTS "vouchers_select_authenticated" ON public.vouchers;
+DROP POLICY IF EXISTS "vouchers_insert_authenticated" ON public.vouchers;
+DROP POLICY IF EXISTS "vouchers_update_authenticated" ON public.vouchers;
+DROP POLICY IF EXISTS "vouchers_delete_authenticated" ON public.vouchers;
 
-CREATE POLICY "Allow public insert and update on vouchers"
-ON public.vouchers
-FOR ALL
-TO public
-USING (true)
-WITH CHECK (true);
+CREATE POLICY "vouchers_select_authenticated" ON public.vouchers FOR SELECT TO authenticated USING (auth.role() = 'authenticated');
+CREATE POLICY "vouchers_insert_authenticated" ON public.vouchers FOR INSERT TO authenticated WITH CHECK (auth.role() = 'authenticated');
+CREATE POLICY "vouchers_update_authenticated" ON public.vouchers FOR UPDATE TO authenticated USING (auth.role() = 'authenticated') WITH CHECK (auth.role() = 'authenticated');
+CREATE POLICY "vouchers_delete_authenticated" ON public.vouchers FOR DELETE TO authenticated USING (auth.role() = 'authenticated');
 
 -- ============================================================
 -- 4. RPC Function for administrative / safe dispatch logging
