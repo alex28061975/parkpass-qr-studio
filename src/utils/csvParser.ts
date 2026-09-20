@@ -2352,17 +2352,19 @@ export function isVoucherExactPeriodEligible(
 
 export function isRecordCancelledCanonical(record: any, todayDateOrReference?: string, database?: CsvPermitRecord[]): boolean {
   if (!record) return false;
-  if (record.isCancelled === true) return true;
-  if (typeof record.status === "string" && record.status.trim().toLowerCase().includes("cancel")) return true;
+  if (record.cancellationReason === "MANUAL" || record.cancellationReason === "BLOCKLIST" || record.cancellationReason === "EXPIRED") return true;
+  if (record.isCancelled === true && record.cancellationReason !== "DUPLICATE_VRM" && record.cancellationReason !== "DUPLICATE") return true;
+  if (typeof record.status === "string" && record.status.trim().toLowerCase().includes("cancel") && record.cancellationReason !== "DUPLICATE_VRM" && record.cancellationReason !== "DUPLICATE") return true;
   if (record.isCancelled === false && String(record.status || "").trim().toUpperCase() === "ACTIVE") {
     // Explicitly active record: do not let stale CANCELLED string in voucherCode override active status
   } else if (
-    record.voucherCode === "CANCELLED" ||
+    (record.voucherCode === "CANCELLED" ||
     record.voucherCodesText === "CANCELLED" ||
     record.prePaidCode === "CANCELLED" ||
     (typeof record.voucherCode === "string" && record.voucherCode.trim().toUpperCase() === "CANCELLED") ||
     (typeof record.voucherCodesText === "string" && record.voucherCodesText.trim().toUpperCase() === "CANCELLED") ||
-    (typeof record.prePaidCode === "string" && record.prePaidCode.trim().toUpperCase() === "CANCELLED")
+    (typeof record.prePaidCode === "string" && record.prePaidCode.trim().toUpperCase() === "CANCELLED")) &&
+    record.cancellationReason !== "DUPLICATE_VRM" && record.cancellationReason !== "DUPLICATE"
   ) {
     return true;
   }
@@ -2375,7 +2377,11 @@ export function isRecordCancelledCanonical(record: any, todayDateOrReference?: s
   if (isDateRequiredOutsideValidWindow(dateRequired, referenceDate)) return true;
 
   // ⭐ Live duplicate check: same VRM, requested within 7 days of an earlier non-cancelled request
-  if (database && database.length > 0 && checkIsBlockedDuplicate(record, database, referenceDate)) {
+  if (database && database.length > 0) {
+    if (checkIsBlockedDuplicate(record, database, referenceDate)) {
+      return true;
+    }
+  } else if (record.isCancelled === true || (typeof record.status === "string" && record.status.trim().toLowerCase().includes("cancel"))) {
     return true;
   }
 
@@ -3134,7 +3140,7 @@ export function clearDuplicateCheckCache(): void {
 }
 
 export function checkIsBlockedDuplicate(
-  record: { vrm?: string; validFrom?: string; dateRequired?: string; id?: string | number; formId?: string | number; voucherCode?: string; createdAt?: string; startTime?: string; driverName?: string; isCancelled?: boolean; status?: string; voucherCodesText?: string; prePaidCode?: string },
+  record: { vrm?: string; validFrom?: string; dateRequired?: string; id?: string | number; formId?: string | number; voucherCode?: string; createdAt?: string; startTime?: string; driverName?: string; isCancelled?: boolean; status?: string; voucherCodesText?: string; prePaidCode?: string; cancellationReason?: string },
   database: CsvPermitRecord[],
   refDateISO?: string,
   visited?: Set<string>
@@ -3148,8 +3154,14 @@ export function checkIsBlockedDuplicate(
     return false;
   }
 
-  // Already marked cancelled?
-  if (record.isCancelled === true || (typeof record.status === "string" && record.status.trim().toLowerCase().includes("cancel"))) {
+  // Genuine cancellation reasons that mean the permit should not be evaluated as duplicate
+  if (
+    record.cancellationReason === "MANUAL" ||
+    record.cancellationReason === "BLOCKLIST" ||
+    record.cancellationReason === "EXPIRED" ||
+    isVrmSilentBlockedSync(record.vrm) ||
+    (typeof record.status === "string" && record.status.trim().toUpperCase() === "BLOCKED")
+  ) {
     return false;
   }
 
@@ -3194,19 +3206,47 @@ export function checkIsBlockedDuplicate(
       ? (parseDateToISO(String(earlierRawRefDate)) || "") 
       : (parseDateToISO(earlierDateRequired) || refDateISO || "");
 
-    // Check if earlier record is genuinely invalid (silent blocked on security blocklist or expired date)
-    // Note: Do not skip an earlier record if it was merely marked cancelled by duplicate-processing or stale state,
-    // because that would allow a later duplicate to erroneously appear active.
-    const earlierIsInvalid = 
-      isVrmSilentBlockedSync(earlier?.vrm) ||
-      (typeof earlier?.status === "string" && earlier.status.trim().toUpperCase() === "BLOCKED") ||
+    // Ignore cancelled records when checking for existing permits, overlapping dates, or prior submissions:
+    // A cancelled record must NEVER act as the "earlier active permit" in a duplicate comparison.
+    const isEarlierCancelled = 
+      earlier?.isCancelled === true ||
+      (typeof earlier?.status === "string" && (earlier.status.trim().toUpperCase() === "CANCELLED" || earlier.status.trim().toLowerCase().includes("cancel"))) ||
+      earlier?.voucherCode === "CANCELLED" ||
+      earlier?.voucherCodesText === "CANCELLED" ||
+      earlier?.prePaidCode === "CANCELLED" ||
+      (typeof earlier?.voucherCode === "string" && earlier.voucherCode.trim().toUpperCase() === "CANCELLED") ||
+      (typeof earlier?.voucherCodesText === "string" && earlier.voucherCodesText.trim().toUpperCase() === "CANCELLED") ||
+      (typeof earlier?.prePaidCode === "string" && earlier.prePaidCode.trim().toUpperCase() === "CANCELLED") ||
+      earlier?.cancellationReason === "DUPLICATE_VRM" ||
+      earlier?.cancellationReason === "DUPLICATE" ||
       earlier?.cancellationReason === "BLOCKLIST" ||
       earlier?.cancellationReason === "MANUAL" ||
       earlier?.cancellationReason === "EXPIRED" ||
+      Boolean(earlier?.cancellationReason);
+
+    // Check if earlier record is genuinely invalid (cancelled, silent blocked on security blocklist, or expired date)
+    const earlierIsInvalid = 
+      isEarlierCancelled ||
+      isVrmSilentBlockedSync(earlier?.vrm) ||
+      (typeof earlier?.status === "string" && earlier.status.trim().toUpperCase() === "BLOCKED") ||
       isDateRequiredOutsideValidWindow(earlierDateRequired, earlierRefDate);
 
     if (earlierIsInvalid) {
       continue;
+    }
+
+    // Also check if earlier record is itself a duplicate of an even earlier active record
+    const currentVisited = visited ? new Set(visited) : new Set<string>();
+    const recId = String(record.formId ?? record.id ?? cleanVrm);
+    currentVisited.add(recId);
+
+    const earlierId = String(earlier.formId ?? earlier.id ?? "");
+    if (earlierId && !currentVisited.has(earlierId)) {
+      currentVisited.add(earlierId);
+      if (checkIsBlockedDuplicate(earlier, database, earlierRefDate, currentVisited)) {
+        // Earlier record is itself a duplicate of an even earlier record, so it will be cancelled and does not block this permit
+        continue;
+      }
     }
 
     const earlierReqIso = parseDateToISO(earlier?.dateRequired || earlier?.validFrom || "") || 
@@ -3244,17 +3284,19 @@ export function isRecordCancelled(
 ): boolean {
   if (!record) return false;
 
-  if (record.isCancelled === true) return true;
-  if (typeof record.status === "string" && record.status.trim().toLowerCase().includes("cancel")) return true;
+  if (record.cancellationReason === "MANUAL" || record.cancellationReason === "BLOCKLIST" || record.cancellationReason === "EXPIRED") return true;
+  if (record.isCancelled === true && record.cancellationReason !== "DUPLICATE_VRM" && record.cancellationReason !== "DUPLICATE") return true;
+  if (typeof record.status === "string" && record.status.trim().toLowerCase().includes("cancel") && record.cancellationReason !== "DUPLICATE_VRM" && record.cancellationReason !== "DUPLICATE") return true;
   if (record.isCancelled === false && String(record.status || "").trim().toUpperCase() === "ACTIVE") {
     // Explicitly active record: do not let stale CANCELLED string in voucherCode override active status
   } else if (
-    record.voucherCode === "CANCELLED" ||
+    (record.voucherCode === "CANCELLED" ||
     record.voucherCodesText === "CANCELLED" ||
     record.prePaidCode === "CANCELLED" ||
     (typeof record.voucherCode === "string" && record.voucherCode.trim().toUpperCase() === "CANCELLED") ||
     (typeof record.voucherCodesText === "string" && record.voucherCodesText.trim().toUpperCase() === "CANCELLED") ||
-    (typeof record.prePaidCode === "string" && record.prePaidCode.trim().toUpperCase() === "CANCELLED")
+    (typeof record.prePaidCode === "string" && record.prePaidCode.trim().toUpperCase() === "CANCELLED")) &&
+    record.cancellationReason !== "DUPLICATE_VRM" && record.cancellationReason !== "DUPLICATE"
   ) {
     return true;
   }
@@ -3269,7 +3311,11 @@ export function isRecordCancelled(
   }
 
   // Live duplicate check with O(1) memoized cache
-  if (database && database.length > 0 && checkIsBlockedDuplicate(record, database, referenceDate)) {
+  if (database && database.length > 0) {
+    if (checkIsBlockedDuplicate(record, database, referenceDate)) {
+      return true;
+    }
+  } else if (record.isCancelled === true || (typeof record.status === "string" && record.status.trim().toLowerCase().includes("cancel"))) {
     return true;
   }
 

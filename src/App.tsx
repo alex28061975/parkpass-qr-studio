@@ -296,7 +296,7 @@ export function enrichRecordsWithVouchers(
     const keyWithDate = recDateISO ? `${cleanVrm}_${recDateISO}` : cleanVrm;
     const hasOriginalVoucher = false;
 
-    if (record.isCancelled === true || isRecordCancelled(record, recDateISO || fallbackDateStr, recordsList)) {
+    if (isRecordCancelled(record, recDateISO || fallbackDateStr, recordsList)) {
       return {
         ...record,
         status: "CANCELLED",
@@ -462,7 +462,7 @@ export function enrichRecordsWithVouchers(
       return;
     }
 
-    if (record.isCancelled === true || isRecordCancelled(record, reqDateD || fallbackDateStr, recordsList)) {
+    if (isRecordCancelled(record, reqDateD || fallbackDateStr, recordsList)) {
       enrichedByIndex.set(index, {
         ...record,
         voucherCode: "CANCELLED",

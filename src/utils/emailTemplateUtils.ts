@@ -116,7 +116,7 @@ export function resolveCancellationDetails(
         return diff >= 0 && diff < 7;
       });
 
-      if (isBlocked || activeMatches.length > 0 || overlappingMatch) {
+      if (isBlocked || overlappingMatch) {
         isDuplicate = true;
         if (overlappingMatch) {
           activePermit = overlappingMatch;
