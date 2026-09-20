@@ -488,7 +488,7 @@ export const CsvDatabasePanel = forwardRef<CsvDatabasePanelHandle, CsvDatabasePa
   const filteredTableRecords = React.useMemo(() => {
     let result = sortedDatabase;
 
-    if (!isSupabaseConfigured() && dateRangeFilter && dateRangeFilter !== 'all') {
+    if (dateRangeFilter && dateRangeFilter !== 'all') {
       const days = dateRangeFilter === '7days' ? 7 : 30;
       result = result.filter(r => {
         const iso = getRecordSubmittedDateISO(r);

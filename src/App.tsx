@@ -1183,8 +1183,6 @@ export default function App() {
     }
 
     if (!isSupabaseConfigured()) return;
-    const filterToUse = overrideFilter || dateRangeFilterRef.current;
-    const daysLimit = filterToUse === '7days' ? 7 : filterToUse === '30days' ? 30 : null;
 
     if (!silent) {
       setIsLoadingHistory(true);
@@ -1192,8 +1190,11 @@ export default function App() {
     isSilentRefetchRef.current = silent;
 
     try {
+      // ⭐ ALWAYS fetch the FULL, UNFILTERED database from Supabase!
+      // All duplicate checks, cancellation logic, and voucher allocations must ALWAYS evaluate
+      // against the complete database. UI date range filters only affect visual table rendering.
       const [dbPermits, dbVouchers, dbDispatchedData] = await Promise.all([
-        fetchPermitsFromSupabase({ daysLimit }),
+        fetchPermitsFromSupabase({ daysLimit: null }),
         fetchVouchersFromSupabase(),
         fetchDispatchedFromSupabase()
       ]);
@@ -1225,9 +1226,7 @@ export default function App() {
         } else {
           setTotalRecordsCount(dbPermits.length);
         }
-        if (daysLimit === null) {
-          setHasFullHistoryLoaded(true);
-        }
+        setHasFullHistoryLoaded(true);
       }
       if (dbVouchers) {
         const currentVouchersDb = vouchersDatabaseRef.current;
@@ -1406,13 +1405,8 @@ export default function App() {
     }
   };
 
-  const handleDateRangeFilterChange = async (newFilter: '7days' | '30days' | 'all') => {
+  const handleDateRangeFilterChange = (newFilter: '7days' | '30days' | 'all') => {
     setDateRangeFilter(newFilter);
-    try {
-      await refreshDatabase(newFilter);
-    } catch (e) {
-      // Silent catch
-    }
   };
 
   const handleExportExcel = async () => {
