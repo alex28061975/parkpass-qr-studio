@@ -270,6 +270,8 @@ export const fetchPermitsFromSupabase = async (options?: { daysLimit?: number | 
       voucherCode: item.voucher_code || '',
       startTime: item.start_time || undefined,
       completionTime: item.completion_time || undefined,  // ✅ Map completion_time from Supabase
+      createdAt: item.created_at || undefined,
+      created_at: item.created_at || undefined,
     }));
 
     if (daysLimit && daysLimit > 0) {

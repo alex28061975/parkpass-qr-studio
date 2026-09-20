@@ -1492,7 +1492,67 @@ export function isDateRequiredOutsideValidWindow(dateRequiredStr?: string, refer
   const parkingDate = new Date(py, pm - 1, pd, 0, 0, 0, 0);
 
   const daysDiff = Math.floor((parkingDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-  return daysDiff < -7 || daysDiff > 1;
+  // A permit is 7 days (day 0 to day 6). By day 7 (e.g. 19/09 for 12/09), daysDiff is <= -7, meaning it has expired.
+  return daysDiff <= -7 || daysDiff > 1;
+}
+
+/**
+ * Evaluates whether a permit requested a start date that is 7 or more days in the past
+ * relative to its submission timestamp (completion_time / start_time / created_at) or reference date.
+ */
+export function isPermitExpiredBackdate(record: any, referenceDateStr?: string): boolean {
+  if (!record) return false;
+  if (record.cancellationReason === "EXPIRED") return true;
+
+  const validFromStr = record.validFrom || record.dateRequired;
+  if (!validFromStr) return false;
+  const validFromISO = parseDateToISO(String(validFromStr));
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(validFromISO)) return false;
+
+  const [py, pm, pd] = validFromISO.split("-").map(Number);
+  const validFromStartOfDayMs = new Date(py, pm - 1, pd, 0, 0, 0, 0).getTime();
+
+  // Reference date/time preference:
+  // 1. Completion / submission time on record (completionTime, startTime, createdAt, created_at, submissionDate)
+  // 2. referenceDateStr passed in (e.g. todayDateOrReference or processingDate)
+  // 3. Fallback to now
+  const rawSubTime = record.completionTime || record.startTime || record.createdAt || record.created_at || record.submissionDate;
+  let subMs: number | null = null;
+  if (rawSubTime) {
+    subMs = safeParseDateToTimestamp(rawSubTime);
+  }
+  if (!subMs || isNaN(subMs)) {
+    const rawRef = referenceDateStr || record.todayDate || record.processingDate;
+    if (rawRef) {
+      subMs = safeParseDateToTimestamp(rawRef);
+      if (!subMs || isNaN(subMs)) {
+        const refIso = parseDateToISO(String(rawRef));
+        if (/^\d{4}-\d{2}-\d{2}$/.test(refIso)) {
+          const [ry, rm, rd] = refIso.split("-").map(Number);
+          subMs = new Date(ry, rm - 1, rd, 0, 0, 0, 0).getTime();
+        }
+      }
+    }
+  }
+  if (!subMs || isNaN(subMs)) {
+    return false;
+  }
+
+  // 1. Precise timestamp check: valid_from date (00:00:00) is 7+ days (7 * 86400000 ms) earlier than submission timestamp
+  const diffMs = subMs - validFromStartOfDayMs;
+  if (diffMs >= 7 * 86400000) {
+    return true;
+  }
+
+  // 2. Calendar day check: if submitted on 19/09 for 12/09, diff is >= 7 days
+  const subDate = new Date(subMs);
+  const subStartOfDayMs = new Date(subDate.getFullYear(), subDate.getMonth(), subDate.getDate(), 0, 0, 0, 0).getTime();
+  const calendarDayDiff = Math.floor((subStartOfDayMs - validFromStartOfDayMs) / 86400000);
+  if (calendarDayDiff >= 7) {
+    return true;
+  }
+
+  return false;
 }
 
 export function parseUKDate(dateStr: string): string {
@@ -2369,12 +2429,12 @@ export function isRecordCancelledCanonical(record: any, todayDateOrReference?: s
     return true;
   }
 
-  const rawRefDate = record.completionTime || record.startTime || record.createdAt || todayDateOrReference || record.todayDate || record.processingDate || record.submissionDate;
+  const rawRefDate = record.completionTime || record.startTime || record.createdAt || record.created_at || todayDateOrReference || record.todayDate || record.processingDate || record.submissionDate;
   const referenceDate = rawRefDate 
     ? (parseDateToISO(String(rawRefDate)) || "") 
     : "";
   const dateRequired = record.dateRequired || record.validFrom || "";
-  if (isDateRequiredOutsideValidWindow(dateRequired, referenceDate)) return true;
+  if (isDateRequiredOutsideValidWindow(dateRequired, referenceDate) || isPermitExpiredBackdate(record, referenceDate)) return true;
 
   // ⭐ Live duplicate check: same VRM, requested within 7 days of an earlier non-cancelled request
   if (database && database.length > 0) {
@@ -3229,7 +3289,8 @@ export function checkIsBlockedDuplicate(
       isEarlierCancelled ||
       isVrmSilentBlockedSync(earlier?.vrm) ||
       (typeof earlier?.status === "string" && earlier.status.trim().toUpperCase() === "BLOCKED") ||
-      isDateRequiredOutsideValidWindow(earlierDateRequired, earlierRefDate);
+      isDateRequiredOutsideValidWindow(earlierDateRequired, earlierRefDate) ||
+      isPermitExpiredBackdate(earlier, earlierRefDate);
 
     if (earlierIsInvalid) {
       continue;
@@ -3301,12 +3362,12 @@ export function isRecordCancelled(
     return true;
   }
 
-  const rawRefDate = record.completionTime || record.startTime || record.createdAt || todayDateOrReference || record.todayDate || record.processingDate || record.submissionDate;
+  const rawRefDate = record.completionTime || record.startTime || record.createdAt || record.created_at || todayDateOrReference || record.todayDate || record.processingDate || record.submissionDate;
   const referenceDate = rawRefDate 
     ? (parseDateToISO(String(rawRefDate)) || "") 
     : "";
   const dateRequired = record.dateRequired || record.validFrom || "";
-  if (isDateRequiredOutsideValidWindow(dateRequired, referenceDate)) {
+  if (isDateRequiredOutsideValidWindow(dateRequired, referenceDate) || isPermitExpiredBackdate(record, referenceDate)) {
     return true;
   }
 
