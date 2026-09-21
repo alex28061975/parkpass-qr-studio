@@ -418,21 +418,38 @@ function PermitCardInner({
     return { sent, pending, total };
   }, [matchingPermits, isRecordDispatched]);
 
-  const allPendingRecords = useMemo(() => {
+  // ⭐ Pre-calculate record cancellation statuses once per dataset update
+  const recordCancellationStatus = useMemo(() => {
     const records = (database && database.length > 0) ? database : matchingPermits;
-    const today = new Date();
-    const year = today.getFullYear();
-    const month = String(today.getMonth() + 1).padStart(2, '0');
-    const day = String(today.getDate()).padStart(2, '0');
-    const todayStr = `${year}-${month}-${day}`;
-
-    return records.filter(p => {
+    const cancelledMap = new WeakMap<object, boolean>();
+    records.forEach(p => {
+      if (!p || typeof p !== "object") return;
+      if (p.isCancelled === true) {
+        cancelledMap.set(p, true);
+        return;
+      }
+      if (typeof p.status === "string" && p.status.trim().toLowerCase().includes("cancel")) {
+        cancelledMap.set(p, true);
+        return;
+      }
       const recProcessingDate = p.todayDate || p.createdAt || p.created_at || data.todayDate || "";
       const recCancelled = isRecordCancelled(p, recProcessingDate, database);
+      cancelledMap.set(p, recCancelled);
+    });
+    return cancelledMap;
+  }, [database, matchingPermits, data.todayDate]);
+
+  const allPendingRecords = useMemo(() => {
+    const records = (database && database.length > 0) ? database : matchingPermits;
+
+    return records.filter(p => {
+      const recCancelled = recordCancellationStatus.has(p) 
+        ? recordCancellationStatus.get(p)! 
+        : (p.isCancelled === true || (typeof p.status === "string" && p.status.trim().toLowerCase().includes("cancel")));
 
       return !recCancelled && !isRecordDispatched(p);
     });
-  }, [database, matchingPermits, isRecordDispatched, data.todayDate]);
+  }, [database, matchingPermits, isRecordDispatched, recordCancellationStatus]);
 
   const dbStats = useMemo(() => {
     const sourceRecords = (database && database.length > 0) ? database : matchingPermits;
@@ -450,8 +467,9 @@ function PermitCardInner({
     if (total === 0) return { sent: 0, pending: 0, expired: 0, cancelled: 0, processed: 0, total: 0, progressPct: 0, pendingPct: 0 };
 
     records.forEach(p => {
-      const recProcessingDate = p.todayDate || p.createdAt || p.created_at || data.todayDate || "";
-      const recCancelled = isRecordCancelled(p, recProcessingDate, database);
+      const recCancelled = recordCancellationStatus.has(p)
+        ? recordCancellationStatus.get(p)!
+        : (p.isCancelled === true || (typeof p.status === "string" && p.status.trim().toLowerCase().includes("cancel")));
 
       if (recCancelled) {
         cancelled++;
@@ -474,7 +492,7 @@ function PermitCardInner({
     const pendingPct = total > 0 ? Math.max(0, 100 - progressPct) : 0;
 
     return { sent, pending, expired: 0, cancelled, processed, total, progressPct, pendingPct };
-  }, [database, matchingPermits, isRecordDispatched, data.todayDate]);
+  }, [database, matchingPermits, isRecordDispatched, recordCancellationStatus]);
 
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [toastType, setToastType] = useState<string>("info");

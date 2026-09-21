@@ -1730,25 +1730,35 @@ export default function App() {
         const fromISO = parseDateToISO(targetRecord.dateRequired) || getTodayISO();
         const toISO = addDays(fromISO, 6);
 
-        setFormData((prev) => ({
-          ...prev,
-          id: targetRecord.id,
-          formId: targetRecord.formId || targetRecord.id,
-          site: targetRecord.hospital,
-          name: targetRecord.driverName ? toTitleCase(targetRecord.driverName) : "",
-          vrm: targetRecord.vrm ? targetRecord.vrm.toUpperCase() : "",
-          ward: targetRecord.ward ? toTitleCase(targetRecord.ward) : "",
-          validFrom: fromISO,
-          validTo: toISO,
-          phone: formatPhoneNumber(targetRecord.phone || ""),
-          email: (targetRecord.email || "").toLowerCase(),
-          voucherCodesText: targetRecord.voucherCode || "-",
-          startTime: targetRecord.startTime,
-          createdAt: targetRecord.createdAt
-        }));
+        setFormData((prev) => {
+          // If already pointing to the target record, don't trigger state update
+          if (
+            prev.id === targetRecord.id &&
+            prev.vrm === (targetRecord.vrm ? targetRecord.vrm.toUpperCase() : "") &&
+            prev.validFrom === fromISO
+          ) {
+            return prev;
+          }
+          return {
+            ...prev,
+            id: targetRecord.id,
+            formId: targetRecord.formId || targetRecord.id,
+            site: targetRecord.hospital,
+            name: targetRecord.driverName ? toTitleCase(targetRecord.driverName) : "",
+            vrm: targetRecord.vrm ? targetRecord.vrm.toUpperCase() : "",
+            ward: targetRecord.ward ? toTitleCase(targetRecord.ward) : "",
+            validFrom: fromISO,
+            validTo: toISO,
+            phone: formatPhoneNumber(targetRecord.phone || ""),
+            email: (targetRecord.email || "").toLowerCase(),
+            voucherCodesText: targetRecord.voucherCode || "-",
+            startTime: targetRecord.startTime,
+            createdAt: targetRecord.createdAt
+          };
+        });
       }
     }
-  }, [formData.todayDate, formData.vrm, formData.name, enrichedDatabase, dispatchedKeys, unsentKeys, lastProcessedDate, lastDbLength]);
+  }, [formData.todayDate, enrichedDatabase.length, dispatchedKeys, unsentKeys, lastProcessedDate, lastDbLength]);
 
   const handleUpdate = (updates: Partial<PermitData>) => {
     setFormData((prev) => {

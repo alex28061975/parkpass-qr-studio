@@ -297,6 +297,129 @@ export function DispatchCentre({
     return sortRecordsByFormIdDesc(database);
   }, [database]);
 
+  // ⭐ Pre-compute record cancellation status once per database & processingDate update
+  const recordCancellationMap = useMemo(() => {
+    const map = new WeakMap<object, boolean>();
+    (database || []).forEach(record => {
+      if (!record || typeof record !== "object") return;
+      if (record.isCancelled === true) {
+        map.set(record, true);
+        return;
+      }
+      if (typeof record.status === "string" && record.status.trim().toLowerCase().includes("cancel")) {
+        map.set(record, true);
+        return;
+      }
+      if (record.isCancelled === false && String(record.status || "").trim().toUpperCase() === "ACTIVE") {
+        // Explicitly active
+      } else if (
+        record.voucherCode === "CANCELLED" ||
+        record.voucherCodesText === "CANCELLED" ||
+        record.prePaidCode === "CANCELLED" ||
+        (typeof record.voucherCode === "string" && record.voucherCode.trim().toUpperCase() === "CANCELLED") ||
+        (typeof record.voucherCodesText === "string" && record.voucherCodesText.trim().toUpperCase() === "CANCELLED") ||
+        (typeof record.prePaidCode === "string" && record.prePaidCode.trim().toUpperCase() === "CANCELLED")
+      ) {
+        map.set(record, true);
+        return;
+      }
+      const reqDate = getRequestedPermitDateISO(record, processingDate);
+      const isCancelled = isRecordCancelled(record, reqDate, database);
+      map.set(record, isCancelled);
+    });
+    return map;
+  }, [database, processingDate]);
+
+  // ⭐ Pre-compute target local timestamps once per database & processingDate update
+  const recordTimestampMap = useMemo(() => {
+    const map = new WeakMap<object, number | null>();
+
+    const toLocalTimestamp = (rawValue: unknown): number | null => {
+      if (rawValue === undefined || rawValue === null || rawValue === "") return null;
+      if (rawValue instanceof Date) {
+        const t = rawValue.getTime();
+        return !isNaN(t) && t > 0 ? t : null;
+      }
+      if (typeof rawValue === "number") {
+        if (isNaN(rawValue) || rawValue <= 0) return null;
+        if (rawValue > 30000 && rawValue < 60000) {
+          const ms = (rawValue - 25569) * 86400 * 1000;
+          return isNaN(ms) ? null : ms;
+        }
+        return rawValue;
+      }
+      const rawStr = String(rawValue).trim();
+      if (!rawStr || rawStr === "-" || rawStr === "—" || rawStr.toLowerCase() === "null" || rawStr.toLowerCase() === "undefined") {
+        return null;
+      }
+      const canonicalISO = parseDateToISO(rawStr) || safeParseDMYToISO(rawStr);
+      if (canonicalISO && /^\d{4}-\d{2}-\d{2}$/.test(canonicalISO)) {
+        const [yStr, mStr, dStr] = canonicalISO.split("-");
+        const year = parseInt(yStr, 10);
+        const month = parseInt(mStr, 10);
+        const day = parseInt(dStr, 10);
+        let hours = 0;
+        let minutes = 0;
+        let seconds = 0;
+        const timeMatch = rawStr.match(/(?:[ T]|^)(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+        if (timeMatch) {
+          hours = parseInt(timeMatch[1], 10);
+          minutes = parseInt(timeMatch[2], 10);
+          seconds = timeMatch[3] ? parseInt(timeMatch[3], 10) : 0;
+        }
+        if (!isNaN(year) && !isNaN(month) && !isNaN(day) && !isNaN(hours) && !isNaN(minutes) && !isNaN(seconds)) {
+          const localDate = new Date(year, month - 1, day, hours, minutes, seconds);
+          const localTime = localDate.getTime();
+          if (!isNaN(localTime) && localTime > 0) return localTime;
+        }
+      }
+      return safeParseDateToTimestamp(rawStr);
+    };
+
+    (database || []).forEach(record => {
+      if (!record || typeof record !== "object") return;
+      let subTs: number | null = null;
+      const rawSubDate = record?.completionTime ?? 
+                         (record as any)?.completion_time ?? 
+                         record?.startTime ?? 
+                         (record as any)?.start_time ?? 
+                         record?.createdAt ?? 
+                         (record as any)?.created_at;
+      if (rawSubDate !== undefined && rawSubDate !== null && rawSubDate !== "") {
+        subTs = toLocalTimestamp(rawSubDate);
+      }
+      if (subTs === null) {
+        const subMs = getRecordSubmittedTimeMs(record);
+        if (subMs > 0) subTs = subMs;
+      }
+      let reqTs: number | null = null;
+      const rawReqDate = record?.dateRequired ?? 
+                         record?.validFrom ?? 
+                         record?.todayDate ?? 
+                         record?.["Date Required"] ?? 
+                         record?.["Valid From"];
+      reqTs = toLocalTimestamp(rawReqDate);
+      if (reqTs === null) {
+        const iso = getRequestedPermitDateISO(record, processingDate);
+        if (iso) reqTs = toLocalTimestamp(iso);
+      }
+      let targetTs = subTs !== null ? subTs : reqTs;
+      if (targetTs === null) {
+        const recDateISO = 
+          getRecordSubmittedDateISO(record) ||
+          getRequestedPermitDateISO(record, processingDate) ||
+          parseDateToISO(record?.completionTime || record?.startTime || record?.createdAt || (record as any)?.created_at || "") ||
+          safeParseDMYToISO(record?.completionTime ?? record?.startTime ?? record?.createdAt ?? (record as any)?.created_at ?? null);
+        if (recDateISO) {
+          targetTs = toLocalTimestamp(recDateISO);
+        }
+      }
+      map.set(record, targetTs);
+    });
+
+    return map;
+  }, [database, processingDate]);
+
   // Compute dynamic voucher allocations map
   const recordCodeMap = useMemo(() => {
     return getSpreadsheetMatchingAllocationsMap(
@@ -327,13 +450,13 @@ export function DispatchCentre({
     // 2. Include database records
     (database || []).forEach(rec => {
       // Cancelled or blocked permits MUST NOT consume a voucher - they release their codes back to inventory
-      const reqDate = getRequestedPermitDateISO(rec, processingDate);
       const isBlocked = isVrmSilentBlockedSync(rec.vrm);
-      const isCancelled = rec.isCancelled === true ||
-                          (typeof rec.status === "string" && rec.status.toLowerCase().includes("cancel")) ||
-                          rec.voucherCode === "CANCELLED" ||
-                          rec.prePaidCode === "CANCELLED" ||
-                          isRecordCancelled(rec, reqDate, database);
+      const isCancelled = recordCancellationMap.has(rec)
+        ? recordCancellationMap.get(rec)!
+        : (rec.isCancelled === true ||
+           (typeof rec.status === "string" && rec.status.toLowerCase().includes("cancel")) ||
+           rec.voucherCode === "CANCELLED" ||
+           rec.prePaidCode === "CANCELLED");
       if (isBlocked || isCancelled) {
         return;
       }
@@ -705,6 +828,9 @@ export function DispatchCentre({
 
   const getIsCancelled = (record: CsvPermitRecord, idx?: number) => {
     if (!record) return false;
+    if (recordCancellationMap.has(record)) {
+      return recordCancellationMap.get(record)!;
+    }
     if (record.isCancelled === true) return true;
     if (typeof record.status === "string" && record.status.trim().toLowerCase().includes("cancel")) return true;
     if (record.isCancelled === false && String(record.status || "").trim().toUpperCase() === "ACTIVE") {
@@ -943,117 +1069,7 @@ export function DispatchCentre({
       }
 
       if (dateFilter !== "ALL") {
-        // Local-time resolver ensuring consistent local date/time semantics across all date formats
-        const toLocalTimestamp = (rawValue: unknown): number | null => {
-          if (rawValue === undefined || rawValue === null || rawValue === "") return null;
-
-          // Preserve existing JavaScript Date object
-          if (rawValue instanceof Date) {
-            const t = rawValue.getTime();
-            return !isNaN(t) && t > 0 ? t : null;
-          }
-
-          // Preserve existing numeric timestamp (ms) or Excel serial date
-          if (typeof rawValue === "number") {
-            if (isNaN(rawValue) || rawValue <= 0) return null;
-            if (rawValue > 30000 && rawValue < 60000) {
-              const ms = (rawValue - 25569) * 86400 * 1000;
-              return isNaN(ms) ? null : ms;
-            }
-            return rawValue;
-          }
-
-          const rawStr = String(rawValue).trim();
-          if (!rawStr || rawStr === "-" || rawStr === "—" || rawStr.toLowerCase() === "null" || rawStr.toLowerCase() === "undefined") {
-            return null;
-          }
-
-          // Step 1: Call parseDateToISO(rawStr) to produce canonical YYYY-MM-DD (format-aware), fall back to safeParseDMYToISO
-          const canonicalISO = parseDateToISO(rawStr) || safeParseDMYToISO(rawStr);
-          if (canonicalISO && /^\d{4}-\d{2}-\d{2}$/.test(canonicalISO)) {
-            const [yStr, mStr, dStr] = canonicalISO.split("-");
-            const year = parseInt(yStr, 10);
-            const month = parseInt(mStr, 10);
-            const day = parseInt(dStr, 10);
-
-            // Step 2: Extract the time from the ORIGINAL string (support HH:mm:ss and HH:mm, default 00:00:00)
-            let hours = 0;
-            let minutes = 0;
-            let seconds = 0;
-
-            const timeMatch = rawStr.match(/(?:[ T]|^)(\d{1,2}):(\d{2})(?::(\d{2}))?/);
-            if (timeMatch) {
-              hours = parseInt(timeMatch[1], 10);
-              minutes = parseInt(timeMatch[2], 10);
-              seconds = timeMatch[3] ? parseInt(timeMatch[3], 10) : 0;
-            }
-
-            // Step 3: Construct the timestamp using LOCAL date components
-            if (
-              !isNaN(year) && !isNaN(month) && !isNaN(day) &&
-              !isNaN(hours) && !isNaN(minutes) && !isNaN(seconds)
-            ) {
-              const localDate = new Date(year, month - 1, day, hours, minutes, seconds);
-              const localTime = localDate.getTime();
-              if (!isNaN(localTime) && localTime > 0) {
-                return localTime;
-              }
-            }
-          }
-
-          // Final fallback: safeParseDateToTimestamp only when safeParseDMYToISO does not return a usable date
-          return safeParseDateToTimestamp(rawStr);
-        };
-
-        // Safe extraction with optional chaining (?.)
-        // Priority 1: Check actual Submission / Creation timestamp
-        let subTs: number | null = null;
-        const rawSubDate = record?.completionTime ?? 
-                           (record as any)?.completion_time ?? 
-                           record?.startTime ?? 
-                           (record as any)?.start_time ?? 
-                           record?.createdAt ?? 
-                           (record as any)?.created_at;
-        if (rawSubDate !== undefined && rawSubDate !== null && rawSubDate !== "") {
-          subTs = toLocalTimestamp(rawSubDate);
-        }
-        if (subTs === null) {
-          const subMs = getRecordSubmittedTimeMs(record);
-          if (subMs > 0) {
-            subTs = subMs;
-          }
-        }
-
-        // Priority 2: Fallback to requested permit date if submission timestamp is unavailable
-        let reqTs: number | null = null;
-        const rawReqDate = record?.dateRequired ?? 
-                           record?.validFrom ?? 
-                           record?.todayDate ?? 
-                           record?.["Date Required"] ?? 
-                           record?.["Valid From"];
-        reqTs = toLocalTimestamp(rawReqDate);
-        if (reqTs === null) {
-          const iso = getRequestedPermitDateISO(record, processingDate);
-          if (iso) {
-            reqTs = toLocalTimestamp(iso);
-          }
-        }
-
-        // Priority 1: Target the SUBMITTED timestamp first, then fallback to requested permit date
-        let targetTs = subTs !== null ? subTs : reqTs;
-
-        // Extra fallback: check extracted ISO date string if timestamp was still null
-        if (targetTs === null) {
-          const recDateISO = 
-            getRecordSubmittedDateISO(record) ||
-            getRequestedPermitDateISO(record, processingDate) ||
-            parseDateToISO(record?.completionTime || record?.startTime || record?.createdAt || (record as any)?.created_at || "") ||
-            safeParseDMYToISO(record?.completionTime ?? record?.startTime ?? record?.createdAt ?? (record as any)?.created_at ?? null);
-          if (recDateISO) {
-            targetTs = toLocalTimestamp(recDateISO);
-          }
-        }
-
+        const targetTs = recordTimestampMap.has(record) ? recordTimestampMap.get(record)! : null;
         if (targetTs === null) {
           return false;
         }
@@ -1098,8 +1114,8 @@ export function DispatchCentre({
     wardFilter,
     dateFilter,
     localDateBounds,
-    processingDate,
-    database,
+    recordCancellationMap,
+    recordTimestampMap,
     dispatchedKeys,
     unsentKeys,
     formData

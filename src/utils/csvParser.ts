@@ -3093,6 +3093,11 @@ export function isSamePermitRecord(a?: any, b?: any): boolean {
   }
 }
 
+// ⭐ High-performance WeakMap / Map caches for submission times, form IDs, and dataset indices
+const submissionTimeCache = new WeakMap<object, number>();
+const formIdCache = new WeakMap<object, number>();
+const dbIndexMapCache = new WeakMap<CsvPermitRecord[], Map<object, number>>();
+
 export function getRecordDatasetIndex(
   record: any,
   database: CsvPermitRecord[],
@@ -3101,13 +3106,27 @@ export function getRecordDatasetIndex(
 ): number {
   if (!database || database.length === 0) return -1;
   try {
-    let idx = database.indexOf(record);
-    if (idx !== -1) return idx;
+    // Check if we have pre-indexed the database array
+    let indexMap = dbIndexMapCache.get(database);
+    if (!indexMap) {
+      indexMap = new Map<object, number>();
+      for (let i = 0; i < database.length; i++) {
+        const item = database[i];
+        if (item && typeof item === "object") {
+          indexMap.set(item, i);
+        }
+      }
+      dbIndexMapCache.set(database, indexMap);
+    }
+
+    if (record && typeof record === "object" && indexMap.has(record)) {
+      return indexMap.get(record)!;
+    }
 
     const numId = formIdRecord ?? extractRecordNumericFormId(record);
     const rawId = rawIdRecord ?? String(record?.formId ?? record?.id ?? "").trim();
 
-    idx = database.findIndex(r => {
+    const idx = database.findIndex(r => {
       if (isSamePermitRecord(r, record)) return true;
       const formIdR = extractRecordNumericFormId(r);
       if (numId > 0 && formIdR > 0 && numId === formIdR) return true;
@@ -3194,6 +3213,7 @@ export function compareRecordsBySubmissionOrder(a?: any, b?: any, fallbackDateSt
 
 // ⭐ Memoization cache for duplicate & cancellation checks to guarantee O(1) performance
 const blockedDuplicateCheckCache = new Map<string, boolean>();
+const dbVrmIndexMapCache = new WeakMap<CsvPermitRecord[], Map<string, CsvPermitRecord[]>>();
 
 export function clearDuplicateCheckCache(): void {
   blockedDuplicateCheckCache.clear();
@@ -3233,12 +3253,27 @@ export function checkIsBlockedDuplicate(
     return blockedDuplicateCheckCache.get(cacheKey)!;
   }
 
-  const vrmRecords = database.filter(r => {
-    const rVrm = (r?.vrm || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
-    return rVrm === cleanVrm;
-  });
+  // Fast O(1) retrieval from pre-indexed VRM map
+  let vrmIndexMap = dbVrmIndexMapCache.get(database);
+  if (!vrmIndexMap) {
+    vrmIndexMap = new Map<string, CsvPermitRecord[]>();
+    for (let i = 0; i < database.length; i++) {
+      const r = database[i];
+      const rVrm = (r?.vrm || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+      if (rVrm && rVrm !== "PENDING" && rVrm !== "-") {
+        let list = vrmIndexMap.get(rVrm);
+        if (!list) {
+          list = [];
+          vrmIndexMap.set(rVrm, list);
+        }
+        list.push(r);
+      }
+    }
+    dbVrmIndexMapCache.set(database, vrmIndexMap);
+  }
 
-  if (vrmRecords.length <= 1) {
+  const vrmRecords = vrmIndexMap.get(cleanVrm);
+  if (!vrmRecords || vrmRecords.length <= 1) {
     blockedDuplicateCheckCache.set(cacheKey, false);
     return false;
   }
