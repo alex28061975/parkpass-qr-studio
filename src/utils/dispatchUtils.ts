@@ -402,13 +402,14 @@ export function isRecordMatch(r1?: any, r2?: any): boolean {
   const formId1 = String(r1.formId ?? "").trim();
   const id2 = String(r2.id ?? "").trim();
   const formId2 = String(r2.formId ?? "").trim();
-  if (id1 || formId1 || id2 || formId2) {
-    return Boolean(
+  if ((id1 || formId1) && (id2 || formId2)) {
+    const idMatch = Boolean(
       (id1 && id2 && id1 === id2) ||
       (formId1 && formId2 && formId1 === formId2) ||
       (id1 && formId2 && id1 === formId2) ||
       (formId1 && id2 && formId1 === id2)
     );
+    if (idMatch) return true;
   }
   const vrm1 = String(r1.vrm || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
   const vrm2 = String(r2.vrm || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
@@ -416,6 +417,7 @@ export function isRecordMatch(r1?: any, r2?: any): boolean {
     const d1 = parseDateToISO(r1.validFrom || r1.dateRequired || r1.todayDate) || "";
     const d2 = parseDateToISO(r2.validFrom || r2.dateRequired || r2.todayDate) || "";
     if (d1 && d2 && d1 === d2) return true;
+    if (!d1 || !d2) return true;
   }
   return false;
 }

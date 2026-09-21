@@ -139,13 +139,14 @@ const isRecordMatch = (r1: any, r2: any): boolean => {
   const formId1 = String(r1.formId ?? "").trim();
   const id2 = String(r2.id ?? "").trim();
   const formId2 = String(r2.formId ?? "").trim();
-  if (id1 || formId1 || id2 || formId2) {
-    return Boolean(
+  if ((id1 || formId1) && (id2 || formId2)) {
+    const idMatch = Boolean(
       (id1 && id2 && id1 === id2) ||
       (formId1 && formId2 && formId1 === formId2) ||
       (id1 && formId2 && id1 === formId2) ||
       (formId1 && id2 && formId1 === id2)
     );
+    if (idMatch) return true;
   }
   const vrm1 = (r1.vrm || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
   const vrm2 = (r2.vrm || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
@@ -153,6 +154,7 @@ const isRecordMatch = (r1: any, r2: any): boolean => {
     const d1 = parseDateToISO(r1.validFrom || r1.dateRequired || r1.todayDate) || "";
     const d2 = parseDateToISO(r2.validFrom || r2.dateRequired || r2.todayDate) || "";
     if (d1 && d2 && d1 === d2) return true;
+    if (!d1 || !d2) return true;
   }
   return false;
 };
@@ -201,18 +203,35 @@ export function DispatchCentre({
 
   // Sync selectedRowRecord when replacement code is assigned
   useEffect(() => {
-    if ((formData?.voucherCodesText || formData?.replacementCode) && selectedRowRecord) {
-      if (formData.emailType === "RESEND_CONCESSION" || formData.isResend || formData.replacementCode) {
-        setSelectedRowRecord(prev => prev ? ({
-          ...prev,
-          replacementCode: formData.replacementCode || formData.voucherCodesText || prev.replacementCode,
-          isResend: true,
-          emailType: "RESEND_CONCESSION",
-          emailTemplate: "replacement"
-        }) : null);
-      }
+    const isRep = formData?.emailType === "RESEND_CONCESSION" || formData?.isResend || Boolean(formData?.replacementCode) || formData?.emailTemplate === "replacement";
+    if (isRep && (formData?.voucherCodesText || formData?.replacementCode)) {
+      const repCode = formData.replacementCode || formData.voucherCodesText;
+      setSelectedRowRecord(prev => {
+        if (prev) {
+          return {
+            ...prev,
+            replacementCode: repCode || prev.replacementCode,
+            isResend: true,
+            emailType: "RESEND_CONCESSION",
+            emailTemplate: "replacement"
+          };
+        }
+        if (database) {
+          const match = database.find(r => isRecordMatch(r, formData));
+          if (match) {
+            return {
+              ...match,
+              replacementCode: repCode || match.replacementCode,
+              isResend: true,
+              emailType: "RESEND_CONCESSION",
+              emailTemplate: "replacement"
+            };
+          }
+        }
+        return null;
+      });
     }
-  }, [formData?.voucherCodesText, formData?.replacementCode, formData?.emailType, formData?.isResend]);
+  }, [formData?.voucherCodesText, formData?.replacementCode, formData?.emailType, formData?.isResend, formData?.emailTemplate, database]);
 
   // Keep selectedRowRecord up to date with latest database updates without stripping replacement flags
   useEffect(() => {
@@ -382,11 +401,31 @@ export function DispatchCentre({
   const activeRecord = useMemo<CsvPermitRecord | null>(() => {
     if (selectedRowRecord) {
       const updated = (database || []).find(r => isRecordMatch(r, selectedRowRecord));
-      return updated || selectedRowRecord;
+      if (updated) {
+        return {
+          ...updated,
+          replacementCode: selectedRowRecord.replacementCode ?? updated.replacementCode,
+          isResend: selectedRowRecord.isResend ?? updated.isResend,
+          emailType: selectedRowRecord.emailType ?? updated.emailType,
+          emailTemplate: selectedRowRecord.emailTemplate ?? updated.emailTemplate
+        };
+      }
+      return selectedRowRecord;
     }
     if (formData) {
       const match = (database || []).find(r => isRecordMatch(r, formData));
-      if (match) return match;
+      if (match) {
+        if (formData.emailType === "RESEND_CONCESSION" || formData.isResend || formData.replacementCode) {
+          return {
+            ...match,
+            replacementCode: formData.replacementCode || formData.voucherCodesText || match.replacementCode,
+            isResend: true,
+            emailType: "RESEND_CONCESSION",
+            emailTemplate: "replacement"
+          };
+        }
+        return match;
+      }
     }
     return database?.[0] || null;
   }, [selectedRowRecord, formData, database]);
@@ -568,6 +607,9 @@ export function DispatchCentre({
     }
 
     onChangeFormData?.({
+      id: currentRec?.id,
+      formId: currentRec?.formId,
+      vrm: currentRec?.vrm,
       originalVoucherCode: originalVoucherCode || undefined,
       replacementCode: selectedCode,
       voucherCodesText: selectedCode,
@@ -607,10 +649,13 @@ export function DispatchCentre({
   const [goToPageInput, setGoToPageInput] = useState<string>("");
 
   const isSameSelectedRecord = (record: CsvPermitRecord) => {
-    if (selectedRowRecord) {
-      return isRecordMatch(record, selectedRowRecord);
+    if (selectedRowRecord && isRecordMatch(record, selectedRowRecord)) {
+      return true;
     }
-    return isRecordMatch(record, formData);
+    if (formData && isRecordMatch(record, formData)) {
+      return true;
+    }
+    return false;
   };
 
   const isReplacementPending = (record: CsvPermitRecord) => {
@@ -623,10 +668,26 @@ export function DispatchCentre({
     ) {
       return true;
     }
-    return Boolean(
+    if (
+      selectedRowRecord &&
+      isRecordMatch(record, selectedRowRecord) &&
+      (Boolean(selectedRowRecord.replacementCode) ||
+        selectedRowRecord.emailType === "RESEND_CONCESSION" ||
+        selectedRowRecord.isResend === true ||
+        selectedRowRecord.emailTemplate === "replacement")
+    ) {
+      return true;
+    }
+    if (
       isSameSelectedRecord(record) &&
-      (formData?.emailType === "RESEND_CONCESSION" || formData?.isResend === true || formData?.emailTemplate === "replacement" || Boolean(formData?.replacementCode))
-    );
+      (formData?.emailType === "RESEND_CONCESSION" ||
+        formData?.isResend === true ||
+        formData?.emailTemplate === "replacement" ||
+        Boolean(formData?.replacementCode))
+    ) {
+      return true;
+    }
+    return false;
   };
 
   const getHospital = (record: CsvPermitRecord) => {

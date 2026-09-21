@@ -518,6 +518,7 @@ export function PermitForm({
 
                 onChange({
                   voucherCodesText: selectedCode,
+                  replacementCode: selectedCode,
                   status: "Pending",
                   emailType: "RESEND_CONCESSION",
                   isResend: true,

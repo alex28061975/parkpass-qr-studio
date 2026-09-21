@@ -542,6 +542,12 @@ function PermitCardInner({
       data.voucherCodesText !== "Cancelled"
     ) {
       setEmailTemplate("replacement");
+      onChange?.({
+        replacementCode: data.voucherCodesText,
+        emailTemplate: "replacement",
+        emailType: "RESEND_CONCESSION",
+        isResend: true
+      });
     }
     prevVoucherCodeRef.current = data.voucherCodesText;
   }, [data.voucherCodesText, data.vrm, data.name, data.validFrom, data.id, data.formId, isCurrentDispatched, data.emailTemplate, data.emailType, data.isResend, data.status, data.isDispatched]);
@@ -2614,7 +2620,10 @@ function PermitCardInner({
                 <div className="grid grid-cols-2 gap-1 bg-white dark:bg-slate-900 p-0.5 rounded-lg border border-slate-200 dark:border-slate-800/80 text-[10px]">
                   <button
                     type="button"
-                    onClick={() => setEmailTemplate("new")}
+                    onClick={() => {
+                      setEmailTemplate("new");
+                      onChange?.({ emailTemplate: "new", emailType: "SEND_CONCESSION", isResend: false });
+                    }}
                     className={`py-1 font-bold rounded transition-all cursor-pointer ${
                       emailTemplate === "new"
                         ? "bg-slate-100 dark:bg-slate-800 text-[#005EB8] dark:text-blue-300"
@@ -2625,7 +2634,15 @@ function PermitCardInner({
                   </button>
                   <button
                     type="button"
-                    onClick={() => setEmailTemplate("replacement")}
+                    onClick={() => {
+                      setEmailTemplate("replacement");
+                      onChange?.({
+                        emailTemplate: "replacement",
+                        emailType: "RESEND_CONCESSION",
+                        isResend: true,
+                        replacementCode: data.voucherCodesText || data.replacementCode
+                      });
+                    }}
                     className={`py-1 font-bold rounded transition-all cursor-pointer ${
                       emailTemplate === "replacement"
                         ? "bg-slate-100 dark:bg-slate-800 text-[#005EB8] dark:text-blue-300"

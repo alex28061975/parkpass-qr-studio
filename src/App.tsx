@@ -1271,7 +1271,20 @@ export default function App() {
         });
 
         if (!isIdentical) {
-          const reconciled = autoCancelDuplicates(dbPermits);
+          const mergedPermits = dbPermits.map(dbRec => {
+            const localMatch = currentDb.find(c => isRecordMatch(c, dbRec));
+            if (localMatch && (localMatch.replacementCode || localMatch.isResend || localMatch.emailTemplate === "replacement")) {
+              return {
+                ...dbRec,
+                replacementCode: localMatch.replacementCode,
+                isResend: localMatch.isResend,
+                emailType: localMatch.emailType,
+                emailTemplate: localMatch.emailTemplate
+              };
+            }
+            return dbRec;
+          });
+          const reconciled = autoCancelDuplicates(mergedPermits);
           databaseRef.current = reconciled;
           setDatabase(reconciled);
           safeLocalStorage.setItem("concessions_permit_db", JSON.stringify(reconciled));
@@ -1741,6 +1754,20 @@ export default function App() {
     setFormData((prev) => {
       let next = { ...prev, ...updates };
 
+      const isRep = next.emailType === "RESEND_CONCESSION" ||
+        next.isResend === true ||
+        next.emailTemplate === "replacement" ||
+        Boolean(next.replacementCode);
+
+      if (isRep) {
+        next.isResend = true;
+        next.emailType = "RESEND_CONCESSION";
+        next.emailTemplate = "replacement";
+        if (!next.replacementCode && updates.voucherCodesText) {
+          next.replacementCode = updates.voucherCodesText;
+        }
+      }
+
       if (updates.phone !== undefined) {
         next.phone = formatPhoneNumber(updates.phone);
       }
@@ -1801,8 +1828,13 @@ export default function App() {
         const nowTimestamp = Date.now();
         safeLocalStorage.setItem("concessions_custom_vouchers_last_modified", String(nowTimestamp));
 
+        const hasRep = updates.replacementCode !== undefined ||
+          updates.emailType === "RESEND_CONCESSION" ||
+          updates.isResend === true ||
+          updates.emailTemplate === "replacement";
+
         setDatabase((prevDb) => {
-          return prevDb.map((rec) => {
+          const nextDb = prevDb.map((rec) => {
             const recId = String(rec.id ?? "").trim();
             const recFormId = String(rec.formId ?? "").trim();
 
@@ -1812,7 +1844,16 @@ export default function App() {
             );
 
             if (isTarget) {
-              return { ...rec, voucherCode: updates.voucherCodesText || "" };
+              return {
+                ...rec,
+                voucherCode: updates.voucherCodesText || rec.voucherCode || "",
+                prePaidCode: updates.voucherCodesText || rec.prePaidCode || "",
+                status: updates.status || rec.status,
+                replacementCode: hasRep ? (updates.replacementCode || updates.voucherCodesText || rec.replacementCode) : rec.replacementCode,
+                isResend: hasRep ? true : rec.isResend,
+                emailType: hasRep ? "RESEND_CONCESSION" : rec.emailType,
+                emailTemplate: hasRep ? "replacement" : rec.emailTemplate
+              };
             }
 
             // Fallback only if no target ID or formId is available
@@ -1820,12 +1861,25 @@ export default function App() {
               const recVrmClean = rec.vrm ? rec.vrm.toUpperCase().replace(/\s+/g, "") : "";
               const recDateISO = parseDateToISO(rec.dateRequired || "") || "";
               if (recVrmClean === cleanVrm && (!recDateISO || !activeDateISO || recDateISO === activeDateISO)) {
-                return { ...rec, voucherCode: updates.voucherCodesText || "" };
+                return {
+                  ...rec,
+                  voucherCode: updates.voucherCodesText || rec.voucherCode || "",
+                  prePaidCode: updates.voucherCodesText || rec.prePaidCode || "",
+                  status: updates.status || rec.status,
+                  replacementCode: hasRep ? (updates.replacementCode || updates.voucherCodesText || rec.replacementCode) : rec.replacementCode,
+                  isResend: hasRep ? true : rec.isResend,
+                  emailType: hasRep ? "RESEND_CONCESSION" : rec.emailType,
+                  emailTemplate: hasRep ? "replacement" : rec.emailTemplate
+                };
               }
             }
 
             return rec;
           });
+
+          databaseRef.current = nextDb;
+          safeLocalStorage.setItem("concessions_permit_db", JSON.stringify(nextDb));
+          return nextDb;
         });
 
         // When a voucher code is changed or selected from Active Date Codes, reset this permit's STATUS to Pending
