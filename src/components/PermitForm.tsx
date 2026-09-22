@@ -517,6 +517,12 @@ export function PermitForm({
                 }
 
                 onChange({
+                  id: data.id,
+                  formId: data.formId,
+                  vrm: data.vrm,
+                  validFrom: data.validFrom,
+                  dateRequired: data.dateRequired,
+                  todayDate: data.todayDate,
                   voucherCodesText: selectedCode,
                   replacementCode: selectedCode,
                   status: "Pending",

@@ -1821,6 +1821,15 @@ export default function App() {
       const targetId = String(updates.id || formData.id || "").trim();
       const targetFormId = String(updates.formId || formData.formId || "").trim();
 
+      const candidateTarget = {
+        id: updates.id || formData.id,
+        formId: updates.formId || formData.formId,
+        vrm: cleanVrm,
+        validFrom: updates.validFrom || formData.validFrom,
+        dateRequired: updates.dateRequired || formData.dateRequired,
+        todayDate: updates.todayDate || formData.todayDate || activeDateISO
+      };
+
       if (cleanVrm || targetId || targetFormId) {
         const nextCustomVouchers = { ...customVouchers };
         if (targetFormId) {
@@ -1829,7 +1838,8 @@ export default function App() {
         if (targetId) {
           nextCustomVouchers[targetId] = updates.voucherCodesText || "";
         }
-        if (cleanVrm && activeDateISO) {
+        // Only set keyWithDate if no stable ID exists, preventing VRM-wide voucher collisions across records
+        if (!targetId && !targetFormId && cleanVrm && activeDateISO) {
           const keyWithDate = `${cleanVrm}_${activeDateISO}`;
           nextCustomVouchers[keyWithDate] = updates.voucherCodesText || "";
         }
@@ -1844,16 +1854,14 @@ export default function App() {
           updates.emailTemplate === "replacement";
 
         setDatabase((prevDb) => {
+          let matchedTarget = false;
           const nextDb = prevDb.map((rec) => {
-            const recId = String(rec.id ?? "").trim();
-            const recFormId = String(rec.formId ?? "").trim();
+            // Check match using canonical isRecordMatch utility
+            const isMatch = isRecordMatch(rec, candidateTarget);
 
-            const isTarget = Boolean(
-              (targetId && (recId === targetId || recFormId === targetId)) ||
-              (targetFormId && (recFormId === targetFormId || recId === targetFormId))
-            );
-
-            if (isTarget) {
+            // If ID/formId matched or first single matching record
+            if (isMatch && (!matchedTarget || targetId || targetFormId)) {
+              matchedTarget = true;
               return {
                 ...rec,
                 voucherCode: updates.voucherCodesText || rec.voucherCode || "",
@@ -1866,24 +1874,6 @@ export default function App() {
               };
             }
 
-            // Fallback only if no target ID or formId is available
-            if (!targetId && !targetFormId) {
-              const recVrmClean = rec.vrm ? rec.vrm.toUpperCase().replace(/\s+/g, "") : "";
-              const recDateISO = parseDateToISO(rec.dateRequired || "") || "";
-              if (recVrmClean === cleanVrm && (!recDateISO || !activeDateISO || recDateISO === activeDateISO)) {
-                return {
-                  ...rec,
-                  voucherCode: updates.voucherCodesText || rec.voucherCode || "",
-                  prePaidCode: updates.voucherCodesText || rec.prePaidCode || "",
-                  status: updates.status || rec.status,
-                  replacementCode: hasRep ? (updates.replacementCode || updates.voucherCodesText || rec.replacementCode) : rec.replacementCode,
-                  isResend: hasRep ? true : rec.isResend,
-                  emailType: hasRep ? "RESEND_CONCESSION" : rec.emailType,
-                  emailTemplate: hasRep ? "replacement" : rec.emailTemplate
-                };
-              }
-            }
-
             return rec;
           });
 
@@ -1893,16 +1883,7 @@ export default function App() {
         });
 
         // When a voucher code is changed or selected from Active Date Codes, reset this permit's STATUS to Pending
-        const targetRecord = (updates.id || formData.id || updates.formId || formData.formId)
-          ? enrichedDatabase.find(r => 
-              ((updates.id || formData.id) && r.id === (updates.id || formData.id)) ||
-              ((updates.formId || formData.formId) && (r.formId === (updates.formId || formData.formId) || r.id === (updates.formId || formData.formId)))
-            )
-          : enrichedDatabase.find(r => {
-              const rVrm = r.vrm ? r.vrm.toUpperCase().replace(/\s+/g, "") : "";
-              const rDate = parseDateToISO(r.dateRequired || "") || "";
-              return rVrm === cleanVrm && (!rDate || !activeDateISO || rDate === activeDateISO);
-            });
+        const targetRecord = enrichedDatabase.find(r => isRecordMatch(r, candidateTarget));
 
         const keysToUnsent: string[] = [];
         if (targetRecord) {
