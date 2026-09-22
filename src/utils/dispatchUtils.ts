@@ -394,31 +394,68 @@ export async function getRecordDispatchHistory(
 }
 
 /**
+ * Checks if a VRM is a placeholder or unassigned string
+ */
+export function isPlaceholderVrm(vrm?: string | null): boolean {
+  if (!vrm) return true;
+  const clean = String(vrm).trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (!clean || clean.length < 2) return true;
+  return (
+    clean === "PENDING" ||
+    clean === "NONE" ||
+    clean === "NULL" ||
+    clean === "UNDEFINED" ||
+    clean === "NA" ||
+    clean === "UNKNOWN" ||
+    clean === "TBC" ||
+    clean === "EMPTY" ||
+    clean === "NOTSET" ||
+    clean === "DEFAULT"
+  );
+}
+
+/**
  * Checks if two permit records or record-like objects match by Form ID, ID, or VRM + Date
  */
 export function isRecordMatch(r1?: any, r2?: any): boolean {
   if (!r1 || !r2) return false;
+  if (r1 === r2) return true;
+
   const id1 = String(r1.id ?? "").trim();
   const formId1 = String(r1.formId ?? "").trim();
   const id2 = String(r2.id ?? "").trim();
   const formId2 = String(r2.formId ?? "").trim();
-  if ((id1 || formId1) && (id2 || formId2)) {
-    const idMatch = Boolean(
+
+  const hasId1 = Boolean((id1 && id1 !== "-" && id1 !== "undefined" && id1 !== "null") || (formId1 && formId1 !== "-" && formId1 !== "undefined" && formId1 !== "null"));
+  const hasId2 = Boolean((id2 && id2 !== "-" && id2 !== "undefined" && id2 !== "null") || (formId2 && formId2 !== "-" && formId2 !== "undefined" && formId2 !== "null"));
+
+  // If BOTH records have an ID or Form ID, they MUST match on ID.
+  // If their IDs do not match, they are definitely DIFFERENT records.
+  // Under NO circumstances should they fall through to VRM matching!
+  if (hasId1 && hasId2) {
+    return Boolean(
       (id1 && id2 && id1 === id2) ||
       (formId1 && formId2 && formId1 === formId2) ||
       (id1 && formId2 && id1 === formId2) ||
       (formId1 && id2 && formId1 === id2)
     );
-    if (idMatch) return true;
   }
+
+  // If one or both records lack an ID (e.g. comparing with a form input),
+  // match ONLY if both have a valid, non-placeholder VRM and matching dates.
   const vrm1 = String(r1.vrm || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
   const vrm2 = String(r2.vrm || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
-  if (vrm1 && vrm2 && vrm1 === vrm2) {
+
+  if (isPlaceholderVrm(vrm1) || isPlaceholderVrm(vrm2)) {
+    return false;
+  }
+
+  if (vrm1 === vrm2) {
     const d1 = parseDateToISO(r1.validFrom || r1.dateRequired || r1.todayDate) || "";
     const d2 = parseDateToISO(r2.validFrom || r2.dateRequired || r2.todayDate) || "";
     if (d1 && d2 && d1 === d2) return true;
-    if (!d1 || !d2) return true;
   }
+
   return false;
 }
 
