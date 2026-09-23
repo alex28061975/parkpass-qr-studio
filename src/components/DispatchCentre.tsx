@@ -57,7 +57,7 @@ import {
   safeParseDateToTimestamp,
   safeParseDMYToISO
 } from "../utils/csvParser";
-import { checkIsRecordDispatched, isRecordMatch } from "../utils/dispatchUtils";
+import { checkIsRecordDispatched, isRecordMatch, isPlaceholderVrm } from "../utils/dispatchUtils";
 import { isVrmSilentBlockedSync } from "../lib/blocklist";
 // ⭐ FIX: Import canonical date & voucher matching functions from voucherValidation
 import {
@@ -746,11 +746,11 @@ export function DispatchCentre({
   const [goToPageInput, setGoToPageInput] = useState<string>("");
 
   const isSameSelectedRecord = (record: CsvPermitRecord) => {
-    if (selectedRowRecord && isRecordMatch(record, selectedRowRecord)) {
-      return true;
+    if (selectedRowRecord) {
+      return isRecordMatch(record, selectedRowRecord);
     }
-    if (formData && isRecordMatch(record, formData)) {
-      return true;
+    if (formData) {
+      return isRecordMatch(record, formData);
     }
     return false;
   };
@@ -765,18 +765,18 @@ export function DispatchCentre({
     ) {
       return true;
     }
-    if (
-      selectedRowRecord &&
-      isRecordMatch(record, selectedRowRecord) &&
-      (Boolean(selectedRowRecord.replacementCode) ||
-        selectedRowRecord.emailType === "RESEND_CONCESSION" ||
-        selectedRowRecord.isResend === true ||
-        selectedRowRecord.emailTemplate === "replacement")
-    ) {
-      return true;
+    if (selectedRowRecord) {
+      return (
+        isRecordMatch(record, selectedRowRecord) &&
+        (Boolean(selectedRowRecord.replacementCode) ||
+          selectedRowRecord.emailType === "RESEND_CONCESSION" ||
+          selectedRowRecord.isResend === true ||
+          selectedRowRecord.emailTemplate === "replacement")
+      );
     }
     if (
-      isSameSelectedRecord(record) &&
+      formData &&
+      isRecordMatch(record, formData) &&
       (formData?.emailType === "RESEND_CONCESSION" ||
         formData?.isResend === true ||
         formData?.emailTemplate === "replacement" ||
@@ -1811,7 +1811,7 @@ export function DispatchCentre({
                 const reqDate = getRequestedPermitDateISO(record, processingDate);
                 const isBlocked = isVrmSilentBlockedSync(record?.vrm);
                 const isCancelled = isRecordCancelled(record, reqDate, database);
-                const recordKey = String(record?.formId ?? record?.id ?? index);
+                const recordKey = String(record?.formId || record?.id || index);
 
                 // ⭐ FIX: CODES Column & VOUCHER CODE Column - canonical date range matching
                 const permitFromISO = getRequestedPermitDateISO(record) || parseDateToISO(record?.validFrom || record?.dateRequired) || "";
@@ -1847,9 +1847,19 @@ export function DispatchCentre({
                 } else if (replacementPending) {
                   displayCode = record.replacementCode || (isSameSelectedRecord(record) && formData?.voucherCodesText ? formData.voucherCodesText : (recordCodeMap.get(recordKey) || record.voucherCode || "-"));
                 } else if (displayCode === undefined || displayCode === null || displayCode === "CANCELLED" || displayCode === "BLOCKED") {
+                  const cleanVrmStr = record?.vrm ? String(record.vrm).toUpperCase().replace(/\s+/g, "") : "";
+                  const hasStableId = Boolean(
+                    (record?.formId !== undefined && record?.formId !== null && String(record?.formId).trim() !== "") ||
+                    (record?.id !== undefined && record?.id !== null && String(record?.id).trim() !== "")
+                  );
                   const rawCode = String(
                     record.voucherCode ||
-                    (customVouchers && (customVouchers[recordKey] || (record.vrm && customVouchers[`${String(record.vrm).toUpperCase().replace(/\s+/g, "")}_${reqDate}`]))) ||
+                    (customVouchers && (
+                      customVouchers[recordKey] ||
+                      (record.formId ? customVouchers[String(record.formId)] : undefined) ||
+                      (record.id ? customVouchers[String(record.id)] : undefined) ||
+                      (!hasStableId && !isPlaceholderVrm(cleanVrmStr) ? (customVouchers[`${cleanVrmStr}_${reqDate}`] || customVouchers[cleanVrmStr]) : undefined)
+                    )) ||
                     ""
                   ).trim();
                   const cleanRaw = cleanVoucherCodeValue(rawCode).toUpperCase();

@@ -166,7 +166,7 @@ export function PermitMatchingTable({
 
                   const permitStatus = isDispatched ? '✓ Sent' : 'Pending';
 
-                  const recordKey = String(record.formId ?? record.id ?? index);
+                  const recordKey = String(record.formId || record.id || index);
                   
                   let displayCode = recordCodeMap.get(recordKey);
                   

@@ -17,7 +17,8 @@ import {
   unmarkRecordAsDispatched,
   getAllDispatchedKeys,
   batchCheckIsRecordDispatched,
-  isRecordMatch
+  isRecordMatch,
+  isPlaceholderVrm
 } from "./utils/dispatchUtils";
 
 // CSV Database Imports
@@ -361,14 +362,20 @@ export function enrichRecordsWithVouchers(
     }
 
     let code = "";
-    if (customVouchersMap[keyWithDate]) {
-      code = customVouchersMap[keyWithDate];
-    } else if (customVouchersMap[cleanVrm]) {
-      code = customVouchersMap[cleanVrm];
+    const hasStableId = Boolean(
+      (record.formId !== undefined && record.formId !== null && String(record.formId).trim() !== "") ||
+      (record.id !== undefined && record.id !== null && String(record.id).trim() !== "")
+    );
+    if (record.formId && customVouchersMap[String(record.formId)]) {
+      code = customVouchersMap[String(record.formId)];
     } else if (record.id && customVouchersMap[record.id]) {
       code = customVouchersMap[record.id];
-    } else if (record.formId && customVouchersMap[String(record.formId)]) {
-      code = customVouchersMap[String(record.formId)];
+    } else if (!hasStableId && cleanVrm && !isPlaceholderVrm(cleanVrm)) {
+      if (customVouchersMap[keyWithDate]) {
+        code = customVouchersMap[keyWithDate];
+      } else if (customVouchersMap[cleanVrm]) {
+        code = customVouchersMap[cleanVrm];
+      }
     } else {
       const rawCode = (record.voucherCode !== undefined && record.voucherCode !== null && record.voucherCode !== "") ? record.voucherCode : defaultVal;
       if (rawCode && String(rawCode).toUpperCase() === "CANCELLED") {
@@ -464,11 +471,16 @@ export function enrichRecordsWithVouchers(
       return;
     }
 
-    const keyWithDate = (reqIso && cleanVrm) ? `${cleanVrm}_${reqIso}` : "";
+    const hasStableId = Boolean(
+      (record.formId !== undefined && record.formId !== null && String(record.formId).trim() !== "") ||
+      (record.id !== undefined && record.id !== null && String(record.id).trim() !== "")
+    );
+    const keyWithDate = (reqIso && cleanVrm && !isPlaceholderVrm(cleanVrm)) ? `${cleanVrm}_${reqIso}` : "";
     const customOverride = (record.formId ? customVouchersMap[String(record.formId)] : undefined) ||
                            (record.id ? customVouchersMap[String(record.id)] : undefined) ||
-                           (keyWithDate ? customVouchersMap[keyWithDate] : undefined) ||
-                           (cleanVrm ? customVouchersMap[cleanVrm] : undefined);
+                           (!hasStableId && cleanVrm && !isPlaceholderVrm(cleanVrm)
+                             ? ((keyWithDate ? customVouchersMap[keyWithDate] : undefined) || customVouchersMap[cleanVrm])
+                             : undefined);
 
     const existingCode = record.voucherCode || record.prePaidCode || record.qrCode || record.serialNumber;
 
@@ -1838,8 +1850,8 @@ export default function App() {
         if (targetId) {
           nextCustomVouchers[targetId] = updates.voucherCodesText || "";
         }
-        // Only set keyWithDate if no stable ID exists, preventing VRM-wide voucher collisions across records
-        if (!targetId && !targetFormId && cleanVrm && activeDateISO) {
+        // Only set keyWithDate if no stable ID exists and VRM is not a placeholder, preventing voucher collisions across records
+        if (!targetId && !targetFormId && cleanVrm && !isPlaceholderVrm(cleanVrm) && activeDateISO) {
           const keyWithDate = `${cleanVrm}_${activeDateISO}`;
           nextCustomVouchers[keyWithDate] = updates.voucherCodesText || "";
         }

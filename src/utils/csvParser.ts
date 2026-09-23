@@ -180,6 +180,24 @@ export function formatFormId(val: string | number | undefined | null): string {
   return str;
 }
 
+export function isPlaceholderVrm(vrm?: string | null): boolean {
+  if (!vrm) return true;
+  const clean = String(vrm).trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (!clean || clean.length < 2) return true;
+  return (
+    clean === "PENDING" ||
+    clean === "NONE" ||
+    clean === "NULL" ||
+    clean === "UNDEFINED" ||
+    clean === "NA" ||
+    clean === "UNKNOWN" ||
+    clean === "TBC" ||
+    clean === "EMPTY" ||
+    clean === "NOTSET" ||
+    clean === "DEFAULT"
+  );
+}
+
 export interface CsvPermitRecord {
   id: string;
   formId?: string | number;
@@ -540,10 +558,15 @@ export function exportToExcel(
       const cleanVrm = r.vrm ? r.vrm.toUpperCase().replace(/\s+/g, "") : "";
       const recDateISO = parseDateToISO(r.dateRequired || "") || "";
       const keyWithDate = recDateISO ? `${cleanVrm}_${recDateISO}` : cleanVrm;
-      const customCode = customVouchersMap[keyWithDate] ||
-                         customVouchersMap[cleanVrm] ||
+      const hasStableId = Boolean(
+        (r.formId !== undefined && r.formId !== null && String(r.formId).trim() !== "") ||
+        (r.id !== undefined && r.id !== null && String(r.id).trim() !== "")
+      );
+      const customCode = (r.formId ? customVouchersMap[String(r.formId)] : undefined) ||
                          (r.id ? customVouchersMap[r.id] : undefined) ||
-                         (r.formId ? customVouchersMap[String(r.formId)] : undefined);
+                         (!hasStableId && cleanVrm && !isPlaceholderVrm(cleanVrm)
+                           ? (customVouchersMap[keyWithDate] || customVouchersMap[cleanVrm])
+                           : undefined);
       if (customCode) {
         voucherVal = customCode;
       }
@@ -644,10 +667,15 @@ export function exportToCSV(
       const cleanVrm = r.vrm ? r.vrm.toUpperCase().replace(/\s+/g, "") : "";
       const recDateISO = parseDateToISO(r.dateRequired || "") || "";
       const keyWithDate = recDateISO ? `${cleanVrm}_${recDateISO}` : cleanVrm;
-      const customCode = customVouchersMap[keyWithDate] ||
-                         customVouchersMap[cleanVrm] ||
+      const hasStableId = Boolean(
+        (r.formId !== undefined && r.formId !== null && String(r.formId).trim() !== "") ||
+        (r.id !== undefined && r.id !== null && String(r.id).trim() !== "")
+      );
+      const customCode = (r.formId ? customVouchersMap[String(r.formId)] : undefined) ||
                          (r.id ? customVouchersMap[r.id] : undefined) ||
-                         (r.formId ? customVouchersMap[String(r.formId)] : undefined);
+                         (!hasStableId && cleanVrm && !isPlaceholderVrm(cleanVrm)
+                           ? (customVouchersMap[keyWithDate] || customVouchersMap[cleanVrm])
+                           : undefined);
       if (customCode) {
         voucherVal = customCode;
       }
@@ -2511,7 +2539,7 @@ export function getSpreadsheetMatchingAllocationsMap(
   };
 
   sortedMatchingPermits.forEach((r, idx) => {
-    const recordKey = String(r.formId ?? r.id ?? idx);
+    const recordKey = String(r.formId || r.id || idx);
     const reqDate = getRequestedPermitDateISO(r, processingDate);
     const reqDateTo = r.validTo 
       ? (parseDateToISO(r.validTo) || (reqDate ? addDaysSafe(reqDate, 6) : ""))
@@ -2538,7 +2566,7 @@ export function getSpreadsheetMatchingAllocationsMap(
       );
       const customOverride = (r.formId ? customVouchersMap[String(r.formId)] : undefined) ||
                              (r.id ? customVouchersMap[String(r.id)] : undefined) ||
-                             (!hasStableId ? (customVouchersMap[keyWithDate] || customVouchersMap[rVrm]) : undefined);
+                             (!hasStableId && !isPlaceholderVrm(rVrm) ? (customVouchersMap[keyWithDate] || customVouchersMap[rVrm]) : undefined);
 
       if (customOverride && customOverride !== "-" && customOverride.toUpperCase() !== "CANCELLED") {
         const clean = String(customOverride).trim().split(/[\n,;\s]+/)[0]?.trim().toUpperCase();
@@ -2567,7 +2595,7 @@ export function getSpreadsheetMatchingAllocationsMap(
   });
 
   sortedMatchingPermits.forEach((r, idx) => {
-    const recordKey = String(r.formId ?? r.id ?? idx);
+    const recordKey = String(r.formId || r.id || idx);
     if (map.has(recordKey)) return;
 
     const reqDateD = getRequestedPermitDateISO(r, processingDate);
