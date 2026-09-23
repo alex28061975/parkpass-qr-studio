@@ -830,6 +830,9 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState("");
   const [lastProcessedDate, setLastProcessedDate] = useState<string>("");
   const [lastDbLength, setLastDbLength] = useState<number>(0);
+  const refreshInFlightRef = useRef<boolean>(false);
+  const refreshRequestIdRef = useRef<number>(0);
+  const lastOfflineDbRawRef = useRef<string | null>(null);
 
   // Helper to clear replacement state and promote replacement code to primary code on successful dispatch
   const handleReplacementSuccessCleanup = (targetRecord: CsvPermitRecord) => {
@@ -1210,13 +1213,14 @@ export default function App() {
       const localDatesStr = safeLocalStorage.getItem("concessions_dispatch_dates");
       const localByStr = safeLocalStorage.getItem("concessions_dispatch_by");
 
-      if (localDbStr) {
+      if (localDbStr && localDbStr !== lastOfflineDbRawRef.current) {
         try {
           const parsed = JSON.parse(localDbStr);
           const reconciled = Array.isArray(parsed) ? autoCancelDuplicates(parsed) : [];
           databaseRef.current = reconciled;
           setDatabase(reconciled);
           setTotalRecordsCount(reconciled.length);
+          lastOfflineDbRawRef.current = localDbStr;
         } catch (e) {}
       }
       if (localVouchersStr) {
@@ -1253,20 +1257,25 @@ export default function App() {
 
     if (!isSupabaseConfigured()) return;
 
+    if (refreshInFlightRef.current) return;
+    refreshInFlightRef.current = true;
+    const reqId = ++refreshRequestIdRef.current;
+
     if (!silent) {
       setIsLoadingHistory(true);
     }
     isSilentRefetchRef.current = silent;
 
     try {
-      // ⭐ ALWAYS fetch the FULL, UNFILTERED database from Supabase!
-      // All duplicate checks, cancellation logic, and voucher allocations must ALWAYS evaluate
-      // against the complete database. UI date range filters only affect visual table rendering.
+      // Background polling is bounded to 90 days to cover duplicate-VRM checking,
+      // backdated concession windows, and monthly reconciliation with optimal performance.
       const [dbPermits, dbVouchers, dbDispatchedData] = await Promise.all([
-        fetchPermitsFromSupabase({ daysLimit: null }),
+        fetchPermitsFromSupabase({ daysLimit: 90 }),
         fetchVouchersFromSupabase(),
         fetchDispatchedFromSupabase()
       ]);
+
+      if (reqId !== refreshRequestIdRef.current) return;
 
       if (dbPermits) {
         const currentDb = databaseRef.current;
@@ -1283,19 +1292,32 @@ export default function App() {
         });
 
         if (!isIdentical) {
-          const mergedPermits = dbPermits.map(dbRec => {
-            const localMatch = currentDb.find(c => isRecordMatch(c, dbRec));
+          // O(1) indexed Map merge: preserve any local records older than 90 days
+          const currentDbMap = new Map<string, CsvPermitRecord>();
+          for (const rec of currentDb) {
+            const key = String(rec.formId || rec.id || "");
+            if (key) currentDbMap.set(key, rec);
+          }
+
+          const mergedMap = new Map<string, CsvPermitRecord>(currentDbMap);
+
+          for (const dbRec of dbPermits) {
+            const key = String(dbRec.formId || dbRec.id || "");
+            const localMatch = key ? currentDbMap.get(key) : undefined;
             if (localMatch && (localMatch.replacementCode || localMatch.isResend || localMatch.emailTemplate === "replacement")) {
-              return {
+              mergedMap.set(key || String(dbRec.id), {
                 ...dbRec,
                 replacementCode: localMatch.replacementCode,
                 isResend: localMatch.isResend,
                 emailType: localMatch.emailType,
                 emailTemplate: localMatch.emailTemplate
-              };
+              });
+            } else {
+              mergedMap.set(key || String(dbRec.id), dbRec);
             }
-            return dbRec;
-          });
+          }
+
+          const mergedPermits = Array.from(mergedMap.values());
           const reconciled = autoCancelDuplicates(mergedPermits);
           databaseRef.current = reconciled;
           setDatabase(reconciled);
@@ -1306,9 +1328,9 @@ export default function App() {
         if (typeof countFromDb === 'number' && countFromDb > 0) {
           setTotalRecordsCount(countFromDb);
         } else {
-          setTotalRecordsCount(dbPermits.length);
+          setTotalRecordsCount(databaseRef.current.length);
         }
-        setHasFullHistoryLoaded(true);
+        setHasFullHistoryLoaded(false);
       }
       if (dbVouchers) {
         const currentVouchersDb = vouchersDatabaseRef.current;
@@ -1363,6 +1385,7 @@ export default function App() {
     } catch (err) {
       console.warn("Real-time database fetch error:", err);
     } finally {
+      refreshInFlightRef.current = false;
       if (!silent) {
         setIsLoadingHistory(false);
       }
@@ -1501,6 +1524,7 @@ export default function App() {
           const reconciled = autoCancelDuplicates(allPermits);
           recordsToExport = reconciled;
           setDatabase(reconciled);
+          databaseRef.current = reconciled;
           setHasFullHistoryLoaded(true);
         }
       } catch (err) {
@@ -1527,22 +1551,26 @@ export default function App() {
     };
 
     const initAndFetch = async () => {
-      // If offline mode is active, load from local storage immediately and do not connect to Supabase
+      // If offline mode is active, ensure memory is hydrated and do not connect to Supabase
       if (storageModeRef.current === "offline") {
-        const localPermits = safeLocalStorage.getItem("concessions_permit_db");
-        if (localPermits) {
-          try {
-            const parsed = JSON.parse(localPermits);
-            const reconciled = Array.isArray(parsed) ? autoCancelDuplicates(parsed) : [];
-            setDatabase(reconciled);
-            databaseRef.current = reconciled;
-            setTotalRecordsCount(reconciled.length);
-          } catch (e) {}
+        if (!databaseRef.current || databaseRef.current.length === 0) {
+          const localPermits = safeLocalStorage.getItem("concessions_permit_db");
+          if (localPermits) {
+            try {
+              const parsed = JSON.parse(localPermits);
+              const reconciled = Array.isArray(parsed) ? autoCancelDuplicates(parsed) : [];
+              setDatabase(reconciled);
+              databaseRef.current = reconciled;
+              setTotalRecordsCount(reconciled.length);
+            } catch (e) {}
+          } else {
+            const demoData = parsePermitCsv(INITIAL_DEMO_CSV);
+            setDatabase(demoData);
+            databaseRef.current = demoData;
+            setTotalRecordsCount(demoData.length);
+          }
         } else {
-          const demoData = parsePermitCsv(INITIAL_DEMO_CSV);
-          setDatabase(demoData);
-          databaseRef.current = demoData;
-          setTotalRecordsCount(demoData.length);
+          setTotalRecordsCount(databaseRef.current.length);
         }
         setIsSupabaseActive(false);
         initialSupabaseSyncDone.current = true;
@@ -1567,26 +1595,30 @@ export default function App() {
         setIsSupabaseActive(false);
         initialSupabaseSyncDone.current = true;
         
-        // Hydrate permits from LocalStorage
-        const localPermits = safeLocalStorage.getItem("concessions_permit_db");
-        if (localPermits) {
-          try {
-            const parsed = JSON.parse(localPermits);
-            const reconciled = Array.isArray(parsed) ? autoCancelDuplicates(parsed) : [];
-            setDatabase(reconciled);
-            databaseRef.current = reconciled;
-            setTotalRecordsCount(reconciled.length);
-          } catch (e) {
+        // Hydrate permits from LocalStorage only if not already hydrated on mount
+        if (!databaseRef.current || databaseRef.current.length === 0) {
+          const localPermits = safeLocalStorage.getItem("concessions_permit_db");
+          if (localPermits) {
+            try {
+              const parsed = JSON.parse(localPermits);
+              const reconciled = Array.isArray(parsed) ? autoCancelDuplicates(parsed) : [];
+              setDatabase(reconciled);
+              databaseRef.current = reconciled;
+              setTotalRecordsCount(reconciled.length);
+            } catch (e) {
+              const demoData = parsePermitCsv(INITIAL_DEMO_CSV);
+              setDatabase(demoData);
+              databaseRef.current = demoData;
+              setTotalRecordsCount(demoData.length);
+            }
+          } else {
             const demoData = parsePermitCsv(INITIAL_DEMO_CSV);
             setDatabase(demoData);
             databaseRef.current = demoData;
             setTotalRecordsCount(demoData.length);
           }
         } else {
-          const demoData = parsePermitCsv(INITIAL_DEMO_CSV);
-          setDatabase(demoData);
-          databaseRef.current = demoData;
-          setTotalRecordsCount(demoData.length);
+          setTotalRecordsCount(databaseRef.current.length);
         }
 
         // Hydrate vouchers from LocalStorage immediately
@@ -1632,18 +1664,20 @@ export default function App() {
 
         window.addEventListener("visibilitychange", handleVisibilityChange);
       } else {
-        const localPermits = safeLocalStorage.getItem("concessions_permit_db");
-        if (localPermits) {
-          try {
-            const parsed = JSON.parse(localPermits);
-            const reconciled = Array.isArray(parsed) ? autoCancelDuplicates(parsed) : [];
-            setDatabase(reconciled);
-            databaseRef.current = reconciled;
-          } catch (e) {
+        if (!databaseRef.current || databaseRef.current.length === 0) {
+          const localPermits = safeLocalStorage.getItem("concessions_permit_db");
+          if (localPermits) {
+            try {
+              const parsed = JSON.parse(localPermits);
+              const reconciled = Array.isArray(parsed) ? autoCancelDuplicates(parsed) : [];
+              setDatabase(reconciled);
+              databaseRef.current = reconciled;
+            } catch (e) {
+              setDatabase(parsePermitCsv(INITIAL_DEMO_CSV));
+            }
+          } else {
             setDatabase(parsePermitCsv(INITIAL_DEMO_CSV));
           }
-        } else {
-          setDatabase(parsePermitCsv(INITIAL_DEMO_CSV));
         }
 
         const localVouchersStr = safeLocalStorage.getItem("concessions_vouchers_db") || safeLocalStorage.getItem("vouchers") || safeLocalStorage.getItem("activeCodes");

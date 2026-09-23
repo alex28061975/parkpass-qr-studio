@@ -757,6 +757,10 @@ function PermitCardInner({
       return;
     }
 
+    if (!qrUrl && qrPayload) {
+      await generateQrUrls(qrPayload);
+    }
+
     if (!qrUrl) {
       rejectQrBlob?.(new Error("No QR code available"));
       showToast("⚠️ Cannot resend email: No QR code is available for this permit. Please assign a valid voucher code.");
@@ -990,6 +994,10 @@ function PermitCardInner({
     }
     
     const recCode = rec?.voucherCode || rec?.prePaidCode || (!targetRecord ? (activeVoucherCode || currentSelectedCode || qrUrl) : "");
+    const effectivePayload = (data.qrOverride || "").trim() || recCode || qrPayload;
+    if (effectivePayload && !qrUrl && !isCancelledRec) {
+      await generateQrUrls(effectivePayload);
+    }
     if (!isCancelledRec && !recCode && !qrUrl && !targetRecord) {
       showToast(`⚠️ Cannot send email: No QR code is available for this permit. Please assign a valid voucher code.`);
       return;
@@ -1157,45 +1165,69 @@ function PermitCardInner({
     return "";
   }, [data.qrOverride, activeVoucherCode]);
 
+  const generateQrUrls = useCallback(async (payload: string): Promise<{ highRes: string; small: string }> => {
+    if (!payload || payload === "-" || payload === "CANCELLED") {
+      setQrUrl("");
+      setQrUrlSmall("");
+      return { highRes: "", small: "" };
+    }
+    try {
+      const [highRes, small] = await Promise.all([
+        QRCode.toDataURL(payload, {
+          width: 600,
+          margin: 1,
+          errorCorrectionLevel: "H",
+          color: { dark: "#111111", light: "#FFFFFF" }
+        }),
+        QRCode.toDataURL(payload, {
+          width: 180,
+          margin: 1,
+          errorCorrectionLevel: "M",
+          color: { dark: "#111111", light: "#FFFFFF" }
+        })
+      ]);
+      setQrUrl(highRes);
+      setQrUrlSmall(small);
+      return { highRes, small };
+    } catch (err) {
+      console.error("QR Code Generation Error:", err);
+      return { highRes: "", small: "" };
+    }
+  }, []);
+
+  // Gate expensive background generation:
+  // When PermitCard is mounted inside the offscreen engine (#print-card-wrapper),
+  // skip eager QR code generation on every record/database change.
+  // Generation is performed on demand when print, send, copy, or beforeprint actions are triggered.
   useEffect(() => {
+    const isOffscreen = cardRef.current?.closest('.permit-card-engine') !== null;
+    if (isOffscreen) {
+      if (!qrPayload) {
+        setQrUrl("");
+        setQrUrlSmall("");
+      }
+      return;
+    }
+
     if (!qrPayload) {
       setQrUrl("");
       setQrUrlSmall("");
       return;
     }
 
-    QRCode.toDataURL(qrPayload, {
-      width: 600,
-      margin: 1,
-      errorCorrectionLevel: "H",
-      color: {
-        dark: "#111111",
-        light: "#FFFFFF"
-      }
-    })
-      .then((url) => {
-        setQrUrl(url);
-      })
-      .catch((err) => {
-        console.error("QR Code Generation Error (High-Res):", err);
-      });
+    generateQrUrls(qrPayload);
+  }, [qrPayload, generateQrUrls]);
 
-    QRCode.toDataURL(qrPayload, {
-      width: 180,
-      margin: 1,
-      errorCorrectionLevel: "M",
-      color: {
-        dark: "#111111",
-        light: "#FFFFFF"
+  // Hook beforeprint to guarantee QR is generated if browser print dialog opens
+  useEffect(() => {
+    const handleBeforePrint = () => {
+      if (qrPayload) {
+        generateQrUrls(qrPayload);
       }
-    })
-      .then((url) => {
-        setQrUrlSmall(url);
-      })
-      .catch((err) => {
-        console.error("QR Code Generation Error (Compact):", err);
-      });
-  }, [qrPayload]);
+    };
+    window.addEventListener("beforeprint", handleBeforePrint);
+    return () => window.removeEventListener("beforeprint", handleBeforePrint);
+  }, [qrPayload, generateQrUrls]);
 
   const generateHighResCanvas = (customData?: PermitData, customQrUrl?: string): Promise<HTMLCanvasElement> => {
     const activeData = customData || data;
@@ -1746,7 +1778,10 @@ function PermitCardInner({
     }
   };
 
-  const handlePrint = () => {
+  const handlePrint = async () => {
+    if (qrPayload && !qrUrl) {
+      await generateQrUrls(qrPayload);
+    }
     window.print();
   };
 

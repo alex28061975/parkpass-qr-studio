@@ -1,4 +1,5 @@
-import React, { useMemo, useState, useEffect, useCallback } from "react";
+import React, { useMemo, useState, useEffect, useCallback, useRef } from "react";
+import { useTableVirtualizer } from "../utils/useTableVirtualizer";
 import { 
   ChevronDown, 
   ChevronLeft,
@@ -744,6 +745,7 @@ export function DispatchCentre({
   const [pageSize, setPageSize] = useState<number>(50);
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [goToPageInput, setGoToPageInput] = useState<string>("");
+  const tableContainerRef = useRef<HTMLDivElement>(null);
 
   const isSameSelectedRecord = (record: CsvPermitRecord) => {
     if (selectedRowRecord) {
@@ -1301,32 +1303,25 @@ export function DispatchCentre({
   const startIndex = totalFilteredCount === 0 ? 0 : (safePage - 1) * effectivePageSize;
   const endIndex = Math.min(startIndex + effectivePageSize, totalFilteredCount);
 
-  // ⭐ Non-blocking progressive rendering when "ALL" (pageSize === 0) is selected
-  const [allRenderLimit, setAllRenderLimit] = useState<number>(100);
-
-  useEffect(() => {
-    if (pageSize === 0) {
-      setAllRenderLimit(100);
-      let limit = 100;
-      let frameId: number;
-      const renderNextChunk = () => {
-        if (limit < sortedRecords.length) {
-          limit = Math.min(limit + 150, sortedRecords.length);
-          setAllRenderLimit(limit);
-          frameId = requestAnimationFrame(renderNextChunk);
-        }
-      };
-      frameId = requestAnimationFrame(renderNextChunk);
-      return () => cancelAnimationFrame(frameId);
-    }
-  }, [pageSize, sortedRecords.length]);
+  // Lightweight zero-dependency row virtualization when "ALL" (pageSize === 0) is selected
+  const isAllMode = pageSize === 0;
+  const virtualizer = useTableVirtualizer({
+    totalCount: sortedRecords.length,
+    estimateRowHeight: 48,
+    overscan: 20,
+    containerRef: tableContainerRef,
+    enabled: isAllMode && sortedRecords.length > 50
+  });
 
   const paginatedRecords = useMemo(() => {
+    if (virtualizer.isVirtual) {
+      return sortedRecords.slice(virtualizer.startIndex, virtualizer.endIndex);
+    }
     if (pageSize === 0) {
-      return sortedRecords.slice(0, allRenderLimit);
+      return sortedRecords;
     }
     return sortedRecords.slice(startIndex, endIndex);
-  }, [sortedRecords, startIndex, endIndex, pageSize, allRenderLimit]);
+  }, [virtualizer.isVirtual, virtualizer.startIndex, virtualizer.endIndex, sortedRecords, pageSize, startIndex, endIndex]);
 
   const pageNumbers = useMemo(() => {
     if (totalPages <= 7) {
@@ -1627,7 +1622,7 @@ export function DispatchCentre({
       </div>
 
       <div className="w-full mt-4 border border-slate-200 dark:border-[#163657] rounded-xl bg-white dark:bg-[#061424] overflow-hidden shadow-xs dark:shadow-inner">
-        <div className="overflow-x-auto w-full">
+        <div ref={tableContainerRef} className="overflow-x-auto w-full">
           <table className="min-w-[1180px] w-full text-xs text-left border-collapse table-auto">
             <thead className="bg-slate-50 dark:bg-[#081b30] border-b border-slate-200 dark:border-[#163657] text-slate-600 dark:text-slate-300 font-bold uppercase tracking-wider text-[10px] sticky top-0 z-10 select-none">
               <tr>
@@ -1803,8 +1798,13 @@ export function DispatchCentre({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-[#102947]">
+              {virtualizer.isVirtual && virtualizer.topSpacerHeight > 0 && (
+                <tr aria-hidden="true" style={{ height: `${virtualizer.topSpacerHeight}px` }}>
+                  <td colSpan={13} style={{ padding: 0, border: 0 }} />
+                </tr>
+              )}
               {paginatedRecords.map((record, pIdx) => {
-                const index = startIndex + pIdx;
+                const index = (virtualizer.isVirtual ? virtualizer.startIndex : startIndex) + pIdx;
                 const recordIso = parseDateToISO(record?.dateRequired || record?.validFrom);
                 const expiresIso = recordIso ? addDays(recordIso, 6) : "";
 
@@ -2162,6 +2162,11 @@ export function DispatchCentre({
                   </tr>
                 );
               })}
+              {virtualizer.isVirtual && virtualizer.bottomSpacerHeight > 0 && (
+                <tr aria-hidden="true" style={{ height: `${virtualizer.bottomSpacerHeight}px` }}>
+                  <td colSpan={13} style={{ padding: 0, border: 0 }} />
+                </tr>
+              )}
               {filteredRecords.length === 0 && (
                 <tr>
                   <td colSpan={13} className="py-12 text-center text-slate-500 dark:text-slate-400 text-xs">

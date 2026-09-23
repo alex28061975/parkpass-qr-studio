@@ -208,7 +208,7 @@ export const fetchPermitsFromSupabase = async (options?: { daysLimit?: number | 
     const pageSize = 1000;
     let hasMore = true;
 
-    const daysLimit = options?.daysLimit;
+    const daysLimit = options?.daysLimit !== undefined ? options.daysLimit : 90;
     let cutoffISO = "";
     if (daysLimit && daysLimit > 0) {
       const nowObj = new Date();
