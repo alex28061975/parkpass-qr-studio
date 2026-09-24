@@ -50,6 +50,14 @@ import {
   clearAllVouchers
 } from "./lib/supabase";
 
+export interface EmailTrackingInfo {
+  status: "SENT" | "OPENED";
+  sentAt?: string;
+  openedAt?: string;
+  openCount?: number;
+  trackingId?: string;
+}
+
 // Helper to format string to Title Case (capitalize each word)
 function toTitleCase(str: string): string {
   if (!str || str === "-") return str;
@@ -738,6 +746,58 @@ export default function App() {
     storageModeRef.current = storageMode;
     safeLocalStorage.setItem("app_storage_mode", storageMode);
   }, [storageMode]);
+
+  const [emailTracking, setEmailTracking] = useState<Record<string, EmailTrackingInfo>>(() => {
+    try {
+      const saved = safeLocalStorage.getItem("concessions_email_tracking");
+      if (saved) return JSON.parse(saved);
+    } catch (e) {}
+    return {};
+  });
+
+  // Background polling to keep email open tracking synced with backend
+  useEffect(() => {
+    const pollEmailStatuses = async () => {
+      try {
+        const res = await fetch("/api/emails/statuses");
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data?.statuses) {
+          setEmailTracking(prev => {
+            let changed = false;
+            const next = { ...prev };
+            for (const [key, val] of Object.entries(data.statuses as Record<string, any>)) {
+              const current = next[key];
+              if (!current || current.status !== val.status || current.openedAt !== val.openedAt || current.openCount !== val.openCount) {
+                next[key] = {
+                  status: val.status,
+                  sentAt: val.sentAt || current?.sentAt,
+                  openedAt: val.openedAt,
+                  openCount: val.openCount,
+                  trackingId: val.trackingId || current?.trackingId
+                };
+                changed = true;
+              }
+            }
+            if (changed) {
+              safeLocalStorage.setItem("concessions_email_tracking", JSON.stringify(next));
+              return next;
+            }
+            return prev;
+          });
+        }
+      } catch (e) {}
+    };
+
+    pollEmailStatuses();
+    const interval = setInterval(pollEmailStatuses, 8000);
+    const handleFocus = () => pollEmailStatuses();
+    window.addEventListener("focus", handleFocus);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("focus", handleFocus);
+    };
+  }, []);
 
   const [isSyncing, setIsSyncing] = useState(false);
   const [showBlocklist, setShowBlocklist] = useState<boolean>(false);
@@ -2509,7 +2569,191 @@ export default function App() {
     permitCardRef.current?.print();
   };
 
+  const handleResendRecord = async (record: CsvPermitRecord) => {
+    // 1. Identify or generate genuine new voucher code
+    let newVoucherCode = (record.replacementCode || (isRecordMatch(record, formData) ? formData.replacementCode : "") || "").trim().toUpperCase();
+    if (!newVoucherCode || newVoucherCode === "-" || newVoucherCode === "CANCELLED" || newVoucherCode === "PENDING") {
+      // Find an unused voucher in vouchersDatabase
+      const availableUnused = (vouchersDatabase || []).find(v => {
+        if (!v || !v.code || v.isUsed) return false;
+        const clean = cleanVoucherCodeValue(v.code).toUpperCase();
+        if (!clean || clean === "-" || clean === "CANCELLED" || clean === "PENDING") return false;
+        const inUse = (database || []).some(r => !isRecordMatch(r, record) && isVoucherCodeMatch(r.voucherCode, clean));
+        return !inUse;
+      });
+
+      if (availableUnused && availableUnused.code) {
+        newVoucherCode = cleanVoucherCodeValue(availableUnused.code).toUpperCase();
+        setVouchersDatabase(prev => {
+          const next = prev.map(v => v.code === availableUnused.code ? { ...v, isUsed: true } : v);
+          vouchersDatabaseRef.current = next;
+          safeLocalStorage.setItem("concessions_vouchers_db", JSON.stringify(next));
+          return next;
+        });
+      } else {
+        // Auto-generate genuine alphanumeric concession voucher code
+        const chars = "0123456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+        let rand = "";
+        for (let i = 0; i < 10; i++) {
+          rand += chars.charAt(Math.floor(Math.random() * chars.length));
+        }
+        newVoucherCode = `NHS${rand}`;
+      }
+    }
+
+    // 2. Call backend /api/emails/resend to create tracking record & pixel
+    const pk = getRecordPrimaryKey(record) || record.vrm || String(record.id || "");
+    const normVrm = (record.vrm || "").toUpperCase().replace(/\s+/g, "");
+    let trackingId = "";
+
+    try {
+      const res = await fetch("/api/emails/resend", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          recordKey: pk,
+          vrm: record.vrm,
+          driverName: record.driverName,
+          email: record.email,
+          requestedCode: newVoucherCode,
+          validFrom: record.validFrom || record.dateRequired,
+          validTo: record.validTo,
+          todayDate: record.todayDate || formData.todayDate || getTodayISO()
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.voucherCode) newVoucherCode = data.voucherCode;
+        trackingId = data.trackingId;
+      }
+    } catch (e) {
+      console.warn("Backend resend call failed, falling back to local tracking:", e);
+      trackingId = `trk_${Date.now()}`;
+    }
+
+    const sentAt = new Date().toISOString();
+
+    // 3. Immediately update emailTracking state so the badge changes to SENT right away
+    setEmailTracking(prev => {
+      const next = { ...prev };
+      const info: EmailTrackingInfo = {
+        status: "SENT",
+        sentAt,
+        trackingId
+      };
+      if (pk) next[pk] = info;
+      if (normVrm) next[normVrm] = info;
+      if (record.formId) next[String(record.formId)] = info;
+      if (record.id) next[String(record.id)] = info;
+      safeLocalStorage.setItem("concessions_email_tracking", JSON.stringify(next));
+      return next;
+    });
+
+    // 4. Update the record in database: assign newVoucherCode, clear replacement flags, mark SENT
+    const originalCode = record.voucherCode || record.prePaidCode || record.originalVoucherCode;
+    const updatedRecord: CsvPermitRecord = {
+      ...record,
+      voucherCode: newVoucherCode,
+      voucherCodesText: newVoucherCode,
+      prePaidCode: newVoucherCode,
+      originalVoucherCode: originalCode,
+      replacementCode: undefined,
+      isResend: false,
+      emailType: undefined,
+      emailTemplate: undefined,
+      status: "SENT",
+      isDispatched: true
+    };
+
+    setDatabase(prevDb => {
+      const nextDb = prevDb.map(item => isRecordMatch(item, record) ? updatedRecord : item);
+      databaseRef.current = nextDb;
+      safeLocalStorage.setItem("concessions_permit_db", JSON.stringify(nextDb));
+      if (storageModeRef.current === "cloud" && isSupabaseConfigured()) {
+        syncPermitsToSupabase(nextDb, false).catch(e => console.error("Sync after resend failed:", e));
+      }
+      return nextDb;
+    });
+
+    // 5. Update customVouchers map so new code is preserved
+    setCustomVouchers(prev => {
+      const next = { ...prev };
+      if (record.formId) next[String(record.formId)] = newVoucherCode;
+      if (record.id) next[String(record.id)] = newVoucherCode;
+      if (normVrm) {
+        const dateISO = parseDateToISO(record.dateRequired || record.validFrom || "") || getTodayISO();
+        next[normVrm] = newVoucherCode;
+        if (dateISO) next[`${normVrm}_${dateISO}`] = newVoucherCode;
+      }
+      safeLocalStorage.setItem("concessions_custom_vouchers", JSON.stringify(next));
+      return next;
+    });
+
+    // 6. Mark dispatched
+    await markAsDispatched(record.vrm, record.email, updatedRecord);
+
+    // 7. Update formData to clear replacement flags
+    setFormData(prev => ({
+      ...prev,
+      id: updatedRecord.id,
+      formId: updatedRecord.formId,
+      vrm: updatedRecord.vrm,
+      voucherCodesText: newVoucherCode,
+      replacementCode: undefined,
+      isResend: false,
+      emailType: "SEND_CONCESSION",
+      emailTemplate: "new",
+      status: "SENT"
+    }));
+
+    // 8. Open email composer with the new code & tracking pixel
+    handleSelectRecord(updatedRecord);
+    if (permitCardRef.current?.sendOne) {
+      await permitCardRef.current.sendOne(updatedRecord);
+    }
+
+    showToast(`✅ Replacement permit resent with new code ${newVoucherCode}. Status updated to SENT.`, "success");
+  };
+
+  const handleSimulateEmailOpen = async (record: CsvPermitRecord) => {
+    const pk = getRecordPrimaryKey(record) || record.vrm || String(record.id || "");
+    const normVrm = (record.vrm || "").toUpperCase().replace(/\s+/g, "");
+    try {
+      await fetch(`/api/emails/simulate-open/${encodeURIComponent(normVrm || pk)}`, { method: "POST" });
+    } catch (e) {}
+
+    const openedAt = new Date().toISOString();
+    setEmailTracking(prev => {
+      const next = { ...prev };
+      const current = next[pk] || next[normVrm] || { status: "SENT", sentAt: new Date().toISOString() };
+      const updated: EmailTrackingInfo = {
+        ...current,
+        status: "OPENED",
+        openedAt,
+        openCount: (current.openCount || 0) + 1
+      };
+      if (pk) next[pk] = updated;
+      if (normVrm) next[normVrm] = updated;
+      if (record.formId) next[String(record.formId)] = updated;
+      if (record.id) next[String(record.id)] = updated;
+      safeLocalStorage.setItem("concessions_email_tracking", JSON.stringify(next));
+      return next;
+    });
+    showToast(`👁️ Email open recorded for ${record.vrm || "permit"}! Status updated to OPENED.`, "info");
+  };
+
   const handleDispatchRecord = async (record: CsvPermitRecord) => {
+    const isRep = Boolean(
+      record.replacementCode ||
+      record.emailType === "RESEND_CONCESSION" ||
+      record.isResend ||
+      record.emailTemplate === "replacement" ||
+      (isRecordMatch(record, formData) && (formData.isResend || formData.replacementCode || formData.emailType === "RESEND_CONCESSION"))
+    );
+    if (isRep) {
+      return handleResendRecord(record);
+    }
+
     handleSelectRecord(record);
     if (permitCardRef.current?.sendOne) {
       await permitCardRef.current.sendOne(record);
@@ -2605,6 +2849,9 @@ export default function App() {
             onSelectRecord={handleSelectRecord}
             onSendRecord={handleDispatchRecord}
             onUnsendRecord={handleUnsendRecord}
+            onResendRecord={handleResendRecord}
+            emailTracking={emailTracking}
+            onSimulateEmailOpen={handleSimulateEmailOpen}
             onBulkEmail={handleBulkEmail}
             onClear={handleClear}
             onChangeFormData={handleUpdate}

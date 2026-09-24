@@ -10,6 +10,30 @@ const _dirname = typeof __dirname !== "undefined" ? __dirname : process.cwd();
 // In-memory store for generated permit images to allow public access via Twilio or sharing links
 const permitCache = new Map<string, { base64: string; name: string; createdAt: number }>();
 
+// In-memory store for email dispatch and open tracking
+interface EmailTrackingRecord {
+  trackingId: string;
+  recordKey: string;
+  vrm: string;
+  email: string;
+  voucherCode: string;
+  status: "SENT" | "OPENED";
+  sentAt: string;
+  openedAt?: string;
+  openCount: number;
+  ip?: string;
+  userAgent?: string;
+  subject?: string;
+}
+
+const emailTrackingStore = new Map<string, EmailTrackingRecord>();
+
+// 1x1 transparent RGBA PNG buffer
+const TRANSPARENT_1X1_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+  "base64"
+);
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
@@ -83,6 +107,150 @@ async function startServer() {
   // Health check endpoint
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok" });
+  });
+
+  // API Route: Send / Resend email with generated voucher code and tracking pixel
+  app.post("/api/emails/resend", (req, res) => {
+    try {
+      const {
+        recordKey,
+        vrm,
+        email,
+        driverName,
+        requestedCode,
+        validFrom,
+        validTo,
+        todayDate
+      } = req.body;
+
+      // 1. Generate or validate voucher code
+      let voucherCode = (requestedCode || "").trim().toUpperCase();
+      if (!voucherCode || voucherCode === "-" || voucherCode === "CANCELLED") {
+        const chars = "0123456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+        let rand = "";
+        for (let i = 0; i < 10; i++) {
+          rand += chars.charAt(Math.floor(Math.random() * chars.length));
+        }
+        voucherCode = `NHS${rand}`;
+      }
+
+      // 2. Generate unique tracking identifier
+      const trackingId = `trk_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 9)}`;
+
+      const protocol = req.headers["x-forwarded-proto"] || "http";
+      const host = req.get("host") || "localhost:3000";
+      const trackingPixelUrl = `${protocol}://${host}/api/email-track/${trackingId}.png`;
+
+      const sentAt = new Date().toISOString();
+      const normVrm = (vrm || "").toUpperCase().replace(/\s+/g, "");
+
+      const trackingRecord: EmailTrackingRecord = {
+        trackingId,
+        recordKey: String(recordKey || normVrm),
+        vrm: normVrm,
+        email: (email || "").toLowerCase().trim(),
+        voucherCode,
+        status: "SENT",
+        sentAt,
+        openCount: 0,
+        subject: `Replacement Parking Concession – ${normVrm || "Vehicle"}`
+      };
+
+      emailTrackingStore.set(trackingId, trackingRecord);
+      if (trackingRecord.recordKey) {
+        emailTrackingStore.set(trackingRecord.recordKey, trackingRecord);
+      }
+      if (normVrm) {
+        emailTrackingStore.set(normVrm, trackingRecord);
+      }
+
+      console.log(`📧 [Email Resend] Generated code ${voucherCode} for VRM ${normVrm} with tracking ${trackingId}`);
+
+      res.json({
+        success: true,
+        trackingId,
+        voucherCode,
+        status: "SENT",
+        sentAt,
+        trackingPixelUrl
+      });
+    } catch (error: any) {
+      console.error("Resend API error:", error);
+      res.status(500).json({ error: error.message || "Failed to process email resend" });
+    }
+  });
+
+  // API Route: Email open tracking pixel (1x1 transparent image)
+  app.get("/api/email-track/:trackingId.png", (req, res) => {
+    const { trackingId } = req.params;
+    const cleanId = String(trackingId || "").trim();
+
+    const record = emailTrackingStore.get(cleanId);
+    if (record) {
+      record.status = "OPENED";
+      if (!record.openedAt) {
+        record.openedAt = new Date().toISOString();
+      }
+      record.openCount = (record.openCount || 0) + 1;
+      record.ip = (req.headers["x-forwarded-for"] as string) || req.socket.remoteAddress;
+      record.userAgent = req.headers["user-agent"];
+
+      console.log(`👁️ [Email Track] Email opened for VRM ${record.vrm} (trackingId: ${cleanId}, count: ${record.openCount})`);
+    }
+
+    res.setHeader("Content-Type", "image/png");
+    res.setHeader("Content-Length", TRANSPARENT_1X1_PNG.length);
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+    res.send(TRANSPARENT_1X1_PNG);
+  });
+
+  // API Route: Retrieve all active email statuses
+  app.get("/api/emails/statuses", (req, res) => {
+    const statuses: Record<string, EmailTrackingRecord> = {};
+    for (const [key, val] of emailTrackingStore.entries()) {
+      statuses[key] = val;
+      if (val.recordKey) statuses[val.recordKey] = val;
+      if (val.vrm) statuses[val.vrm] = val;
+    }
+    res.json({ statuses });
+  });
+
+  // API Route: Simulate email open event (for testing / demo environments)
+  app.post("/api/emails/simulate-open/:id", (req, res) => {
+    const { id } = req.params;
+    const cleanId = String(id || "").trim().toUpperCase().replace(/\s+/g, "");
+
+    let target: EmailTrackingRecord | undefined;
+    for (const [k, v] of emailTrackingStore.entries()) {
+      if (k === id || k.toUpperCase() === cleanId || v.trackingId === id || v.recordKey === id || v.vrm.toUpperCase() === cleanId) {
+        target = v;
+        break;
+      }
+    }
+
+    if (!target) {
+      target = {
+        trackingId: `trk_${id}`,
+        recordKey: id,
+        vrm: id,
+        email: "recipient@example.com",
+        voucherCode: "SIMULATED",
+        status: "OPENED",
+        sentAt: new Date(Date.now() - 60000).toISOString(),
+        openedAt: new Date().toISOString(),
+        openCount: 1
+      };
+      emailTrackingStore.set(id, target);
+      emailTrackingStore.set(cleanId, target);
+    } else {
+      target.status = "OPENED";
+      if (!target.openedAt) target.openedAt = new Date().toISOString();
+      target.openCount = (target.openCount || 0) + 1;
+    }
+
+    res.json({ success: true, record: target });
   });
 
   // Administrative API Route: Record dispatch log with server privileges (supports SUPABASE_SERVICE_ROLE_KEY)

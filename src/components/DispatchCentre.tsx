@@ -23,7 +23,8 @@ import {
   Filter,
   FileSpreadsheet,
   FileText,
-  Pencil
+  Pencil,
+  Eye
 } from "lucide-react";
 import { 
   CsvPermitRecord, 
@@ -58,7 +59,7 @@ import {
   safeParseDateToTimestamp,
   safeParseDMYToISO
 } from "../utils/csvParser";
-import { checkIsRecordDispatched, isRecordMatch, isPlaceholderVrm } from "../utils/dispatchUtils";
+import { checkIsRecordDispatched, isRecordMatch, isPlaceholderVrm, getRecordPrimaryKey } from "../utils/dispatchUtils";
 import { isVrmSilentBlockedSync } from "../lib/blocklist";
 // ⭐ FIX: Import canonical date & voucher matching functions from voucherValidation
 import {
@@ -103,6 +104,9 @@ interface DispatchCentreProps {
   onBrowseVouchers?: () => void;
   onResetVouchers?: () => Promise<any> | void;
   onEditRecord?: (record: CsvPermitRecord, resolvedCode?: string) => void;
+  onResendRecord?: (record: CsvPermitRecord) => Promise<void> | void;
+  emailTracking?: Record<string, { status: "SENT" | "OPENED"; sentAt?: string; openedAt?: string; openCount?: number; trackingId?: string }>;
+  onSimulateEmailOpen?: (record: CsvPermitRecord) => Promise<void> | void;
 }
 
 const formatDate = (dateStr?: any) => {
@@ -158,7 +162,10 @@ export function DispatchCentre({
   onBrowseConcessions,
   onBrowseVouchers,
   onResetVouchers,
-  onEditRecord
+  onEditRecord,
+  onResendRecord,
+  emailTracking = {},
+  onSimulateEmailOpen
 }: DispatchCentreProps) {
   const [internalSearchQuery, setInternalSearchQuery] = useState("");
   const isControlled = searchQueryProp !== undefined;
@@ -176,9 +183,9 @@ export function DispatchCentre({
   const [wardDropdownOpen, setWardDropdownOpen] = useState(false);
   const [selectedRowRecord, setSelectedRowRecord] = useState<CsvPermitRecord | null>(null);
 
-  // Sync selectedRowRecord when replacement code is assigned
+  // Sync selectedRowRecord when replacement code is assigned or cleared
   useEffect(() => {
-    const isRep = formData?.emailType === "RESEND_CONCESSION" || formData?.isResend || Boolean(formData?.replacementCode) || formData?.emailTemplate === "replacement";
+    const isRep = (formData?.emailType === "RESEND_CONCESSION" || formData?.isResend || Boolean(formData?.replacementCode) || formData?.emailTemplate === "replacement") && formData?.status !== "SENT";
     if (isRep && (formData?.voucherCodesText || formData?.replacementCode)) {
       const repCode = formData.replacementCode || formData.voucherCodesText;
       setSelectedRowRecord(prev => {
@@ -205,28 +212,45 @@ export function DispatchCentre({
         }
         return null;
       });
+    } else if (formData && (formData.status === "SENT" || formData.isResend === false)) {
+      // Clear replacement flags if formData is marked SENT or replacement is completed
+      setSelectedRowRecord(prev => {
+        if (prev && isRecordMatch(prev, formData)) {
+          return {
+            ...prev,
+            replacementCode: undefined,
+            isResend: false,
+            emailType: undefined,
+            emailTemplate: undefined,
+            status: "SENT",
+            isDispatched: true
+          };
+        }
+        return prev;
+      });
     }
-  }, [formData?.voucherCodesText, formData?.replacementCode, formData?.emailType, formData?.isResend, formData?.emailTemplate, database]);
+  }, [formData?.voucherCodesText, formData?.replacementCode, formData?.emailType, formData?.isResend, formData?.emailTemplate, formData?.status, database]);
 
-  // Keep selectedRowRecord up to date with latest database updates without stripping replacement flags
+  // Keep selectedRowRecord up to date with latest database updates
   useEffect(() => {
     if (selectedRowRecord && database) {
       const updated = database.find(r => isRecordMatch(r, selectedRowRecord));
       if (updated) {
         setSelectedRowRecord(prev => {
           if (!prev) return null;
+          const isDisp = checkIsRecordDispatched(updated, updated.vrm, updated.driverName, updated.dateRequired, dispatchedKeys, unsentKeys);
           return {
             ...prev,
             ...updated,
-            replacementCode: updated.replacementCode ?? prev.replacementCode,
-            isResend: updated.isResend ?? prev.isResend,
-            emailType: updated.emailType ?? prev.emailType,
-            emailTemplate: updated.emailTemplate ?? prev.emailTemplate
+            replacementCode: isDisp ? undefined : (updated.replacementCode !== undefined ? updated.replacementCode : prev.replacementCode),
+            isResend: isDisp ? false : (updated.isResend !== undefined ? updated.isResend : prev.isResend),
+            emailType: isDisp ? undefined : (updated.emailType !== undefined ? updated.emailType : prev.emailType),
+            emailTemplate: isDisp ? undefined : (updated.emailTemplate !== undefined ? updated.emailTemplate : prev.emailTemplate)
           };
         });
       }
     }
-  }, [database]);
+  }, [database, dispatchedKeys, unsentKeys]);
 
   const handleRowClick = (record: CsvPermitRecord) => {
     setSelectedRowRecord(record);
@@ -500,12 +524,13 @@ export function DispatchCentre({
     if (selectedRowRecord) {
       const updated = (database || []).find(r => isRecordMatch(r, selectedRowRecord));
       if (updated) {
+        const isDisp = checkIsRecordDispatched(updated, updated.vrm, updated.driverName, updated.dateRequired, dispatchedKeys, unsentKeys);
         return {
           ...updated,
-          replacementCode: selectedRowRecord.replacementCode ?? updated.replacementCode,
-          isResend: selectedRowRecord.isResend ?? updated.isResend,
-          emailType: selectedRowRecord.emailType ?? updated.emailType,
-          emailTemplate: selectedRowRecord.emailTemplate ?? updated.emailTemplate
+          replacementCode: isDisp ? undefined : (updated.replacementCode !== undefined ? updated.replacementCode : selectedRowRecord.replacementCode),
+          isResend: isDisp ? false : (updated.isResend !== undefined ? updated.isResend : selectedRowRecord.isResend),
+          emailType: isDisp ? undefined : (updated.emailType !== undefined ? updated.emailType : selectedRowRecord.emailType),
+          emailTemplate: isDisp ? undefined : (updated.emailTemplate !== undefined ? updated.emailTemplate : selectedRowRecord.emailTemplate)
         };
       }
       return selectedRowRecord;
@@ -723,7 +748,7 @@ export function DispatchCentre({
   const [sortDirection, setSortDirection] = useState<SortDirection>(null);
 
   // Dropdown filter states
-  const [statusFilter, setStatusFilter] = useState<"ALL" | "PENDING" | "SENT" | "CANCELLED" | "BLOCKED" | "REPLACEMENT">("ALL");
+  const [statusFilter, setStatusFilter] = useState<"ALL" | "PENDING" | "SENT" | "OPENED" | "CANCELLED" | "BLOCKED" | "REPLACEMENT">("ALL");
   const [hospitalFilter, setHospitalFilter] = useState<string>("ALL");
   const [wardFilter, setWardFilter] = useState<string>("ALL");
   // ⭐ FIX: Restore default filter to "This Week"
@@ -759,28 +784,32 @@ export function DispatchCentre({
 
   const isReplacementPending = (record: CsvPermitRecord) => {
     if (!record) return false;
+    const isDisp = checkIsRecordDispatched(record, record.vrm, record.driverName, record.dateRequired, dispatchedKeys, unsentKeys);
+    // If the record has been dispatched and doesn't have an unapplied new replacement code, it is NOT pending
+    if (isDisp && !record.replacementCode) {
+      return false;
+    }
     if (
       Boolean(record.replacementCode) ||
       record.emailType === "RESEND_CONCESSION" ||
-      record.isResend === true ||
+      (record.isResend === true && !isDisp) ||
       record.emailTemplate === "replacement"
     ) {
       return true;
     }
-    if (selectedRowRecord) {
+    if (selectedRowRecord && isRecordMatch(record, selectedRowRecord)) {
       return (
-        isRecordMatch(record, selectedRowRecord) &&
-        (Boolean(selectedRowRecord.replacementCode) ||
-          selectedRowRecord.emailType === "RESEND_CONCESSION" ||
-          selectedRowRecord.isResend === true ||
-          selectedRowRecord.emailTemplate === "replacement")
+        Boolean(selectedRowRecord.replacementCode) ||
+        selectedRowRecord.emailType === "RESEND_CONCESSION" ||
+        (selectedRowRecord.isResend === true && !isDisp) ||
+        selectedRowRecord.emailTemplate === "replacement"
       );
     }
     if (
       formData &&
       isRecordMatch(record, formData) &&
       (formData?.emailType === "RESEND_CONCESSION" ||
-        formData?.isResend === true ||
+        (formData?.isResend === true && !isDisp) ||
         formData?.emailTemplate === "replacement" ||
         Boolean(formData?.replacementCode))
     ) {
@@ -829,9 +858,13 @@ export function DispatchCentre({
     if (!record) return "PENDING";
     if (isVrmSilentBlockedSync(record.vrm)) return "BLOCKED";
     if (getIsCancelled(record, idx)) return "CANCELLED";
-    if (isReplacementPending(record)) return "REPLACEMENT";
+    const pk = getRecordPrimaryKey(record) || record.vrm || String(record.id || "");
+    const cleanVrmKey = record.vrm ? record.vrm.toUpperCase().replace(/\s+/g, "") : "";
+    const track = emailTracking?.[pk] || (cleanVrmKey ? emailTracking?.[cleanVrmKey] : undefined) || (record.formId ? emailTracking?.[String(record.formId)] : undefined);
+    if (track?.status === "OPENED") return "OPENED";
     const isDispatched = checkIsRecordDispatched(record, record.vrm, record.driverName, record.dateRequired, dispatchedKeys, unsentKeys);
     if (isDispatched) return "SENT";
+    if (isReplacementPending(record)) return "REPLACEMENT";
     return "PENDING";
   };
 
@@ -1024,6 +1057,7 @@ export function DispatchCentre({
         const status = getStatusStr(record, idx);
         if (statusFilter === "PENDING" && status !== "PENDING") return false;
         if (statusFilter === "SENT" && status !== "SENT") return false;
+        if (statusFilter === "OPENED" && status !== "OPENED") return false;
         if (statusFilter === "CANCELLED" && status.toUpperCase() !== "CANCELLED") return false;
         if (statusFilter === "BLOCKED" && status !== "BLOCKED") return false;
         if (statusFilter === "REPLACEMENT" && status !== "REPLACEMENT") return false;
@@ -1367,7 +1401,25 @@ export function DispatchCentre({
     const key = String(record.formId ?? record.id ?? record.vrm);
     setBusyKey(key);
     try {
-      if (replacement) await onSendRecord?.(record);
+      if (replacement) {
+        if (onResendRecord) {
+          await onResendRecord(record);
+        } else {
+          await onSendRecord?.(record);
+        }
+        setSelectedRowRecord(prev => {
+          if (!prev || !isRecordMatch(prev, record)) return prev;
+          return {
+            ...prev,
+            replacementCode: undefined,
+            isResend: false,
+            emailType: undefined,
+            emailTemplate: undefined,
+            status: "SENT",
+            isDispatched: true
+          };
+        });
+      }
       else if (sent) await onUnsendRecord?.(record);
       else await onSendRecord?.(record);
     } finally {
@@ -1517,6 +1569,7 @@ export function DispatchCentre({
                 <option value="ALL" className="bg-white dark:bg-[#020B19] text-slate-900 dark:text-white">Status: All</option>
                 <option value="PENDING" className="bg-white dark:bg-[#020B19] text-slate-900 dark:text-white">PENDING</option>
                 <option value="SENT" className="bg-white dark:bg-[#020B19] text-slate-900 dark:text-white">SENT</option>
+                <option value="OPENED" className="bg-white dark:bg-[#020B19] text-slate-900 dark:text-white">OPENED</option>
                 <option value="CANCELLED" className="bg-white dark:bg-[#020B19] text-slate-900 dark:text-white">CANCELLED</option>
                 <option value="BLOCKED" className="bg-white dark:bg-[#020B19] text-slate-900 dark:text-white">BLOCKED</option>
                 <option value="REPLACEMENT" className="bg-white dark:bg-[#020B19] text-slate-900 dark:text-white">REPLACEMENT</option>
@@ -1837,7 +1890,12 @@ export function DispatchCentre({
                   return "";
                 })();
 
-                const replacementPending = !isBlocked && isReplacementPending(record);
+                const isDisp = checkIsRecordDispatched(record, record?.vrm, record?.driverName, record?.dateRequired, dispatchedKeys, unsentKeys);
+                const replacementPending = !isBlocked && !isDisp && isReplacementPending(record);
+                const recordPk = getRecordPrimaryKey(record) || record?.vrm || String(record?.id || "");
+                const cleanVrmKey = record?.vrm ? record.vrm.toUpperCase().replace(/\s+/g, "") : "";
+                const trackInfo = emailTracking?.[recordPk] || (cleanVrmKey ? emailTracking?.[cleanVrmKey] : undefined) || (record?.formId ? emailTracking?.[String(record.formId)] : undefined);
+                const isOpened = trackInfo?.status === "OPENED";
                 let displayCode = recordCodeMap.get(recordKey);
 
                 if (isBlocked) {
@@ -2047,15 +2105,26 @@ export function DispatchCentre({
                         <span className="border border-red-300 dark:border-red-800/60 bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-400 font-bold px-2 py-0.5 rounded text-[9px] tracking-wider uppercase inline-flex items-center justify-center whitespace-nowrap">
                           CANCELLED
                         </span>
+                      ) : isOpened ? (
+                        <span 
+                          title={trackInfo?.openedAt ? `Email opened: ${new Date(trackInfo.openedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} (${trackInfo.openCount || 1}x)` : "Email opened by recipient"}
+                          className="border border-cyan-400 dark:border-cyan-500/60 bg-cyan-50 dark:bg-cyan-950/30 text-cyan-700 dark:text-cyan-300 font-bold px-2 py-0.5 rounded text-[9px] tracking-wider uppercase inline-flex items-center justify-center gap-1 whitespace-nowrap shadow-xs"
+                        >
+                          <span className="text-[10px]">👁️</span>
+                          <span>OPENED</span>
+                        </span>
+                      ) : isDispatched ? (
+                        <span 
+                          title={trackInfo?.sentAt ? `Dispatched & sent: ${new Date(trackInfo.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : "Dispatched"}
+                          className="border border-emerald-300 dark:border-[#32D74B]/40 bg-emerald-50 dark:bg-[#32D74B]/15 text-emerald-700 dark:text-[#32D74B] font-bold px-2 py-0.5 rounded text-[9px] tracking-wider uppercase inline-flex items-center justify-center gap-1 whitespace-nowrap"
+                        >
+                          <span>✅</span>
+                          <span>SENT</span>
+                        </span>
                       ) : replacementPending ? (
                         <span className="border border-amber-400 dark:border-amber-500/60 bg-amber-50 dark:bg-amber-950/30 text-amber-700 dark:text-amber-400 font-bold px-2 py-0.5 rounded text-[9px] tracking-wider uppercase inline-flex items-center justify-center gap-1.5 whitespace-nowrap animate-pulse">
                           <span className="inline-block animate-spin text-[9px]">⟳</span>
                           REPLACEMENT
-                        </span>
-                      ) : isDispatched ? (
-                        <span className="border border-emerald-300 dark:border-[#32D74B]/40 bg-emerald-50 dark:bg-[#32D74B]/15 text-emerald-700 dark:text-[#32D74B] font-bold px-2 py-0.5 rounded text-[9px] tracking-wider uppercase inline-flex items-center justify-center gap-1 whitespace-nowrap">
-                          <span>✅</span>
-                          <span>SENT</span>
                         </span>
                       ) : (
                         <span className="border border-amber-300 dark:border-[#FF9F0A]/40 bg-amber-50 dark:bg-[#FF9F0A]/15 text-amber-700 dark:text-[#FF9F0A] font-bold px-2 py-0.5 rounded text-[9px] tracking-wider uppercase inline-flex items-center justify-center whitespace-nowrap">
@@ -2126,34 +2195,49 @@ export function DispatchCentre({
                                   };
 
                           return (
-                            <div className="inline-flex items-center justify-center rounded-md overflow-hidden shadow-xs">
-                              <button 
-                                type="button" 
-                                disabled={busyKey === rowKey || isBlocked} 
-                                onClick={() => { if (!isBlocked) handleAction(record, isDispatched, replacementPending); }} 
-                                title={isBlocked ? "This VRM is on the Manage Blocklist — dispatch disabled" : undefined}
-                                className={`flex items-center gap-1 px-2 py-0.5 text-white text-[10px] font-medium transition-colors disabled:opacity-50 whitespace-nowrap ${splitActionClasses.main}`}
-                              >
-                                {busyKey === rowKey ? (
-                                  <RefreshCw className="w-2.5 h-2.5 animate-spin" />
-                                ) : (
-                                  replacementPending ? (
-                                    <span className="inline-block animate-spin text-[10px]">⟳</span>
+                            <div className="inline-flex items-center gap-1">
+                              <div className="inline-flex items-center justify-center rounded-md overflow-hidden shadow-xs">
+                                <button 
+                                  type="button" 
+                                  disabled={busyKey === rowKey || isBlocked} 
+                                  onClick={() => { if (!isBlocked) handleAction(record, isDispatched, replacementPending); }} 
+                                  title={isBlocked ? "This VRM is on the Manage Blocklist — dispatch disabled" : undefined}
+                                  className={`flex items-center gap-1 px-2 py-0.5 text-white text-[10px] font-medium transition-colors disabled:opacity-50 whitespace-nowrap ${splitActionClasses.main}`}
+                                >
+                                  {busyKey === rowKey ? (
+                                    <RefreshCw className="w-2.5 h-2.5 animate-spin" />
                                   ) : (
-                                    <Mail className="w-2.5 h-2.5" />
-                                  )
-                                )}
-                                <span>{isBlocked ? "Blocked" : (replacementPending ? "Resend" : (isDispatched ? "Unsend" : "Send"))}</span>
-                              </button>
-                              <button 
-                                type="button" 
-                                disabled={isBlocked}
-                                onClick={() => { if (!isBlocked) onSelectRecord(record); }} 
-                                className={`px-1.5 py-0.5 text-white transition-colors ${splitActionClasses.chevron}`}
-                                title={isBlocked ? "Disabled" : "Select Record"}
-                              >
-                                <ChevronDown className="w-2.5 h-2.5" />
-                              </button>
+                                    replacementPending ? (
+                                      <span className="inline-block animate-spin text-[10px]">⟳</span>
+                                    ) : (
+                                      <Mail className="w-2.5 h-2.5" />
+                                    )
+                                  )}
+                                  <span>{isBlocked ? "Blocked" : (replacementPending ? "Resend" : (isDispatched ? "Unsend" : "Send"))}</span>
+                                </button>
+                                <button 
+                                  type="button" 
+                                  disabled={isBlocked}
+                                  onClick={() => { if (!isBlocked) onSelectRecord(record); }} 
+                                  className={`px-1.5 py-0.5 text-white transition-colors ${splitActionClasses.chevron}`}
+                                  title={isBlocked ? "Disabled" : "Select Record"}
+                                >
+                                  <ChevronDown className="w-2.5 h-2.5" />
+                                </button>
+                              </div>
+                              {isDispatched && !isOpened && onSimulateEmailOpen && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onSimulateEmailOpen(record);
+                                  }}
+                                  title="Simulate / test recipient opening email (updates status badge to OPENED)"
+                                  className="p-1 text-slate-400 hover:text-cyan-600 dark:hover:text-cyan-400 transition-colors rounded cursor-pointer"
+                                >
+                                  <Eye className="w-3.5 h-3.5" />
+                                </button>
+                              )}
                             </div>
                           );
                         })()}

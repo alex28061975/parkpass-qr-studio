@@ -767,6 +767,30 @@ function PermitCardInner({
       return;
     }
 
+    let trackingPixelUrl: string | undefined = undefined;
+    try {
+      const res = await fetch("/api/emails/resend", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          recordKey: data.formId ? String(data.formId) : (data.vrm || ""),
+          vrm: data.vrm,
+          driverName: data.name,
+          email: recipientEmail,
+          requestedCode: currentSelectedCode,
+          validFrom: data.validFrom,
+          validTo: data.validTo,
+          todayDate: data.todayDate
+        })
+      });
+      if (res.ok) {
+        const resData = await res.json();
+        trackingPixelUrl = resData.trackingPixelUrl;
+      }
+    } catch (e) {
+      console.warn("Could not register tracking pixel with backend:", e);
+    }
+
     const params = {
       vrm: data.vrm,
       driverName: data.name,
@@ -775,6 +799,7 @@ function PermitCardInner({
       validTo: data.validTo,
       todayDate: data.todayDate,
       dateRequired: data.dateRequired,
+      trackingPixelUrl
     };
     const content = getReplacementEmailContent(params);
     const subject = content.subject;
@@ -811,6 +836,15 @@ function PermitCardInner({
       showToast("❌ Database write error: Failed to update status.");
       return false;
     }
+
+    onChange?.({
+      ...data,
+      replacementCode: undefined,
+      isResend: false,
+      emailType: "SEND_CONCESSION",
+      emailTemplate: "new",
+      status: "SENT"
+    });
 
     setShowOutlookGuide(true);
 

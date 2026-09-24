@@ -25,6 +25,8 @@ export interface EmailTemplateParams {
   earliestRenewalDate?: string;
   reason?: CancellationReason;
   cancellationReason?: string;
+  trackingPixelUrl?: string;
+  trackingId?: string;
 }
 
 export interface EmailContentResult {
@@ -394,6 +396,10 @@ Kind regards,
 Barts Health NHS Trust
 Car Parking Services Team`;
 
+  const trackingPixel = params.trackingPixelUrl
+    ? `<img src="${params.trackingPixelUrl}" width="1" height="1" alt="" style="display:none;width:1px;height:1px;border:0;" />`
+    : "";
+
   const htmlText = `<div style="font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000000; line-height: 1.35;">
 <br/>
 Dear ${driverName},<br/><br/>
@@ -407,6 +413,7 @@ If you continue to experience any issues or have any further queries, please con
 Kind regards,<br/>
 Barts Health NHS Trust<br/>
 Car Parking Services Team
+${trackingPixel}
 </div>`;
 
   return { subject, plainText, htmlText };
