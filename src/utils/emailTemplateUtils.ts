@@ -116,14 +116,16 @@ export function resolveCancellationDetails(
 
   const cleanVrm = (record.vrm || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
 
-  let isDuplicate = false;
+  const explicitDup = record.cancellationReason === "DUPLICATE_VRM" || record.cancellationReason === "DUPLICATE";
+  const isBlocked = (cleanVrm && cleanVrm !== "PENDING" && cleanVrm !== "-" && database && database.length > 0)
+    ? checkIsBlockedDuplicate(record, database, refDateISO)
+    : false;
+
+  const isDuplicate = explicitDup || isBlocked;
   let activePermit: any = null;
 
-  if (cleanVrm && cleanVrm !== "PENDING" && cleanVrm !== "-" && database && database.length > 0) {
-    // 1. Check if blocked duplicate via checkIsBlockedDuplicate
-    const isBlocked = checkIsBlockedDuplicate(record, database, refDateISO);
-
-    // 2. Look for any matching record for this VRM in database (excluding self)
+  if (isDuplicate && cleanVrm && database && database.length > 0) {
+    // Look for matching active record for this VRM in database for presentation metadata (excluding self)
     const cleanRecordId = (val: any) => String(val || "").replace(/^#/, "").trim();
     const recFormId = cleanRecordId(record.formId ?? record.id);
 
@@ -137,53 +139,18 @@ export function resolveCancellationDetails(
     });
 
     if (matchingRecords.length > 0) {
-      // Sort matching records descending by date so the latest is always evaluated first
-      const sortedMatchingRecords = [...matchingRecords].sort((a, b) => {
-        const aD = parseDateToISO(a.dateRequired || a.validFrom || a.startTime || a.createdAt || "") || "";
-        const bD = parseDateToISO(b.dateRequired || b.validFrom || b.startTime || b.createdAt || "") || "";
-        return bD.localeCompare(aD);
-      });
-
       // Find active / sent / valid permits for this VRM
-      const activeMatches = sortedMatchingRecords.filter(r => {
+      const activeMatches = matchingRecords.filter(r => {
         if (r.status === 'sent' || r.isDispatched === true) return true;
         if (r.voucherCode && r.voucherCode !== '-' && r.voucherCode !== 'CANCELLED' && r.voucherCode !== 'Cancelled') return true;
         if (!isRecordCancelled(r, refDateISO, database)) return true;
         return false;
       });
 
-      // Look for overlapping earlier permit for this vehicle (e.g., within 7 days in either direction or overlapping)
-      const thisReqIso = parseDateToISO(record.dateRequired || record.validFrom || "") || refDateISO;
-      const overlappingMatch = activeMatches.find(r => {
-        const rReqIso = parseDateToISO(r.dateRequired || r.validFrom || "");
-        if (!rReqIso || !thisReqIso) return false;
-        const rTime = new Date(rReqIso + "T00:00:00").getTime();
-        const thisTime = new Date(thisReqIso + "T00:00:00").getTime();
-        const diff = Math.round((thisTime - rTime) / (1000 * 60 * 60 * 24));
-        if (Math.abs(diff) < 7) return true;
-        const rToIso = r.validTo ? parseDateToISO(r.validTo) : (rReqIso ? addDays(rReqIso, 6) : undefined);
-        const thisToIso = record.validTo ? parseDateToISO(record.validTo) : (thisReqIso ? addDays(thisReqIso, 6) : undefined);
-        if (rReqIso && rToIso && thisReqIso && thisToIso) {
-          const startA = thisTime;
-          const endA = new Date(thisToIso + "T00:00:00").getTime();
-          const startB = rTime;
-          const endB = new Date(rToIso + "T00:00:00").getTime();
-          if (!isNaN(startA) && !isNaN(endA) && !isNaN(startB) && !isNaN(endB)) {
-            if (startA <= endB && startB <= endA) return true;
-          }
-        }
-        return false;
-      });
-
-      if (isBlocked || overlappingMatch) {
-        isDuplicate = true;
-        if (overlappingMatch) {
-          activePermit = overlappingMatch;
-        } else if (activeMatches.length > 0) {
-          activePermit = activeMatches[0];
-        } else {
-          activePermit = sortedMatchingRecords[0];
-        }
+      if (activeMatches.length > 0) {
+        activePermit = activeMatches[0];
+      } else {
+        activePermit = matchingRecords[0];
       }
     }
   }

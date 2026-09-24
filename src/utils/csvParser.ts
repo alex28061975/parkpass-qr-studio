@@ -3419,44 +3419,7 @@ export function isRecordCancelled(
   todayDateOrReference?: string,
   database?: CsvPermitRecord[]
 ): boolean {
-  if (!record) return false;
-
-  if (record.cancellationReason === "MANUAL" || record.cancellationReason === "BLOCKLIST" || record.cancellationReason === "EXPIRED") return true;
-  if (record.isCancelled === true && record.cancellationReason !== "DUPLICATE_VRM" && record.cancellationReason !== "DUPLICATE") return true;
-  if (typeof record.status === "string" && record.status.trim().toLowerCase().includes("cancel") && record.cancellationReason !== "DUPLICATE_VRM" && record.cancellationReason !== "DUPLICATE") return true;
-  if (record.isCancelled === false && String(record.status || "").trim().toUpperCase() === "ACTIVE") {
-    // Explicitly active record: do not let stale CANCELLED string in voucherCode override active status
-  } else if (
-    (record.voucherCode === "CANCELLED" ||
-    record.voucherCodesText === "CANCELLED" ||
-    record.prePaidCode === "CANCELLED" ||
-    (typeof record.voucherCode === "string" && record.voucherCode.trim().toUpperCase() === "CANCELLED") ||
-    (typeof record.voucherCodesText === "string" && record.voucherCodesText.trim().toUpperCase() === "CANCELLED") ||
-    (typeof record.prePaidCode === "string" && record.prePaidCode.trim().toUpperCase() === "CANCELLED")) &&
-    record.cancellationReason !== "DUPLICATE_VRM" && record.cancellationReason !== "DUPLICATE"
-  ) {
-    return true;
-  }
-
-  const rawRefDate = record.completionTime || record.startTime || record.createdAt || record.created_at || todayDateOrReference || record.todayDate || record.processingDate || record.submissionDate;
-  const referenceDate = rawRefDate 
-    ? (parseDateToISO(String(rawRefDate)) || "") 
-    : "";
-  const dateRequired = record.dateRequired || record.validFrom || "";
-  if (isDateRequiredOutsideValidWindow(dateRequired, referenceDate) || isPermitExpiredBackdate(record, referenceDate)) {
-    return true;
-  }
-
-  // Live duplicate check with O(1) memoized cache
-  if (database && database.length > 0) {
-    if (checkIsBlockedDuplicate(record, database, referenceDate)) {
-      return true;
-    }
-  } else if (record.isCancelled === true || (typeof record.status === "string" && record.status.trim().toLowerCase().includes("cancel"))) {
-    return true;
-  }
-
-  return false;
+  return isRecordCancelledCanonical(record, todayDateOrReference, database);
 }
 
 export function resolvePermitDate(record?: any): string {
