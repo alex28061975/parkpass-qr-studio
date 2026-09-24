@@ -242,7 +242,21 @@ export const autoCancelDuplicates = (records: CsvPermitRecord[]): CsvPermitRecor
       const earlierKept = !isNaN(reqTimeMs)
         ? kept.find(k => {
             const diffDays = Math.round((reqTimeMs - k.reqTimeMs) / (1000 * 60 * 60 * 24));
-            return diffDays >= 0 && diffDays < 7;
+            // Overlapping or within 7 days in either direction (e.g. backdated requests or consecutive days)
+            if (Math.abs(diffDays) < 7) return true;
+            const reqToIso = entry.record.validTo ? parseDateToISO(entry.record.validTo) : (reqIso ? addDaysSafe(reqIso, 6) : undefined);
+            const kReqIso = getReqDateISO(k.entry.record);
+            const kToIso = k.entry.record.validTo ? parseDateToISO(k.entry.record.validTo) : (kReqIso ? addDaysSafe(kReqIso, 6) : undefined);
+            if (reqIso && reqToIso && kReqIso && kToIso) {
+              const startA = new Date(`${reqIso}T00:00:00`).getTime();
+              const endA = new Date(`${reqToIso}T00:00:00`).getTime();
+              const startB = new Date(`${kReqIso}T00:00:00`).getTime();
+              const endB = new Date(`${kToIso}T00:00:00`).getTime();
+              if (!isNaN(startA) && !isNaN(endA) && !isNaN(startB) && !isNaN(endB)) {
+                if (startA <= endB && startB <= endA) return true;
+              }
+            }
+            return false;
           })
         : undefined;
 

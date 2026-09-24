@@ -3248,7 +3248,7 @@ export function clearDuplicateCheckCache(): void {
 }
 
 export function checkIsBlockedDuplicate(
-  record: { vrm?: string; validFrom?: string; dateRequired?: string; id?: string | number; formId?: string | number; voucherCode?: string; createdAt?: string; startTime?: string; driverName?: string; isCancelled?: boolean; status?: string; voucherCodesText?: string; prePaidCode?: string; cancellationReason?: string },
+  record: { vrm?: string; validFrom?: string; validTo?: string; dateExpiry?: string; dateRequired?: string; id?: string | number; formId?: string | number; voucherCode?: string; createdAt?: string; startTime?: string; driverName?: string; isCancelled?: boolean; status?: string; voucherCodesText?: string; prePaidCode?: string; cancellationReason?: string },
   database: CsvPermitRecord[],
   refDateISO?: string,
   visited?: Set<string>
@@ -3380,9 +3380,22 @@ export function checkIsBlockedDuplicate(
 
     const diffDays = Math.round((reqTimeMsX - earlierReqTimeMs) / (1000 * 60 * 60 * 24));
 
-    if (diffDays >= 0 && diffDays < 7) {
+    if (Math.abs(diffDays) < 7) {
       blockedDuplicateCheckCache.set(cacheKey, true);
       return true;
+    }
+
+    const reqToIsoX = record?.validTo ? parseDateToISO(record.validTo) : (reqIsoX ? addDaysSafe(reqIsoX, 6) : undefined);
+    const earlierToIso = earlier?.validTo ? parseDateToISO(earlier.validTo) : (earlierReqIso ? addDaysSafe(earlierReqIso, 6) : undefined);
+    if (reqIsoX && reqToIsoX && earlierReqIso && earlierToIso) {
+      const startA = safeParseDateToTimestamp(reqIsoX) ?? 0;
+      const endA = safeParseDateToTimestamp(reqToIsoX) ?? (startA + 6 * 86400000);
+      const startB = safeParseDateToTimestamp(earlierReqIso) ?? 0;
+      const endB = safeParseDateToTimestamp(earlierToIso) ?? (startB + 6 * 86400000);
+      if (startA <= endB && startB <= endA) {
+        blockedDuplicateCheckCache.set(cacheKey, true);
+        return true;
+      }
     }
   }
 

@@ -152,7 +152,7 @@ export function resolveCancellationDetails(
         return false;
       });
 
-      // Look for overlapping earlier permit for this vehicle (e.g., within 7 days before this request)
+      // Look for overlapping earlier permit for this vehicle (e.g., within 7 days in either direction or overlapping)
       const thisReqIso = parseDateToISO(record.dateRequired || record.validFrom || "") || refDateISO;
       const overlappingMatch = activeMatches.find(r => {
         const rReqIso = parseDateToISO(r.dateRequired || r.validFrom || "");
@@ -160,7 +160,19 @@ export function resolveCancellationDetails(
         const rTime = new Date(rReqIso + "T00:00:00").getTime();
         const thisTime = new Date(thisReqIso + "T00:00:00").getTime();
         const diff = Math.round((thisTime - rTime) / (1000 * 60 * 60 * 24));
-        return diff >= 0 && diff < 7;
+        if (Math.abs(diff) < 7) return true;
+        const rToIso = r.validTo ? parseDateToISO(r.validTo) : (rReqIso ? addDays(rReqIso, 6) : undefined);
+        const thisToIso = record.validTo ? parseDateToISO(record.validTo) : (thisReqIso ? addDays(thisReqIso, 6) : undefined);
+        if (rReqIso && rToIso && thisReqIso && thisToIso) {
+          const startA = thisTime;
+          const endA = new Date(thisToIso + "T00:00:00").getTime();
+          const startB = rTime;
+          const endB = new Date(rToIso + "T00:00:00").getTime();
+          if (!isNaN(startA) && !isNaN(endA) && !isNaN(startB) && !isNaN(endB)) {
+            if (startA <= endB && startB <= endA) return true;
+          }
+        }
+        return false;
       });
 
       if (isBlocked || overlappingMatch) {

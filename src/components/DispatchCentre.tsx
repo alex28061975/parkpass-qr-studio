@@ -1857,7 +1857,7 @@ export function DispatchCentre({
 
                 const reqDate = getRequestedPermitDateISO(record, processingDate);
                 const isBlocked = isVrmSilentBlockedSync(record?.vrm);
-                const isCancelled = isRecordCancelled(record, reqDate, database);
+                const isCancelled = getIsCancelled(record, index);
                 const recordKey = String(record?.formId || record?.id || index);
 
                 // ⭐ FIX: CODES Column & VOUCHER CODE Column - canonical date range matching
