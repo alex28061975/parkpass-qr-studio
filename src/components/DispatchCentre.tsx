@@ -105,8 +105,8 @@ interface DispatchCentreProps {
   onResetVouchers?: () => Promise<any> | void;
   onEditRecord?: (record: CsvPermitRecord, resolvedCode?: string) => void;
   onResendRecord?: (record: CsvPermitRecord) => Promise<void> | void;
-  emailTracking?: Record<string, { status: "SENT" | "OPENED"; sentAt?: string; openedAt?: string; openCount?: number; trackingId?: string }>;
-  onSimulateEmailOpen?: (record: CsvPermitRecord) => Promise<void> | void;
+  onPreviewRecord?: (record: CsvPermitRecord) => void;
+  emailTracking?: Record<string, { status: "SENT"; sentAt?: string; trackingId?: string }>;
 }
 
 const formatDate = (dateStr?: any) => {
@@ -164,8 +164,8 @@ export function DispatchCentre({
   onResetVouchers,
   onEditRecord,
   onResendRecord,
-  emailTracking = {},
-  onSimulateEmailOpen
+  onPreviewRecord,
+  emailTracking = {}
 }: DispatchCentreProps) {
   const [internalSearchQuery, setInternalSearchQuery] = useState("");
   const isControlled = searchQueryProp !== undefined;
@@ -748,7 +748,7 @@ export function DispatchCentre({
   const [sortDirection, setSortDirection] = useState<SortDirection>(null);
 
   // Dropdown filter states
-  const [statusFilter, setStatusFilter] = useState<"ALL" | "PENDING" | "SENT" | "OPENED" | "CANCELLED" | "BLOCKED" | "REPLACEMENT">("ALL");
+  const [statusFilter, setStatusFilter] = useState<"ALL" | "PENDING" | "SENT" | "CANCELLED" | "BLOCKED" | "REPLACEMENT">("ALL");
   const [hospitalFilter, setHospitalFilter] = useState<string>("ALL");
   const [wardFilter, setWardFilter] = useState<string>("ALL");
   // ⭐ FIX: Restore default filter to "This Week"
@@ -858,10 +858,6 @@ export function DispatchCentre({
     if (!record) return "PENDING";
     if (isVrmSilentBlockedSync(record.vrm)) return "BLOCKED";
     if (getIsCancelled(record, idx)) return "CANCELLED";
-    const pk = getRecordPrimaryKey(record) || record.vrm || String(record.id || "");
-    const cleanVrmKey = record.vrm ? record.vrm.toUpperCase().replace(/\s+/g, "") : "";
-    const track = emailTracking?.[pk] || (cleanVrmKey ? emailTracking?.[cleanVrmKey] : undefined) || (record.formId ? emailTracking?.[String(record.formId)] : undefined);
-    if (track?.status === "OPENED") return "OPENED";
     const isDispatched = checkIsRecordDispatched(record, record.vrm, record.driverName, record.dateRequired, dispatchedKeys, unsentKeys);
     if (isDispatched) return "SENT";
     if (isReplacementPending(record)) return "REPLACEMENT";
@@ -1057,7 +1053,6 @@ export function DispatchCentre({
         const status = getStatusStr(record, idx);
         if (statusFilter === "PENDING" && status !== "PENDING") return false;
         if (statusFilter === "SENT" && status !== "SENT") return false;
-        if (statusFilter === "OPENED" && status !== "OPENED") return false;
         if (statusFilter === "CANCELLED" && status.toUpperCase() !== "CANCELLED") return false;
         if (statusFilter === "BLOCKED" && status !== "BLOCKED") return false;
         if (statusFilter === "REPLACEMENT" && status !== "REPLACEMENT") return false;
@@ -1569,7 +1564,6 @@ export function DispatchCentre({
                 <option value="ALL" className="bg-white dark:bg-[#020B19] text-slate-900 dark:text-white">Status: All</option>
                 <option value="PENDING" className="bg-white dark:bg-[#020B19] text-slate-900 dark:text-white">PENDING</option>
                 <option value="SENT" className="bg-white dark:bg-[#020B19] text-slate-900 dark:text-white">SENT</option>
-                <option value="OPENED" className="bg-white dark:bg-[#020B19] text-slate-900 dark:text-white">OPENED</option>
                 <option value="CANCELLED" className="bg-white dark:bg-[#020B19] text-slate-900 dark:text-white">CANCELLED</option>
                 <option value="BLOCKED" className="bg-white dark:bg-[#020B19] text-slate-900 dark:text-white">BLOCKED</option>
                 <option value="REPLACEMENT" className="bg-white dark:bg-[#020B19] text-slate-900 dark:text-white">REPLACEMENT</option>
@@ -1895,7 +1889,6 @@ export function DispatchCentre({
                 const recordPk = getRecordPrimaryKey(record) || record?.vrm || String(record?.id || "");
                 const cleanVrmKey = record?.vrm ? record.vrm.toUpperCase().replace(/\s+/g, "") : "";
                 const trackInfo = emailTracking?.[recordPk] || (cleanVrmKey ? emailTracking?.[cleanVrmKey] : undefined) || (record?.formId ? emailTracking?.[String(record.formId)] : undefined);
-                const isOpened = trackInfo?.status === "OPENED";
                 let displayCode = recordCodeMap.get(recordKey);
 
                 if (isBlocked) {
@@ -2105,14 +2098,6 @@ export function DispatchCentre({
                         <span className="border border-red-300 dark:border-red-800/60 bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-400 font-bold px-2 py-0.5 rounded text-[9px] tracking-wider uppercase inline-flex items-center justify-center whitespace-nowrap">
                           CANCELLED
                         </span>
-                      ) : isOpened ? (
-                        <span 
-                          title={trackInfo?.openedAt ? `Email opened: ${new Date(trackInfo.openedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} (${trackInfo.openCount || 1}x)` : "Email opened by recipient"}
-                          className="border border-cyan-400 dark:border-cyan-500/60 bg-cyan-50 dark:bg-cyan-950/30 text-cyan-700 dark:text-cyan-300 font-bold px-2 py-0.5 rounded text-[9px] tracking-wider uppercase inline-flex items-center justify-center gap-1 whitespace-nowrap shadow-xs"
-                        >
-                          <span className="text-[10px]">👁️</span>
-                          <span>OPENED</span>
-                        </span>
                       ) : isDispatched ? (
                         <span 
                           title={trackInfo?.sentAt ? `Dispatched & sent: ${new Date(trackInfo.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : "Dispatched"}
@@ -2195,7 +2180,7 @@ export function DispatchCentre({
                                   };
 
                           return (
-                            <div className="inline-flex items-center gap-1">
+                            <div className="inline-flex items-center gap-1.5">
                               <div className="inline-flex items-center justify-center rounded-md overflow-hidden shadow-xs">
                                 <button 
                                   type="button" 
@@ -2225,19 +2210,21 @@ export function DispatchCentre({
                                   <ChevronDown className="w-2.5 h-2.5" />
                                 </button>
                               </div>
-                              {isDispatched && !isOpened && onSimulateEmailOpen && (
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    onSimulateEmailOpen(record);
-                                  }}
-                                  title="Simulate / test recipient opening email (updates status badge to OPENED)"
-                                  className="p-1 text-slate-400 hover:text-cyan-600 dark:hover:text-cyan-400 transition-colors rounded cursor-pointer"
-                                >
-                                  <Eye className="w-3.5 h-3.5" />
-                                </button>
-                              )}
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (onPreviewRecord) {
+                                    onPreviewRecord(record);
+                                  } else {
+                                    onSelectRecord?.(record);
+                                  }
+                                }}
+                                title="Preview Permit Card"
+                                className="p-1 text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded transition-colors cursor-pointer"
+                              >
+                                <Eye className="w-3.5 h-3.5" />
+                              </button>
                             </div>
                           );
                         })()}

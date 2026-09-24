@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { PermitData, StorageMode } from "./types";
-import { CheckCircle2, AlertCircle, Info, CloudUpload } from "lucide-react";
+import { CheckCircle2, AlertCircle, Info, CloudUpload, X } from "lucide-react";
 import { Header } from "./components/Header";
 import { PermitCard } from "./components/PermitCard";
 import type { PermitCardHandle } from "./components/PermitCard";
@@ -51,7 +51,7 @@ import {
 } from "./lib/supabase";
 
 export interface EmailTrackingInfo {
-  status: "SENT" | "OPENED";
+  status: "SENT" | string;
   sentAt?: string;
   openedAt?: string;
   openCount?: number;
@@ -805,6 +805,22 @@ export default function App() {
   const [editingRecord, setEditingRecord] = useState<CsvPermitRecord | null>(null);
   const [editingResolvedVoucherCode, setEditingResolvedVoucherCode] = useState<string>("");
   const [isEditModalOpen, setIsEditModalOpen] = useState<boolean>(false);
+  const [isPreviewCardOpen, setIsPreviewCardOpen] = useState<boolean>(false);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && isPreviewCardOpen) {
+        setIsPreviewCardOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isPreviewCardOpen]);
+
+  const handlePreviewRecord = (record: CsvPermitRecord) => {
+    handleSelectRecord(record);
+    setIsPreviewCardOpen(true);
+  };
 
   const showToast = (message: string, type: "success" | "info" | "warning" | "error" = "success") => {
     setSyncToast({ message, type });
@@ -2715,33 +2731,6 @@ export default function App() {
     showToast(`✅ Replacement permit resent with new code ${newVoucherCode}. Status updated to SENT.`, "success");
   };
 
-  const handleSimulateEmailOpen = async (record: CsvPermitRecord) => {
-    const pk = getRecordPrimaryKey(record) || record.vrm || String(record.id || "");
-    const normVrm = (record.vrm || "").toUpperCase().replace(/\s+/g, "");
-    try {
-      await fetch(`/api/emails/simulate-open/${encodeURIComponent(normVrm || pk)}`, { method: "POST" });
-    } catch (e) {}
-
-    const openedAt = new Date().toISOString();
-    setEmailTracking(prev => {
-      const next = { ...prev };
-      const current = next[pk] || next[normVrm] || { status: "SENT", sentAt: new Date().toISOString() };
-      const updated: EmailTrackingInfo = {
-        ...current,
-        status: "OPENED",
-        openedAt,
-        openCount: (current.openCount || 0) + 1
-      };
-      if (pk) next[pk] = updated;
-      if (normVrm) next[normVrm] = updated;
-      if (record.formId) next[String(record.formId)] = updated;
-      if (record.id) next[String(record.id)] = updated;
-      safeLocalStorage.setItem("concessions_email_tracking", JSON.stringify(next));
-      return next;
-    });
-    showToast(`👁️ Email open recorded for ${record.vrm || "permit"}! Status updated to OPENED.`, "info");
-  };
-
   const handleDispatchRecord = async (record: CsvPermitRecord) => {
     const isRep = Boolean(
       record.replacementCode ||
@@ -2851,7 +2840,6 @@ export default function App() {
             onUnsendRecord={handleUnsendRecord}
             onResendRecord={handleResendRecord}
             emailTracking={emailTracking}
-            onSimulateEmailOpen={handleSimulateEmailOpen}
             onBulkEmail={handleBulkEmail}
             onClear={handleClear}
             onChangeFormData={handleUpdate}
@@ -2862,6 +2850,7 @@ export default function App() {
             onBrowseVouchers={() => csvPanelRef.current?.browseVouchers()}
             onResetVouchers={handleResetVouchers}
             onEditRecord={handleEditRecord}
+            onPreviewRecord={handlePreviewRecord}
           />
 
           <div id="print-card-wrapper" className="permit-card-engine" aria-hidden="true">
@@ -2880,6 +2869,55 @@ export default function App() {
             />
           </div>
         </main>
+      )}
+
+      {/* Permit Card Modal Preview */}
+      {isPreviewCardOpen && (
+        <div 
+          className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto animate-fadeIn"
+          onClick={() => setIsPreviewCardOpen(false)}
+        >
+          <div 
+            className="relative bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl max-w-md w-full p-5 max-h-[92vh] overflow-y-auto flex flex-col items-center text-left"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="w-full flex items-center justify-between pb-3 mb-2 border-b border-slate-200 dark:border-slate-800">
+              <div className="flex items-center gap-2">
+                <span className="font-extrabold text-sm text-slate-900 dark:text-white">Permit Card Preview</span>
+                {formData.vrm && (
+                  <span className="font-mono text-xs font-bold px-2 py-0.5 rounded bg-amber-100 dark:bg-amber-950/50 text-amber-950 dark:text-amber-300 border border-yellow-200 dark:border-yellow-900/50 uppercase">
+                    {formData.vrm}
+                  </span>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsPreviewCardOpen(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                title="Close preview (Esc)"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* The Actual PermitCard */}
+            <div className="w-full flex justify-center py-1">
+              <PermitCard
+                data={formData}
+                database={enrichedDatabase}
+                vouchersDatabase={vouchersDatabase}
+                dispatchedKeys={dispatchedKeys}
+                unsentKeys={unsentKeys}
+                dispatchBy={dispatchBy}
+                markAsDispatched={markAsDispatched}
+                unmarkAsDispatched={unmarkAsDispatched}
+                onSelectRecord={handleSelectRecord}
+                onChange={handleUpdate}
+              />
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Blocklist Management Modal Panel */}
