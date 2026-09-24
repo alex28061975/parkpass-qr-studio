@@ -80,6 +80,7 @@ interface PermitCardProps {
   unmarkAsDispatched?: (vrm?: string, email?: string, record?: CsvPermitRecord) => Promise<boolean | void> | boolean | void;
   onSelectRecord?: (record: CsvPermitRecord) => void;
   onChange?: (updates: Partial<PermitData>) => void;
+  previewOnly?: boolean;
 }
 
 // Exported status helpers for use across components (PermitCard, TableView, PermitForm)
@@ -139,7 +140,8 @@ function PermitCardInner({
   markAsDispatched,
   unmarkAsDispatched,
   onSelectRecord, 
-  onChange 
+  onChange,
+  previewOnly = false
 }: PermitCardProps, ref: React.ForwardedRef<PermitCardHandle>) {
   const [qrUrl, setQrUrl] = useState<string>("");
   const [qrUrlSmall, setQrUrlSmall] = useState<string>("");
@@ -2329,7 +2331,7 @@ function PermitCardInner({
   }), [handleSendClick, sendOne, bulkEmail, isCurrentDispatched, activeIndex, matchingPermits, database, data, unmarkAsDispatched, handlePrint]);
 
   return (
-    <div className="flex flex-col items-center gap-4 w-full">
+    <div className={`flex flex-col items-center ${previewOnly ? "gap-0" : "gap-4"} w-full`}>
       <div 
         ref={cardRef}
         className="w-full max-w-[370px] bg-white dark:bg-slate-950 rounded-2xl shadow-xl border border-gray-200/80 dark:border-slate-800 overflow-hidden relative group transition-all hover:shadow-2xl print:border-none print:shadow-none font-sans text-gray-800 dark:text-slate-200"
@@ -2553,7 +2555,8 @@ function PermitCardInner({
         </div>
       </div>
 
-      <div className="w-full max-w-[370px] flex flex-col gap-3.5 print:hidden">
+      {!previewOnly && (
+        <div className="w-full max-w-[370px] flex flex-col gap-3.5 print:hidden">
         <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 p-3.5 space-y-3 text-left">
           <div className="flex flex-col gap-2 pb-2 border-b border-gray-150 dark:border-slate-800/60 select-none">
             <div className="flex items-center justify-between gap-1 text-xs overflow-hidden">
@@ -2874,8 +2877,9 @@ function PermitCardInner({
           )}
         </div>
       </div>
+      )}
 
-      {matchingPermits.length > 0 && (
+      {!previewOnly && matchingPermits.length > 0 && (
         <div className="w-full max-w-[370px] space-y-3 print:hidden">
           <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-xl py-1.5 px-3 flex items-center justify-between text-xs font-semibold shadow-xs select-none">
             
@@ -2917,7 +2921,7 @@ function PermitCardInner({
         </div>
       )}
 
-      {showOutlookGuide && (
+      {!previewOnly && showOutlookGuide && (
         <div className="fixed bottom-4 right-4 z-50 max-w-[280px] bg-slate-900 dark:bg-slate-950 text-white p-3 rounded-xl shadow-xl border border-slate-700/80 space-y-2.5">
           <div className="flex items-start gap-2">
             <div className="bg-emerald-500 text-white p-1 rounded-full shrink-0 mt-0.5">
@@ -2982,7 +2986,7 @@ function PermitCardInner({
         </div>
       )}
 
-      {showPendingModal && (
+      {!previewOnly && showPendingModal && (
         <div 
           className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4"
           onClick={() => setShowPendingModal(false)}

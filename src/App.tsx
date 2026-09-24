@@ -2874,15 +2874,15 @@ export default function App() {
       {/* Permit Card Modal Preview */}
       {isPreviewCardOpen && (
         <div 
-          className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto animate-fadeIn"
+          className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-fadeIn"
           onClick={() => setIsPreviewCardOpen(false)}
         >
           <div 
-            className="relative bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl max-w-md w-full p-5 max-h-[92vh] overflow-y-auto flex flex-col items-center text-left"
+            className="relative bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl w-full max-w-[402px] p-4 flex flex-col items-center text-left my-auto"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Header */}
-            <div className="w-full flex items-center justify-between pb-3 mb-2 border-b border-slate-200 dark:border-slate-800">
+            <div className="w-full flex items-center justify-between pb-3 mb-3 border-b border-slate-200 dark:border-slate-800 select-none">
               <div className="flex items-center gap-2">
                 <span className="font-extrabold text-sm text-slate-900 dark:text-white">Permit Card Preview</span>
                 {formData.vrm && (
@@ -2901,9 +2901,10 @@ export default function App() {
               </button>
             </div>
 
-            {/* The Actual PermitCard */}
-            <div className="w-full flex justify-center py-1">
+            {/* The Actual PermitCard Visual Component */}
+            <div className="w-full flex justify-center">
               <PermitCard
+                previewOnly={true}
                 data={formData}
                 database={enrichedDatabase}
                 vouchersDatabase={vouchersDatabase}
