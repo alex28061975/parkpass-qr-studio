@@ -2456,12 +2456,15 @@ export function isRecordCancelledCanonical(record: any, todayDateOrReference?: s
     return true;
   }
 
-  const rawRefDate = record.completionTime || record.startTime || record.createdAt || record.created_at || todayDateOrReference || record.todayDate || record.processingDate || record.submissionDate;
+  const rawRefDate = todayDateOrReference || record.todayDate || record.processingDate;
   const referenceDate = rawRefDate 
     ? (parseDateToISO(String(rawRefDate)) || "") 
     : "";
+  const isBackdate = isPermitExpiredBackdate(record, referenceDate);
   const dateRequired = record.dateRequired || record.validFrom || "";
-  if (isDateRequiredOutsideValidWindow(dateRequired, referenceDate) || isPermitExpiredBackdate(record, referenceDate)) return true;
+  const reqIso = parseDateToISO(dateRequired);
+  const isExpiredDate = referenceDate && reqIso && Math.floor((new Date(reqIso + "T00:00:00").getTime() - new Date(referenceDate + "T00:00:00").getTime()) / 86400000) <= -7;
+  if (isBackdate || Boolean(isExpiredDate)) return true;
 
   // ⭐ Live duplicate check: same VRM, requested within 7 days of an earlier non-cancelled request
   if (database && database.length > 0) {
@@ -3380,17 +3383,8 @@ export function checkIsBlockedDuplicate(
     const earlierReqIso = parseDateToISO(earlier?.dateRequired || earlier?.validFrom || "") || 
                           parseDateToISO(earlier?.startTime || earlier?.createdAt || "") || 
                           refDateISO || getTodayISO();
-    const earlierReqTimeMs = safeParseDateToTimestamp(earlierReqIso) ?? 0;
-
-    const diffDays = Math.round((reqTimeMsX - earlierReqTimeMs) / (1000 * 60 * 60 * 24));
-
-    if (Math.abs(diffDays) < 7) {
-      blockedDuplicateCheckCache.set(cacheKey, true);
-      return true;
-    }
-
-    const reqToIsoX = record?.validTo ? parseDateToISO(record.validTo) : (reqIsoX ? addDaysSafe(reqIsoX, 6) : undefined);
-    const earlierToIso = earlier?.validTo ? parseDateToISO(earlier.validTo) : (earlierReqIso ? addDaysSafe(earlierReqIso, 6) : undefined);
+    const reqToIsoX = record?.validTo ? parseDateToISO(record.validTo) : (record?.dateExpiry ? parseDateToISO(record.dateExpiry) : (reqIsoX ? addDaysSafe(reqIsoX, 6) : undefined));
+    const earlierToIso = earlier?.validTo ? parseDateToISO(earlier.validTo) : (earlier?.dateExpiry ? parseDateToISO(earlier.dateExpiry) : (earlierReqIso ? addDaysSafe(earlierReqIso, 6) : undefined));
     if (reqIsoX && reqToIsoX && earlierReqIso && earlierToIso) {
       const startA = safeParseDateToTimestamp(reqIsoX) ?? 0;
       const endA = safeParseDateToTimestamp(reqToIsoX) ?? (startA + 6 * 86400000);
@@ -3400,6 +3394,17 @@ export function checkIsBlockedDuplicate(
         blockedDuplicateCheckCache.set(cacheKey, true);
         return true;
       }
+      // Rule 10: A record whose requested date range starts after the previous record's end date
+      // must not be cancelled merely because the start dates are within 7 calendar days.
+      continue;
+    }
+
+    const earlierReqTimeMs = safeParseDateToTimestamp(earlierReqIso) ?? 0;
+    const diffDays = Math.round((reqTimeMsX - earlierReqTimeMs) / (1000 * 60 * 60 * 24));
+
+    if (Math.abs(diffDays) < 7) {
+      blockedDuplicateCheckCache.set(cacheKey, true);
+      return true;
     }
   }
 

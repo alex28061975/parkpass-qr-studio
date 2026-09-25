@@ -92,13 +92,14 @@ export const autoCancelDuplicates = (records: CsvPermitRecord[]): CsvPermitRecor
       return;
     }
 
-    // Expired requests outside valid window or backdated by 7+ days must be cancelled
-    const rawRefDate = record.completionTime || record.startTime || record.createdAt || record.created_at || record.todayDate || record.processingDate || record.submissionDate;
+    // Expired requests backdated by 7+ days or 7+ days past the applicable reference date must be cancelled
+    const rawRefDate = record.todayDate || record.processingDate || record.submissionDate;
     const refDate = rawRefDate ? (parseDateToISO(String(rawRefDate)) || "") : "";
+    const isBackdateExpired = isPermitExpiredBackdate(record, refDate);
     const dateRequired = record.dateRequired || record.validFrom || "";
-    const isActuallyExpired = isDateRequiredOutsideValidWindow(dateRequired, refDate) || 
-                              isPermitExpiredBackdate(record, refDate);
-    const isExpired = isActuallyExpired || (record.cancellationReason === "EXPIRED" && (!record.vrm || record.vrm === "PENDING" || record.vrm === "-"));
+    const reqIsoVal = parseDateToISO(dateRequired);
+    const isExpiredDate = refDate && reqIsoVal && Math.floor((new Date(reqIsoVal + "T00:00:00").getTime() - new Date(refDate + "T00:00:00").getTime()) / 86400000) <= -7;
+    const isExpired = isBackdateExpired || Boolean(isExpiredDate) || (record.cancellationReason === "EXPIRED" && (!record.vrm || record.vrm === "PENDING" || record.vrm === "-"));
 
     if (isExpired) {
       const preservedVoucher = (record.originalVoucherCode && record.originalVoucherCode !== "CANCELLED" && record.originalVoucherCode !== "-")
@@ -153,11 +154,12 @@ export const autoCancelDuplicates = (records: CsvPermitRecord[]): CsvPermitRecor
       return true;
     }
 
-    const rawRefDate = r.completionTime || r.startTime || r.createdAt || r.created_at || r.todayDate || r.processingDate || r.submissionDate;
+    const rawRefDate = r.todayDate || r.processingDate || r.submissionDate;
     const refDate = rawRefDate ? (parseDateToISO(String(rawRefDate)) || "") : "";
-    const dateRequired = r.dateRequired || r.validFrom || "";
-    if (isDateRequiredOutsideValidWindow(dateRequired, refDate)) return true;
     if (isPermitExpiredBackdate(r, refDate)) return true;
+    const dateRequired = r.dateRequired || r.validFrom || "";
+    const reqIsoVal = parseDateToISO(dateRequired);
+    if (refDate && reqIsoVal && Math.floor((new Date(reqIsoVal + "T00:00:00").getTime() - new Date(refDate + "T00:00:00").getTime()) / 86400000) <= -7) return true;
     return false;
   };
 
@@ -234,22 +236,24 @@ export const autoCancelDuplicates = (records: CsvPermitRecord[]): CsvPermitRecor
 
       const earlierKept = !isNaN(reqTimeMs)
         ? kept.find(k => {
-            const diffDays = Math.round((reqTimeMs - k.reqTimeMs) / (1000 * 60 * 60 * 24));
-            // Overlapping or within 7 days in either direction (e.g. backdated requests or consecutive days)
-            if (Math.abs(diffDays) < 7) return true;
-            const reqToIso = entry.record.validTo ? parseDateToISO(entry.record.validTo) : (reqIso ? addDaysSafe(reqIso, 6) : undefined);
+            const reqToIso = entry.record.validTo ? parseDateToISO(entry.record.validTo) : (entry.record.dateExpiry ? parseDateToISO(entry.record.dateExpiry) : (reqIso ? addDaysSafe(reqIso, 6) : undefined));
             const kReqIso = getReqDateISO(k.entry.record);
-            const kToIso = k.entry.record.validTo ? parseDateToISO(k.entry.record.validTo) : (kReqIso ? addDaysSafe(kReqIso, 6) : undefined);
+            const kToIso = k.entry.record.validTo ? parseDateToISO(k.entry.record.validTo) : (k.entry.record.dateExpiry ? parseDateToISO(k.entry.record.dateExpiry) : (kReqIso ? addDaysSafe(kReqIso, 6) : undefined));
             if (reqIso && reqToIso && kReqIso && kToIso) {
               const startA = new Date(`${reqIso}T00:00:00`).getTime();
               const endA = new Date(`${reqToIso}T00:00:00`).getTime();
               const startB = new Date(`${kReqIso}T00:00:00`).getTime();
               const endB = new Date(`${kToIso}T00:00:00`).getTime();
               if (!isNaN(startA) && !isNaN(endA) && !isNaN(startB) && !isNaN(endB)) {
-                if (startA <= endB && startB <= endA) return true;
+                // Rule 7: Inclusive date overlap: startA <= endB && startB <= endA
+                // Rule 10: A record whose requested date range starts after the previous record's end date
+                // must not be cancelled merely because the start dates are within 7 calendar days.
+                return startA <= endB && startB <= endA;
               }
             }
-            return false;
+            const diffDays = Math.round((reqTimeMs - k.reqTimeMs) / (1000 * 60 * 60 * 24));
+            // Rule 8: Exactly 7 days apart is NOT an overlap.
+            return Math.abs(diffDays) < 7;
           })
         : undefined;
 
