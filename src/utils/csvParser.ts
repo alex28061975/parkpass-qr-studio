@@ -1530,7 +1530,6 @@ export function isDateRequiredOutsideValidWindow(dateRequiredStr?: string, refer
  */
 export function isPermitExpiredBackdate(record: any, referenceDateStr?: string): boolean {
   if (!record) return false;
-  if (record.cancellationReason === "EXPIRED") return true;
 
   const validFromStr = record.validFrom || record.dateRequired;
   if (!validFromStr) return false;
@@ -3266,7 +3265,7 @@ export function checkIsBlockedDuplicate(
   if (
     record.cancellationReason === "MANUAL" ||
     record.cancellationReason === "BLOCKLIST" ||
-    record.cancellationReason === "EXPIRED" ||
+    (record.cancellationReason === "EXPIRED" && isPermitExpiredBackdate(record, refDateISO)) ||
     isVrmSilentBlockedSync(record.vrm) ||
     (typeof record.status === "string" && record.status.trim().toUpperCase() === "BLOCKED")
   ) {
@@ -3301,7 +3300,12 @@ export function checkIsBlockedDuplicate(
   }
 
   const vrmRecords = vrmIndexMap.get(cleanVrm);
-  if (!vrmRecords || vrmRecords.length <= 1) {
+  if (!vrmRecords || vrmRecords.length === 0) {
+    blockedDuplicateCheckCache.set(cacheKey, false);
+    return false;
+  }
+  const containsCurrent = vrmRecords.some(r => isSamePermitRecord(r, record));
+  if (containsCurrent && vrmRecords.length <= 1) {
     blockedDuplicateCheckCache.set(cacheKey, false);
     return false;
   }

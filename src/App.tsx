@@ -96,9 +96,9 @@ export const autoCancelDuplicates = (records: CsvPermitRecord[]): CsvPermitRecor
     const rawRefDate = record.completionTime || record.startTime || record.createdAt || record.created_at || record.todayDate || record.processingDate || record.submissionDate;
     const refDate = rawRefDate ? (parseDateToISO(String(rawRefDate)) || "") : "";
     const dateRequired = record.dateRequired || record.validFrom || "";
-    const isExpired = isDateRequiredOutsideValidWindow(dateRequired, refDate) || 
-                      isPermitExpiredBackdate(record, refDate) || 
-                      record.cancellationReason === "EXPIRED";
+    const isActuallyExpired = isDateRequiredOutsideValidWindow(dateRequired, refDate) || 
+                              isPermitExpiredBackdate(record, refDate);
+    const isExpired = isActuallyExpired || (record.cancellationReason === "EXPIRED" && (!record.vrm || record.vrm === "PENDING" || record.vrm === "-"));
 
     if (isExpired) {
       const preservedVoucher = (record.originalVoucherCode && record.originalVoucherCode !== "CANCELLED" && record.originalVoucherCode !== "-")
@@ -183,7 +183,7 @@ export const autoCancelDuplicates = (records: CsvPermitRecord[]): CsvPermitRecor
           ...entry.record,
           isCancelled: true,
           status: "CANCELLED",
-          cancellationReason: entry.record.cancellationReason || "EXPIRED",
+          cancellationReason: entry.record.cancellationReason || "MANUAL",
           voucherCode: "CANCELLED",
           prePaidCode: "CANCELLED",
           originalVoucherCode: preservedVoucher || entry.record.originalVoucherCode
@@ -229,27 +229,6 @@ export const autoCancelDuplicates = (records: CsvPermitRecord[]): CsvPermitRecor
     const kept: { reqTimeMs: number; entry: typeof entries[0] }[] = [];
 
     for (const entry of sorted) {
-      const genuine = isGenuinelyCancelled(entry.record);
-      if (genuine) {
-        // Genuinely cancelled records (MANUAL, BLOCKLIST, EXPIRED) must NEVER be restored and do not block other records.
-        const preservedVoucher = (entry.record.originalVoucherCode && entry.record.originalVoucherCode !== "CANCELLED" && entry.record.originalVoucherCode !== "-")
-          ? entry.record.originalVoucherCode
-          : (entry.record.voucherCode && entry.record.voucherCode !== "CANCELLED" && entry.record.voucherCode !== "-")
-            ? entry.record.voucherCode
-            : undefined;
-
-        results[entry.index] = {
-          ...entry.record,
-          isCancelled: true,
-          status: "CANCELLED",
-          cancellationReason: entry.record.cancellationReason || "EXPIRED",
-          voucherCode: "CANCELLED",
-          prePaidCode: "CANCELLED",
-          originalVoucherCode: preservedVoucher || entry.record.originalVoucherCode
-        };
-        continue;
-      }
-
       const reqIso = getReqDateISO(entry.record);
       const reqTimeMs = reqIso ? new Date(`${reqIso}T00:00:00`).getTime() : NaN;
 
@@ -308,25 +287,43 @@ export const autoCancelDuplicates = (records: CsvPermitRecord[]): CsvPermitRecor
           voucherCode: "CANCELLED",
           prePaidCode: "CANCELLED",
           originalVoucherCode: preservedVoucher || entry.record.originalVoucherCode,
-          cancellationReason: "DUPLICATE_VRM"
+          cancellationReason: (entry.record.cancellationReason === "MANUAL" || entry.record.cancellationReason === "BLOCKLIST")
+            ? entry.record.cancellationReason
+            : "DUPLICATE_VRM"
         };
-      } else {
-        // EARLIEST VALID REQUEST (or request with no active earlier request within 7 days) - WINNER!
-        // Must be active and have voucher code restored or unblocked from "CANCELLED".
-        const activeRecord: CsvPermitRecord = {
-          ...entry.record,
-          isCancelled: false,
-          status: "ACTIVE",
-          voucherCode: preservedVoucher || "",
-          prePaidCode: preservedVoucher || "",
-          originalVoucherCode: preservedVoucher || entry.record.originalVoucherCode,
-          cancellationReason: undefined
-        };
+        continue;
+      }
 
-        results[entry.index] = activeRecord;
-        if (!isNaN(reqTimeMs)) {
-          kept.push({ reqTimeMs, entry: { ...entry, record: activeRecord } });
-        }
+      const genuine = isGenuinelyCancelled(entry.record);
+      if (genuine) {
+        // Genuinely cancelled records (MANUAL, BLOCKLIST, EXPIRED) must NEVER be restored and do not block other records.
+        results[entry.index] = {
+          ...entry.record,
+          isCancelled: true,
+          status: "CANCELLED",
+          cancellationReason: entry.record.cancellationReason || "MANUAL",
+          voucherCode: "CANCELLED",
+          prePaidCode: "CANCELLED",
+          originalVoucherCode: preservedVoucher || entry.record.originalVoucherCode
+        };
+        continue;
+      }
+
+      // EARLIEST VALID REQUEST (or request with no active earlier request within 7 days) - WINNER!
+      // Must be active and have voucher code restored or unblocked from "CANCELLED".
+      const activeRecord: CsvPermitRecord = {
+        ...entry.record,
+        isCancelled: false,
+        status: "ACTIVE",
+        voucherCode: preservedVoucher || "",
+        prePaidCode: preservedVoucher || "",
+        originalVoucherCode: preservedVoucher || entry.record.originalVoucherCode,
+        cancellationReason: undefined
+      };
+
+      results[entry.index] = activeRecord;
+      if (!isNaN(reqTimeMs)) {
+        kept.push({ reqTimeMs, entry: { ...entry, record: activeRecord } });
       }
     }
   }
@@ -386,11 +383,17 @@ export function enrichRecordsWithVouchers(
     const hasOriginalVoucher = false;
 
     if (isRecordCancelled(record, recDateISO || fallbackDateStr, recordsList) || isPermitExpiredBackdate(record, recDateISO || fallbackDateStr)) {
+      const determinedReason = record.cancellationReason ||
+        (isVrmSilentBlockedSync(record.vrm) ? "BLOCKLIST" :
+        checkIsBlockedDuplicate(record, recordsList, recDateISO || fallbackDateStr) ? "DUPLICATE_VRM" :
+        (isPermitExpiredBackdate(record, recDateISO || fallbackDateStr) || isDateRequiredOutsideValidWindow(record.dateRequired || record.validFrom || "", recDateISO || fallbackDateStr)) ? "EXPIRED" :
+        "MANUAL");
+
       return {
         ...record,
         status: "CANCELLED",
         isCancelled: true,
-        cancellationReason: record.cancellationReason || (isPermitExpiredBackdate(record, recDateISO || fallbackDateStr) ? "EXPIRED" : undefined),
+        cancellationReason: determinedReason,
         voucherCode: "CANCELLED",
         prePaidCode: "CANCELLED",
         hasOriginalVoucher: false
@@ -565,11 +568,17 @@ export function enrichRecordsWithVouchers(
     }
 
     if (isRecordCancelled(record, reqDateD || fallbackDateStr, recordsList) || isPermitExpiredBackdate(record, reqDateD || fallbackDateStr)) {
+      const determinedReason = record.cancellationReason ||
+        (isVrmSilentBlockedSync(record.vrm) ? "BLOCKLIST" :
+        checkIsBlockedDuplicate(record, recordsList, reqDateD || fallbackDateStr) ? "DUPLICATE_VRM" :
+        (isPermitExpiredBackdate(record, reqDateD || fallbackDateStr) || isDateRequiredOutsideValidWindow(record.dateRequired || record.validFrom || "", reqDateD || fallbackDateStr)) ? "EXPIRED" :
+        "MANUAL");
+
       enrichedByIndex.set(index, {
         ...record,
         status: "CANCELLED",
         isCancelled: true,
-        cancellationReason: record.cancellationReason || "EXPIRED",
+        cancellationReason: determinedReason,
         voucherCode: "CANCELLED",
         prePaidCode: "CANCELLED",
         hasOriginalVoucher: false

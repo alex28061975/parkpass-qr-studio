@@ -975,7 +975,11 @@ function PermitCardInner({
       voucherCode: data.voucherCode,
       voucherCodesText: data.voucherCodesText,
       prePaidCode: data.prePaidCode,
+      cancellationReason: data.cancellationReason,
     };
+    if (record && !record.cancellationReason && data.cancellationReason) {
+      record.cancellationReason = data.cancellationReason;
+    }
     const recTodayDate = record?.todayDate || data.todayDate || getTodayISO();
     if (!record.todayDate) {
       record.todayDate = recTodayDate;
@@ -1985,7 +1989,11 @@ function PermitCardInner({
       voucherCode: data.voucherCode,
       voucherCodesText: data.voucherCodesText,
       prePaidCode: data.prePaidCode,
+      cancellationReason: data.cancellationReason,
     };
+    if (targetRec && !targetRec.cancellationReason && data.cancellationReason) {
+      targetRec.cancellationReason = data.cancellationReason;
+    }
 
     const targetVrm = (targetRec.vrm || (targetRecord ? "" : data.vrm) || "").toUpperCase().trim();
     const targetDriverName = (targetRec.driverName || targetRec.name || (targetRecord ? "" : data.name) || "").trim();
