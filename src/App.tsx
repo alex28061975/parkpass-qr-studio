@@ -387,10 +387,13 @@ export function enrichRecordsWithVouchers(
     const hasOriginalVoucher = false;
 
     if (isRecordCancelled(record, recDateISO || fallbackDateStr, recordsList) || isPermitExpiredBackdate(record, recDateISO || fallbackDateStr)) {
+      const isBackdate = isPermitExpiredBackdate(record, recDateISO || fallbackDateStr);
+      const reqIso = parseDateToISO(record.dateRequired || record.validFrom || "");
+      const isExpired7Days = Boolean(fallbackDateStr && reqIso && Math.floor((new Date(reqIso + "T00:00:00").getTime() - new Date(parseDateToISO(fallbackDateStr) + "T00:00:00").getTime()) / 86400000) <= -7);
       const determinedReason = record.cancellationReason ||
         (isVrmSilentBlockedSync(record.vrm) ? "BLOCKLIST" :
         checkIsBlockedDuplicate(record, recordsList, recDateISO || fallbackDateStr) ? "DUPLICATE_VRM" :
-        (isPermitExpiredBackdate(record, recDateISO || fallbackDateStr) || isDateRequiredOutsideValidWindow(record.dateRequired || record.validFrom || "", recDateISO || fallbackDateStr)) ? "EXPIRED" :
+        (isBackdate || isExpired7Days) ? "EXPIRED" :
         "MANUAL");
 
       return {
@@ -572,10 +575,13 @@ export function enrichRecordsWithVouchers(
     }
 
     if (isRecordCancelled(record, reqDateD || fallbackDateStr, recordsList) || isPermitExpiredBackdate(record, reqDateD || fallbackDateStr)) {
+      const isBackdate = isPermitExpiredBackdate(record, reqDateD || fallbackDateStr);
+      const reqIso = parseDateToISO(record.dateRequired || record.validFrom || "");
+      const isExpired7Days = Boolean(fallbackDateStr && reqIso && Math.floor((new Date(reqIso + "T00:00:00").getTime() - new Date(parseDateToISO(fallbackDateStr) + "T00:00:00").getTime()) / 86400000) <= -7);
       const determinedReason = record.cancellationReason ||
         (isVrmSilentBlockedSync(record.vrm) ? "BLOCKLIST" :
         checkIsBlockedDuplicate(record, recordsList, reqDateD || fallbackDateStr) ? "DUPLICATE_VRM" :
-        (isPermitExpiredBackdate(record, reqDateD || fallbackDateStr) || isDateRequiredOutsideValidWindow(record.dateRequired || record.validFrom || "", reqDateD || fallbackDateStr)) ? "EXPIRED" :
+        (isBackdate || isExpired7Days) ? "EXPIRED" :
         "MANUAL");
 
       enrichedByIndex.set(index, {
