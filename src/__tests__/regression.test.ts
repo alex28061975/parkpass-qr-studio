@@ -1,0 +1,822 @@
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+
+import { autoCancelDuplicates, enrichRecordsWithVouchers } from '../App';
+import {
+  checkIsBlockedDuplicate,
+  isRecordCancelledCanonical,
+  isPermitExpiredBackdate,
+  isVoucherExactPeriodEligible,
+  parseDateToISO,
+  addDaysSafe,
+  CsvPermitRecord,
+  ParsedVoucherData
+} from '../utils/csvParser';
+import {
+  resolveCancellationDetails,
+  getCancellationEmailContent,
+  CancellationReason
+} from '../utils/emailTemplateUtils';
+import { getRecordPrimaryKey, getRecordKeys } from '../utils/dispatchUtils';
+
+function makePermit(overrides: Partial<CsvPermitRecord> & { id: string; vrm: string }): CsvPermitRecord {
+  return {
+    formId: overrides.id,
+    hospital: 'Whipps Cross Hospital',
+    ward: 'Acorn Ward',
+    driverName: 'Driver',
+    dateRequired: overrides.validFrom || '20/09/2026',
+    ...overrides
+  };
+}
+
+describe('ParkPass Concessions Regression Test Suite', () => {
+
+  // =========================================================================
+  // TEST 1 — Adjacent concession periods (20/09 → 26/09 vs 27/09 → 03/10)
+  // Expected: NO OVERLAP (protects #1914 bug)
+  // =========================================================================
+  it('TEST 1: Adjacent consecutive concession periods must NOT overlap', () => {
+    const existingPermit: CsvPermitRecord = {
+      id: '1',
+      formId: '1',
+      vrm: 'EA25VZM',
+      validFrom: '20/09/2026',
+      validTo: '26/09/2026',
+      dateRequired: '20/09/2026',
+      dateExpiry: '26/09/2026',
+      hospital: 'Whipps Cross Hospital',
+      ward: 'Acorn Ward',
+      driverName: 'Test Driver',
+      status: 'ACTIVE'
+    };
+
+    const newAdjacentPermit: CsvPermitRecord = {
+      id: '2',
+      formId: '2',
+      vrm: 'EA25VZM',
+      validFrom: '27/09/2026',
+      validTo: '03/10/2026',
+      dateRequired: '27/09/2026',
+      dateExpiry: '03/10/2026',
+      hospital: 'Whipps Cross Hospital',
+      ward: 'Acorn Ward',
+      driverName: 'Test Driver',
+      status: 'ACTIVE'
+    };
+
+    const isBlocked = checkIsBlockedDuplicate(newAdjacentPermit, [existingPermit]);
+    assert.equal(isBlocked, false, 'Adjacent consecutive period (26/09 -> 27/09) must NOT be blocked as duplicate');
+
+    const reconciled = autoCancelDuplicates([existingPermit, newAdjacentPermit]);
+    assert.equal(reconciled[0].status, 'ACTIVE', 'Existing permit must remain ACTIVE');
+    assert.equal(reconciled[1].status, 'ACTIVE', 'New adjacent permit must remain ACTIVE');
+    assert.equal(reconciled[1].isCancelled, false);
+  });
+
+  // =========================================================================
+  // TEST 2 — Genuine overlapping periods (20/09 → 26/09 vs 26/09 → 02/10)
+  // Expected: OVERLAP (shared date 26/09)
+  // =========================================================================
+  it('TEST 2: Periods sharing an inclusive date (26/09) must be recognized as OVERLAPPING', () => {
+    const existingPermit: CsvPermitRecord = {
+      id: '1',
+      formId: '1',
+      startTime: '20/09/2026 09:00:00',
+      vrm: 'AB12CDE',
+      validFrom: '20/09/2026',
+      validTo: '26/09/2026',
+      dateRequired: '20/09/2026',
+      dateExpiry: '26/09/2026',
+      hospital: 'Whipps Cross Hospital',
+      ward: 'Acorn Ward',
+      driverName: 'Driver A',
+      status: 'ACTIVE'
+    };
+
+    const overlappingPermit: CsvPermitRecord = {
+      id: '2',
+      formId: '2',
+      startTime: '21/09/2026 10:00:00',
+      vrm: 'AB12CDE',
+      validFrom: '26/09/2026',
+      validTo: '02/10/2026',
+      dateRequired: '26/09/2026',
+      dateExpiry: '02/10/2026',
+      hospital: 'Whipps Cross Hospital',
+      ward: 'Acorn Ward',
+      driverName: 'Driver A',
+      status: 'ACTIVE'
+    };
+
+    const isBlocked = checkIsBlockedDuplicate(overlappingPermit, [existingPermit]);
+    assert.equal(isBlocked, true, 'Shared boundary date 26/09 must be recognized as overlapping');
+
+    const reconciled = autoCancelDuplicates([existingPermit, overlappingPermit]);
+    assert.equal(reconciled[0].status, 'ACTIVE', 'Earlier submission must win');
+    assert.equal(reconciled[1].status, 'CANCELLED', 'Later overlapping permit must be CANCELLED');
+    assert.equal(reconciled[1].cancellationReason, 'DUPLICATE_VRM');
+  });
+
+  // =========================================================================
+  // TEST 3 — Clearly separate periods (19/09 → 25/09 vs 27/09 → 03/10)
+  // Expected: NO OVERLAP
+  // =========================================================================
+  it('TEST 3: Clearly separated periods must NOT overlap', () => {
+    const permitA: CsvPermitRecord = {
+      id: '1',
+      formId: '1',
+      vrm: 'XY99ZZZ',
+      validFrom: '19/09/2026',
+      validTo: '25/09/2026',
+      dateRequired: '19/09/2026',
+      dateExpiry: '25/09/2026',
+      hospital: 'Royal London Hospital',
+      ward: 'Ward 4B',
+      driverName: 'Driver B',
+      status: 'ACTIVE'
+    };
+
+    const permitB: CsvPermitRecord = {
+      id: '2',
+      formId: '2',
+      vrm: 'XY99ZZZ',
+      validFrom: '27/09/2026',
+      validTo: '03/10/2026',
+      dateRequired: '27/09/2026',
+      dateExpiry: '03/10/2026',
+      hospital: 'Royal London Hospital',
+      ward: 'Ward 4B',
+      driverName: 'Driver B',
+      status: 'ACTIVE'
+    };
+
+    const isBlocked = checkIsBlockedDuplicate(permitB, [permitA]);
+    assert.equal(isBlocked, false, 'Separated periods must not be flagged as duplicates');
+
+    const reconciled = autoCancelDuplicates([permitA, permitB]);
+    assert.equal(reconciled[0].status, 'ACTIVE');
+    assert.equal(reconciled[1].status, 'ACTIVE');
+  });
+
+  // =========================================================================
+  // TEST 4 — Cancelled record must not cause a duplicate (#1822 / #1829 issue)
+  // Expected: New record remains ACTIVE
+  // =========================================================================
+  it('TEST 4: A previously cancelled record must NOT act as an active duplicate candidate', () => {
+    const cancelledEarlier: CsvPermitRecord = {
+      id: '1822',
+      formId: '1822',
+      startTime: '20/09/2026 10:00:00',
+      vrm: 'BD22XYZ',
+      validFrom: '20/09/2026',
+      validTo: '26/09/2026',
+      dateRequired: '20/09/2026',
+      hospital: 'Newham Hospital',
+      ward: 'Cedar Ward',
+      driverName: 'Driver C',
+      status: 'CANCELLED',
+      isCancelled: true,
+      cancellationReason: 'MANUAL',
+      voucherCode: 'CANCELLED'
+    };
+
+    const newPermit: CsvPermitRecord = {
+      id: '1829',
+      formId: '1829',
+      startTime: '21/09/2026 11:00:00',
+      vrm: 'BD22XYZ',
+      validFrom: '27/09/2026',
+      validTo: '03/10/2026',
+      dateRequired: '27/09/2026',
+      hospital: 'Newham Hospital',
+      ward: 'Cedar Ward',
+      driverName: 'Driver C',
+      status: 'ACTIVE'
+    };
+
+    const isBlocked = checkIsBlockedDuplicate(newPermit, [cancelledEarlier]);
+    assert.equal(isBlocked, false, 'Cancelled earlier record must not block new record');
+
+    const reconciled = autoCancelDuplicates([cancelledEarlier, newPermit]);
+    assert.equal(reconciled[0].status, 'CANCELLED', 'Genuinely cancelled permit stays CANCELLED');
+    assert.equal(reconciled[1].status, 'ACTIVE', 'New permit remains ACTIVE');
+  });
+
+  // =========================================================================
+  // TEST 5 — #1914 exact regression
+  // #1842 ACTIVE (19/09 -> 25/09), #1913 CANCELLED (20/09 -> 26/09), #1914 ACTIVE (27/09 -> 03/10)
+  // Expected: #1914 ACTIVE & eligible for matching voucher (prevent premature EXPIRED)
+  // =========================================================================
+  it('TEST 5: Exact #1914 regression scenario must evaluate #1914 as ACTIVE and allocate voucher', () => {
+    const r1842: CsvPermitRecord = {
+      id: '1842',
+      formId: '1842',
+      startTime: '20/09/2026 19:07:50',
+      completionTime: '20/09/2026 19:07:50',
+      vrm: 'EA25VZM',
+      validFrom: '19/09/2026',
+      validTo: '25/09/2026',
+      dateRequired: '19/09/2026',
+      dateExpiry: '25/09/2026',
+      driverName: 'Driver EA',
+      hospital: 'Whipps Cross Hospital',
+      ward: 'Acorn Ward',
+      status: 'ACTIVE',
+      voucherCode: '5LEUMNSPVMXSV'
+    };
+
+    const r1913: CsvPermitRecord = {
+      id: '1913',
+      formId: '1913',
+      startTime: '25/09/2026 14:25:27',
+      completionTime: '25/09/2026 14:25:27',
+      vrm: 'EA25VZM',
+      validFrom: '20/09/2026',
+      validTo: '26/09/2026',
+      dateRequired: '20/09/2026',
+      dateExpiry: '26/09/2026',
+      driverName: 'Driver EA',
+      hospital: 'Whipps Cross Hospital',
+      ward: 'Acorn Ward',
+      status: 'ACTIVE'
+    };
+
+    const r1914: CsvPermitRecord = {
+      id: '1914',
+      formId: '1914',
+      startTime: '25/09/2026 14:27:06',
+      completionTime: '25/09/2026 14:27:06',
+      vrm: 'EA25VZM',
+      validFrom: '27/09/2026',
+      validTo: '03/10/2026',
+      dateRequired: '27/09/2026',
+      dateExpiry: '03/10/2026',
+      driverName: 'Driver EA',
+      hospital: 'Whipps Cross Hospital',
+      ward: 'Acorn Ward',
+      status: 'ACTIVE'
+    };
+
+    const reconciled = autoCancelDuplicates([r1842, r1913, r1914]);
+
+    assert.equal(reconciled[0].status, 'ACTIVE', '#1842 must be ACTIVE');
+    assert.equal(reconciled[0].voucherCode, '5LEUMNSPVMXSV', '#1842 retains its voucher');
+
+    assert.equal(reconciled[1].status, 'CANCELLED', '#1913 must be CANCELLED');
+    assert.equal(reconciled[1].cancellationReason, 'DUPLICATE_VRM', '#1913 cancelled as duplicate of #1842');
+
+    assert.equal(reconciled[2].status, 'ACTIVE', '#1914 MUST be ACTIVE');
+    assert.equal(reconciled[2].isCancelled, false, '#1914 must not be isCancelled: true');
+    assert.notEqual(reconciled[2].cancellationReason, 'EXPIRED', '#1914 must NOT be prematurely marked EXPIRED');
+
+    const availableVouchers: ParsedVoucherData[] = [
+      { code: '5LEUMNSPVMXSV', validFrom: '19/09/2026', validTo: '25/09/2026', status: 'AVAILABLE' },
+      { code: 'VOUCH_FOR_1914', validFrom: '27/09/2026', validTo: '03/10/2026', status: 'AVAILABLE' }
+    ];
+
+    const enriched = enrichRecordsWithVouchers(reconciled, availableVouchers, {}, '25/09/2026');
+    assert.equal(enriched[2].status, 'ACTIVE');
+    assert.equal(enriched[2].voucherCode, 'VOUCH_FOR_1914', '#1914 must receive the available matching voucher');
+  });
+
+  // =========================================================================
+  // TEST 6 — Future-date cancellation (requested date 2+ days ahead)
+  // Expected: canonical category 'future'
+  // =========================================================================
+  it('TEST 6: A permit requested 2+ days in advance resolves to future cancellation category', () => {
+    const futureRecord: CsvPermitRecord = {
+      id: '2001',
+      formId: '2001',
+      vrm: 'FU26TUE',
+      driverName: 'Future Tester',
+      validFrom: '28/09/2026',
+      dateRequired: '28/09/2026',
+      hospital: 'Whipps Cross Hospital',
+      ward: 'Maternity',
+      todayDate: '25/09/2026'
+    };
+
+    const details = resolveCancellationDetails(futureRecord, [], '25/09/2026');
+    assert.equal(details.reason, 'future', 'Permit requested 3 days ahead must resolve to future category');
+
+    const email = getCancellationEmailContent({
+      vrm: futureRecord.vrm,
+      driverName: futureRecord.driverName,
+      validFrom: futureRecord.validFrom,
+      reason: details.reason
+    });
+    assert.match(email.subject, /Cancelled: Concession Permit – FU26TUE/);
+    assert.match(email.plainText, /is in the future/i);
+  });
+
+  // =========================================================================
+  // TEST 7 — Expired-date cancellation (7+ days in the past)
+  // Expected: canonical category 'expired'
+  // =========================================================================
+  it('TEST 7: A concession requested 7+ days ago resolves to expired category', () => {
+    const expiredRecord: CsvPermitRecord = {
+      id: '2002',
+      formId: '2002',
+      vrm: 'EX26OLD',
+      driverName: 'Old Concession',
+      validFrom: '10/09/2026',
+      dateRequired: '10/09/2026',
+      startTime: '25/09/2026 12:00:00',
+      hospital: 'Whipps Cross Hospital',
+      ward: 'Maternity',
+      todayDate: '25/09/2026'
+    };
+
+    const isBackdate = isPermitExpiredBackdate(expiredRecord, '25/09/2026');
+    assert.equal(isBackdate, true, '15 days in past must be expired backdate');
+
+    const details = resolveCancellationDetails(expiredRecord, [], '25/09/2026');
+    assert.equal(details.reason, 'expired', '7+ days past must resolve to expired');
+
+    const email = getCancellationEmailContent({
+      vrm: expiredRecord.vrm,
+      driverName: expiredRecord.driverName,
+      validFrom: expiredRecord.validFrom,
+      reason: details.reason
+    });
+    assert.match(email.subject, /Cancelled: Concession Permit – EX26OLD/);
+    assert.match(email.plainText, /The 7-day validity period for this concession has ended/i);
+  });
+
+  // =========================================================================
+  // TEST 8 — Duplicate cancellation
+  // Expected: cancellationReason = DUPLICATE_VRM and email category duplicate
+  // =========================================================================
+  it('TEST 8: Same VRM overlapping permit resolves to duplicate cancellationReason and duplicate email', () => {
+    const activePermit = makePermit({
+      id: '101',
+      formId: '101',
+      startTime: '20/09/2026 09:00:00',
+      vrm: 'DP24VRM',
+      driverName: 'Alice',
+      validFrom: '20/09/2026',
+      validTo: '26/09/2026',
+      dateRequired: '20/09/2026',
+      status: 'ACTIVE',
+      voucherCode: 'ACTV123'
+    });
+
+    const dupPermit = makePermit({
+      id: '102',
+      formId: '102',
+      startTime: '20/09/2026 10:00:00',
+      vrm: 'DP24VRM',
+      driverName: 'Alice',
+      validFrom: '22/09/2026',
+      validTo: '28/09/2026',
+      dateRequired: '22/09/2026',
+      status: 'ACTIVE'
+    });
+
+    const reconciled = autoCancelDuplicates([activePermit, dupPermit]);
+    assert.equal(reconciled[1].status, 'CANCELLED');
+    assert.equal(reconciled[1].cancellationReason, 'DUPLICATE_VRM');
+
+    const details = resolveCancellationDetails(reconciled[1], [reconciled[0]], '20/09/2026');
+    assert.equal(details.reason, 'duplicate');
+
+    const email = getCancellationEmailContent({
+      vrm: dupPermit.vrm,
+      driverName: dupPermit.driverName,
+      validFrom: dupPermit.validFrom,
+      reason: details.reason,
+      currentExpiryDate: details.currentExpiryDate,
+      earliestRenewalDate: details.earliestRenewalDate
+    });
+    assert.match(email.subject, /Cancelled: Concession Permit – DP24VRM/);
+    assert.match(email.plainText, /already has an active permit valid through/i);
+  });
+
+  // =========================================================================
+  // TEST 9 — Henry Durant regression (#1839 active through 24/09, #1907 duplicate)
+  // Expected: #1907 = CANCELLED, DUPLICATE_VRM, email duplicate with expiry & renewal
+  // =========================================================================
+  it('TEST 9: Henry Durant regression (#1839 vs #1907) retains duplicate reason with active expiry', () => {
+    const r1839: CsvPermitRecord = {
+      id: '1839',
+      formId: '1839',
+      startTime: '20/09/2026 16:44:21',
+      completionTime: '20/09/2026 16:44:21',
+      vrm: 'FN24EVC',
+      driverName: 'Henry Durant',
+      validFrom: '18/09/2026',
+      validTo: '24/09/2026',
+      dateRequired: '18/09/2026',
+      dateExpiry: '24/09/2026',
+      hospital: 'Whipps Cross Hospital',
+      ward: 'Maternity',
+      status: 'ACTIVE',
+      voucherCode: '4BPO6KOTNZIV8'
+    };
+
+    const r1907: CsvPermitRecord = {
+      id: '1907',
+      formId: '1907',
+      startTime: '25/09/2026 02:51:42',
+      completionTime: '25/09/2026 02:51:42',
+      vrm: 'FN24EVC',
+      driverName: 'Henry Durant',
+      validFrom: '24/09/2026',
+      validTo: '30/09/2026',
+      dateRequired: '24/09/2026',
+      dateExpiry: '30/09/2026',
+      hospital: 'Whipps Cross Hospital',
+      ward: 'Maternity',
+      status: 'ACTIVE'
+    };
+
+    const reconciled = autoCancelDuplicates([r1839, r1907]);
+    assert.equal(reconciled[0].status, 'ACTIVE');
+    assert.equal(reconciled[1].status, 'CANCELLED');
+    assert.equal(reconciled[1].cancellationReason, 'DUPLICATE_VRM');
+
+    const details = resolveCancellationDetails(reconciled[1], [reconciled[0]], '25/09/2026');
+    assert.equal(details.reason, 'duplicate', 'Must use duplicate category, NOT expired');
+    assert.equal(details.currentExpiryDate, '24/09/2026', 'Must display current expiry 24/09/2026');
+    assert.equal(details.earliestRenewalDate, '25/09/2026', 'Must display renewal date 25/09/2026');
+  });
+
+  // =========================================================================
+  // TEST 10 — #1897 / #1898 regression (backdated negative diff overlap)
+  // Expected: Genuine overlap recognized when start-date diff is negative
+  // =========================================================================
+  it('TEST 10: Negative start-date diff with overlapping dates correctly triggers duplicate detection', () => {
+    const r1897 = makePermit({
+      id: '1897',
+      formId: '1897',
+      startTime: '24/09/2026 10:00:00',
+      vrm: 'KL24NEG',
+      validFrom: '23/09/2026',
+      validTo: '29/09/2026',
+      dateRequired: '23/09/2026',
+      status: 'ACTIVE',
+      voucherCode: 'V1897'
+    });
+
+    const r1898 = makePermit({
+      id: '1898',
+      formId: '1898',
+      startTime: '24/09/2026 11:00:00',
+      vrm: 'KL24NEG',
+      validFrom: '22/09/2026',
+      validTo: '28/09/2026',
+      dateRequired: '22/09/2026',
+      status: 'ACTIVE'
+    });
+
+    const reconciled = autoCancelDuplicates([r1897, r1898]);
+    assert.equal(reconciled[0].status, 'ACTIVE', 'Earlier submission 1897 wins');
+    assert.equal(reconciled[1].status, 'CANCELLED', 'Overlapping request 1898 is cancelled');
+    assert.equal(reconciled[1].cancellationReason, 'DUPLICATE_VRM');
+  });
+
+  // =========================================================================
+  // TEST 11 — ±7-day boundary
+  // 0-6 days = potentially overlapping; exactly 7 days = NOT an overlap
+  // =========================================================================
+  it('TEST 11: Exactly 7 days apart is NOT an overlap; date range rule remains authoritative', () => {
+    const permitA = makePermit({
+      id: 'A',
+      formId: 'A',
+      startTime: '20/09/2026 09:00:00',
+      vrm: 'BD07DAY',
+      validFrom: '20/09/2026',
+      validTo: '26/09/2026',
+      dateRequired: '20/09/2026',
+      status: 'ACTIVE'
+    });
+
+    const permitB = makePermit({
+      id: 'B',
+      formId: 'B',
+      startTime: '20/09/2026 09:05:00',
+      vrm: 'BD07DAY',
+      validFrom: '27/09/2026',
+      validTo: '03/10/2026',
+      dateRequired: '27/09/2026',
+      status: 'ACTIVE'
+    });
+
+    const isOverlap = checkIsBlockedDuplicate(permitB, [permitA]);
+    assert.equal(isOverlap, false, 'Start date 7 days after first permit start (adjacent) is NOT an overlap');
+
+    const reconciled = autoCancelDuplicates([permitA, permitB]);
+    assert.equal(reconciled[0].status, 'ACTIVE');
+    assert.equal(reconciled[1].status, 'ACTIVE');
+  });
+
+  // =========================================================================
+  // TEST 12 — Voucher validity period
+  // Only assign vouchers where valid_from <= requested <= valid_to
+  // =========================================================================
+  it('TEST 12: Voucher allocation only assigns vouchers valid for the requested permit date', () => {
+    const permit = makePermit({
+      id: '1',
+      formId: '1',
+      vrm: 'VRM123',
+      validFrom: '25/09/2026',
+      validTo: '01/10/2026',
+      dateRequired: '25/09/2026',
+      status: 'ACTIVE'
+    });
+
+    const expiredVoucher: ParsedVoucherData = {
+      code: 'EXPIRED_VOUCHER',
+      validFrom: '10/09/2026',
+      validTo: '16/09/2026',
+      status: 'AVAILABLE'
+    };
+
+    const futureVoucher: ParsedVoucherData = {
+      code: 'FUTURE_VOUCHER',
+      validFrom: '10/10/2026',
+      validTo: '16/10/2026',
+      status: 'AVAILABLE'
+    };
+
+    const validVoucher: ParsedVoucherData = {
+      code: 'VALID_VOUCHER_25',
+      validFrom: '25/09/2026',
+      validTo: '01/10/2026',
+      status: 'AVAILABLE'
+    };
+
+    assert.equal(isVoucherExactPeriodEligible(expiredVoucher, '25/09/2026', '01/10/2026'), false);
+    assert.equal(isVoucherExactPeriodEligible(futureVoucher, '25/09/2026', '01/10/2026'), false);
+    assert.equal(isVoucherExactPeriodEligible(validVoucher, '25/09/2026', '01/10/2026'), true);
+
+    const enriched = enrichRecordsWithVouchers([permit], [expiredVoucher, futureVoucher, validVoucher]);
+    assert.equal(enriched[0].voucherCode, 'VALID_VOUCHER_25', 'Must allocate only the date-valid voucher');
+  });
+
+  // =========================================================================
+  // TEST 13 — Assigned voucher exclusion
+  // Assigned voucher must be excluded from other permits in same period
+  // =========================================================================
+  it('TEST 13: An assigned voucher is excluded from subsequent permits', () => {
+    const permit1 = makePermit({
+      id: '1',
+      formId: '1',
+      vrm: 'CAR1',
+      validFrom: '20/09/2026',
+      validTo: '26/09/2026',
+      dateRequired: '20/09/2026',
+      status: 'ACTIVE'
+    });
+
+    const permit2 = makePermit({
+      id: '2',
+      formId: '2',
+      vrm: 'CAR2',
+      validFrom: '20/09/2026',
+      validTo: '26/09/2026',
+      dateRequired: '20/09/2026',
+      status: 'ACTIVE'
+    });
+
+    const vouchers: ParsedVoucherData[] = [
+      { code: 'SINGLE_CODE', validFrom: '20/09/2026', validTo: '26/09/2026', status: 'AVAILABLE' }
+    ];
+
+    const enriched = enrichRecordsWithVouchers([permit1, permit2], vouchers);
+    assert.equal(enriched[0].voucherCode, 'SINGLE_CODE', 'First permit claims the code');
+    assert.equal(enriched[1].voucherCode, '-', 'Second permit cannot claim already assigned code');
+  });
+
+  // =========================================================================
+  // TEST 14 — Replacement workflow
+  // Entering replacement mode preserves originalVoucherCode
+  // =========================================================================
+  it('TEST 14: Replacement workflow preserves originalVoucherCode', () => {
+    const permit = makePermit({
+      id: '10',
+      formId: '10',
+      vrm: 'REP123',
+      validFrom: '20/09/2026',
+      validTo: '26/09/2026',
+      dateRequired: '20/09/2026',
+      status: 'ACTIVE',
+      voucherCode: 'ORIG_CODE_999',
+      originalVoucherCode: 'ORIG_CODE_999',
+      emailTemplate: 'replacement',
+      isResend: true
+    });
+
+    const customMap: Record<string, string> = {
+      '10': 'NEW_REPLACEMENT_CODE'
+    };
+
+    const enriched = enrichRecordsWithVouchers([permit], [], customMap);
+    assert.equal(enriched[0].voucherCode, 'NEW_REPLACEMENT_CODE');
+    assert.equal(enriched[0].originalVoucherCode, 'ORIG_CODE_999', 'originalVoucherCode must remain preserved');
+  });
+
+  // =========================================================================
+  // TEST 15 — Cancelled vouchers consume zero allocation
+  // Cancelled records do NOT consume voucher codes
+  // =========================================================================
+  it('TEST 15: Cancelled records consume zero voucher allocation', () => {
+    const cancelledPermit = makePermit({
+      id: '1',
+      formId: '1',
+      vrm: 'CAN1',
+      validFrom: '20/09/2026',
+      validTo: '26/09/2026',
+      dateRequired: '20/09/2026',
+      status: 'CANCELLED',
+      isCancelled: true,
+      cancellationReason: 'MANUAL',
+      voucherCode: 'CANCELLED'
+    });
+
+    const activePermit = makePermit({
+      id: '2',
+      formId: '2',
+      vrm: 'ACT2',
+      validFrom: '20/09/2026',
+      validTo: '26/09/2026',
+      dateRequired: '20/09/2026',
+      status: 'ACTIVE'
+    });
+
+    const vouchers: ParsedVoucherData[] = [
+      { code: 'SHARED_POOL_CODE', validFrom: '20/09/2026', validTo: '26/09/2026', status: 'AVAILABLE' }
+    ];
+
+    const enriched = enrichRecordsWithVouchers([cancelledPermit, activePermit], vouchers);
+    assert.equal(enriched[0].voucherCode, 'CANCELLED');
+    assert.equal(enriched[1].voucherCode, 'SHARED_POOL_CODE', 'Active permit receives the voucher without being blocked');
+  });
+
+  // =========================================================================
+  // TEST 16 — Duplicate reinstatement
+  // Only DUPLICATE_VRM may be reinstated when earlier winner is removed
+  // =========================================================================
+  it('TEST 16: Only DUPLICATE_VRM is reinstated when earlier winner is removed; MANUAL/BLOCKLIST/EXPIRED are not', () => {
+    const duplicateRecord = makePermit({
+      id: '2',
+      formId: '2',
+      vrm: 'REINST1',
+      validFrom: '20/09/2026',
+      validTo: '26/09/2026',
+      dateRequired: '20/09/2026',
+      status: 'CANCELLED',
+      isCancelled: true,
+      cancellationReason: 'DUPLICATE_VRM',
+      originalVoucherCode: 'RESTORED_VOUCH'
+    });
+
+    const manualRecord = makePermit({
+      id: '3',
+      formId: '3',
+      vrm: 'MANUAL1',
+      validFrom: '20/09/2026',
+      validTo: '26/09/2026',
+      dateRequired: '20/09/2026',
+      status: 'CANCELLED',
+      isCancelled: true,
+      cancellationReason: 'MANUAL',
+      voucherCode: 'CANCELLED'
+    });
+
+    const reconciled = autoCancelDuplicates([duplicateRecord, manualRecord]);
+    assert.equal(reconciled[0].status, 'ACTIVE', 'DUPLICATE_VRM is restored to ACTIVE when winner is absent');
+    assert.equal(reconciled[0].isCancelled, false);
+    assert.equal(reconciled[0].voucherCode, 'RESTORED_VOUCH');
+
+    assert.equal(reconciled[1].status, 'CANCELLED', 'MANUAL cancellation must NEVER be restored');
+    assert.equal(reconciled[1].cancellationReason, 'MANUAL');
+  });
+
+  // =========================================================================
+  // TEST 17 — Winner selection chronology
+  // 1. Earliest submission timestamp, 2. numeric Form ID, 3. array index
+  // =========================================================================
+  it('TEST 17: Winner selection respects earliest submission timestamp, then numeric Form ID', () => {
+    const earlierSubmitted = makePermit({
+      id: '100',
+      formId: '100',
+      startTime: '20/09/2026 10:00:00',
+      vrm: 'WINNER1',
+      validFrom: '25/09/2026',
+      validTo: '01/10/2026',
+      dateRequired: '25/09/2026',
+      status: 'ACTIVE'
+    });
+
+    const laterSubmittedLowerId = makePermit({
+      id: '99',
+      formId: '99',
+      startTime: '20/09/2026 11:00:00',
+      vrm: 'WINNER1',
+      validFrom: '25/09/2026',
+      validTo: '01/10/2026',
+      dateRequired: '25/09/2026',
+      status: 'ACTIVE'
+    });
+
+    const reconciled = autoCancelDuplicates([laterSubmittedLowerId, earlierSubmitted]);
+    assert.equal(reconciled[1].status, 'ACTIVE', 'Earlier submission timestamp (10:00) wins');
+    assert.equal(reconciled[0].status, 'CANCELLED', 'Later submission is cancelled as duplicate');
+  });
+
+  // =========================================================================
+  // TEST 18 — Dispatch state keys
+  // Protect getRecordPrimaryKey and getRecordKeys for Form ID dispatch tracking
+  // =========================================================================
+  it('TEST 18: Dispatch primary keys are strictly anchored to formId/id and not VRM alone', () => {
+    const recordWithFormId: CsvPermitRecord = {
+      id: 'rec_abc',
+      formId: '1914',
+      vrm: 'EA25VZM',
+      driverName: 'John Doe',
+      hospital: 'Whipps Cross Hospital',
+      ward: 'Ward 1',
+      dateRequired: '27/09/2026'
+    };
+
+    const key = getRecordPrimaryKey(recordWithFormId);
+    assert.equal(key, '1914', 'Primary key must be numeric formId');
+
+    const aliases = getRecordKeys(recordWithFormId);
+    assert.ok(aliases.includes('1914'));
+    assert.ok(!aliases.includes('EA25VZM'), 'Aliases must NOT match by VRM alone to prevent cross-dispatch bugs');
+  });
+
+  // =========================================================================
+  // TEST 19 — Supabase refresh/synchronisation resilience
+  // Stale status or uncancelled states must correctly reconcile without overwriting
+  // =========================================================================
+  it('TEST 19: Local reconciliation preserves active status when evaluating synced raw database', () => {
+    const rawSyncedPermits: CsvPermitRecord[] = [
+      makePermit({
+        id: '1',
+        formId: '1',
+        startTime: '20/09/2026 09:00:00',
+        vrm: 'SYNC1',
+        validFrom: '20/09/2026',
+        validTo: '26/09/2026',
+        dateRequired: '20/09/2026',
+        status: 'ACTIVE'
+      }),
+      makePermit({
+        id: '2',
+        formId: '2',
+        startTime: '20/09/2026 09:05:00',
+        vrm: 'SYNC1',
+        validFrom: '20/09/2026',
+        validTo: '26/09/2026',
+        dateRequired: '20/09/2026',
+        status: 'ACTIVE'
+      })
+    ];
+
+    const reconciled = autoCancelDuplicates(rawSyncedPermits);
+    assert.equal(reconciled[0].status, 'ACTIVE');
+    assert.equal(reconciled[1].status, 'CANCELLED');
+    assert.equal(reconciled[1].cancellationReason, 'DUPLICATE_VRM');
+  });
+
+  // =========================================================================
+  // TEST 20 — Cancellation email categories (future, expired, duplicate)
+  // Canonical categories must remain exactly: 'future' | 'expired' | 'duplicate'
+  // =========================================================================
+  it('TEST 20: Canonical cancellation email categories must be strictly future, expired, or duplicate', () => {
+    const validCategories: CancellationReason[] = ['future', 'expired', 'duplicate'];
+    assert.equal(validCategories.length, 3);
+
+    const futureEmail = getCancellationEmailContent({
+      vrm: 'TEST1',
+      driverName: 'User',
+      validFrom: '30/09/2026',
+      reason: 'future'
+    });
+    assert.match(futureEmail.plainText, /is in the future/);
+
+    const expiredEmail = getCancellationEmailContent({
+      vrm: 'TEST2',
+      driverName: 'User',
+      validFrom: '01/09/2026',
+      reason: 'expired'
+    });
+    assert.match(expiredEmail.plainText, /7-day validity period for this concession has ended/);
+
+    const duplicateEmail = getCancellationEmailContent({
+      vrm: 'TEST3',
+      driverName: 'User',
+      validFrom: '20/09/2026',
+      reason: 'duplicate',
+      currentExpiryDate: '25/09/2026',
+      earliestRenewalDate: '26/09/2026'
+    });
+    assert.match(duplicateEmail.plainText, /already has an active permit valid through 25\/09\/2026/);
+    assert.match(duplicateEmail.plainText, /submit a new concession request from 26\/09\/2026/);
+  });
+
+});

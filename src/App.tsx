@@ -326,7 +326,7 @@ export const autoCancelDuplicates = (records: CsvPermitRecord[]): CsvPermitRecor
 export function enrichRecordsWithVouchers(
   recordsList: CsvPermitRecord[],
   vouchersDb: ParsedVoucherData[],
-  customVouchersMap: Record<string, string>,
+  customVouchersMap: Record<string, string> = {},
   fallbackDateStr: string = "",
   dispatchedKeys: string[] = [],
   unsentKeys: string[] = []
