@@ -138,21 +138,7 @@ export const autoCancelDuplicates = (records: CsvPermitRecord[]): CsvPermitRecor
   const isGenuinelyCancelled = (r: CsvPermitRecord): boolean => {
     if (r.cancellationReason === "MANUAL") return true;
     if (r.cancellationReason === "BLOCKLIST") return true;
-    if (r.cancellationReason === "EXPIRED") return true;
     if (isVrmSilentBlockedSync(r.vrm) || String(r.status || "").trim().toUpperCase() === "BLOCKED") return true;
-
-    // A previously cancelled permit (status === "CANCELLED", isCancelled === true, voucherCode === "CANCELLED", prePaidCode === "CANCELLED")
-    // must NOT be used as the active/winning duplicate candidate unless it was specifically marked DUPLICATE_VRM
-    const isExplicitlyCancelled =
-      r.isCancelled === true ||
-      (typeof r.status === "string" && (r.status.trim().toUpperCase() === "CANCELLED" || r.status.trim().toLowerCase().includes("cancel"))) ||
-      r.voucherCode === "CANCELLED" ||
-      r.prePaidCode === "CANCELLED" ||
-      (typeof r.voucherCodesText === "string" && r.voucherCodesText.trim().toUpperCase() === "CANCELLED");
-
-    if (isExplicitlyCancelled && r.cancellationReason !== "DUPLICATE_VRM" && r.cancellationReason !== "DUPLICATE") {
-      return true;
-    }
 
     const rawRefDate = r.todayDate || r.processingDate || r.submissionDate;
     const refDate = rawRefDate ? (parseDateToISO(String(rawRefDate)) || "") : "";
@@ -160,6 +146,7 @@ export const autoCancelDuplicates = (records: CsvPermitRecord[]): CsvPermitRecor
     const dateRequired = r.dateRequired || r.validFrom || "";
     const reqIsoVal = parseDateToISO(dateRequired);
     if (refDate && reqIsoVal && Math.floor((new Date(reqIsoVal + "T00:00:00").getTime() - new Date(refDate + "T00:00:00").getTime()) / 86400000) <= -7) return true;
+
     return false;
   };
 
@@ -1833,8 +1820,9 @@ export default function App() {
   }, [storageMode]);
 
   const enrichedDatabase = React.useMemo(() => {
+    const reconciled = autoCancelDuplicates(database);
     return enrichRecordsWithVouchers(
-      database,
+      reconciled,
       vouchersDatabase,
       customVouchers,
       formData.todayDate || getTodayISO(),

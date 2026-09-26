@@ -2439,22 +2439,8 @@ export function isVoucherExactPeriodEligible(
 
 export function isRecordCancelledCanonical(record: any, todayDateOrReference?: string, database?: CsvPermitRecord[]): boolean {
   if (!record) return false;
-  if (record.cancellationReason === "MANUAL" || record.cancellationReason === "BLOCKLIST" || record.cancellationReason === "EXPIRED") return true;
-  if (record.isCancelled === true && record.cancellationReason !== "DUPLICATE_VRM" && record.cancellationReason !== "DUPLICATE") return true;
-  if (typeof record.status === "string" && record.status.trim().toLowerCase().includes("cancel") && record.cancellationReason !== "DUPLICATE_VRM" && record.cancellationReason !== "DUPLICATE") return true;
-  if (record.isCancelled === false && String(record.status || "").trim().toUpperCase() === "ACTIVE") {
-    // Explicitly active record: do not let stale CANCELLED string in voucherCode override active status
-  } else if (
-    (record.voucherCode === "CANCELLED" ||
-    record.voucherCodesText === "CANCELLED" ||
-    record.prePaidCode === "CANCELLED" ||
-    (typeof record.voucherCode === "string" && record.voucherCode.trim().toUpperCase() === "CANCELLED") ||
-    (typeof record.voucherCodesText === "string" && record.voucherCodesText.trim().toUpperCase() === "CANCELLED") ||
-    (typeof record.prePaidCode === "string" && record.prePaidCode.trim().toUpperCase() === "CANCELLED")) &&
-    record.cancellationReason !== "DUPLICATE_VRM" && record.cancellationReason !== "DUPLICATE"
-  ) {
-    return true;
-  }
+  if (record.cancellationReason === "MANUAL" || record.cancellationReason === "BLOCKLIST") return true;
+  if (isVrmSilentBlockedSync(record.vrm) || String(record.status || "").trim().toUpperCase() === "BLOCKED") return true;
 
   const rawRefDate = todayDateOrReference || record.todayDate || record.processingDate;
   const referenceDate = rawRefDate 
@@ -2466,11 +2452,17 @@ export function isRecordCancelledCanonical(record: any, todayDateOrReference?: s
   const isExpiredDate = referenceDate && reqIso && Math.floor((new Date(reqIso + "T00:00:00").getTime() - new Date(referenceDate + "T00:00:00").getTime()) / 86400000) <= -7;
   if (isBackdate || Boolean(isExpiredDate)) return true;
 
-  // ⭐ Live duplicate check: same VRM, requested within 7 days of an earlier non-cancelled request
+  // Explicitly active record: do not let stale CANCELLED string in voucherCode override active status
+  if (record.isCancelled === false && String(record.status || "").trim().toUpperCase() === "ACTIVE") {
+    return false;
+  }
+
+  // ⭐ Live duplicate check: same VRM, requested within overlapping dates of an earlier non-cancelled request
   if (database && database.length > 0) {
     if (checkIsBlockedDuplicate(record, database, referenceDate)) {
       return true;
     }
+    return false;
   } else if (record.isCancelled === true || (typeof record.status === "string" && record.status.trim().toLowerCase().includes("cancel"))) {
     return true;
   }
