@@ -18,6 +18,7 @@ import {
   CancellationReason
 } from '../utils/emailTemplateUtils';
 import { getRecordPrimaryKey, getRecordKeys } from '../utils/dispatchUtils';
+import { computeVoucherBatchExpiryBadge } from '../utils/voucherValidation';
 
 function makePermit(overrides: Partial<CsvPermitRecord> & { id: string; vrm: string }): CsvPermitRecord {
   return {
@@ -304,6 +305,7 @@ describe('ParkPass Concessions Regression Test Suite', () => {
       vrm: futureRecord.vrm,
       driverName: futureRecord.driverName,
       validFrom: futureRecord.validFrom,
+      todayDate: futureRecord.todayDate,
       reason: details.reason
     });
     assert.match(email.subject, /Cancelled: Concession Permit – FU26TUE/);
@@ -817,6 +819,96 @@ describe('ParkPass Concessions Regression Test Suite', () => {
     });
     assert.match(duplicateEmail.plainText, /already has an active permit valid through 25\/09\/2026/);
     assert.match(duplicateEmail.plainText, /submit a new concession request from 26\/09\/2026/);
+  });
+
+  // =========================================================================
+  // TEST 21 — Voucher Inventory Expiry Rule & Warning Logic
+  // 1. Expiry date is maximum 'valid_to' (or 'expiry_date') of active/available inventory for selected site/hospital.
+  // 2. > 3 days: Green badge ("🟢 Codes Valid Until: DD/MM/YYYY (X days left)")
+  //    1–3 days: Amber badge ("⚠️ Voucher Batch Expiring Soon: DD/MM/YYYY")
+  //    0 active/available or expired: Red badge ("🔴 No Active Codes Available — Add New Batch")
+  // =========================================================================
+  it('TEST 21: Voucher inventory expiry calculation and 3-tier warning badge', () => {
+    // 1. Green badge: available vouchers expire in 6 days (> 3 days)
+    const vouchersGreen: ParsedVoucherData[] = [
+      { code: 'V_EARLY', validFrom: '2026-09-27', validTo: '2026-10-01', status: 'active', isUsed: false },
+      { code: 'V_LATE', validFrom: '2026-09-27', valid_to: '2026-10-03', status: 'active', isUsed: false }
+    ];
+    const badgeGreen = computeVoucherBatchExpiryBadge({
+      vouchersDatabase: vouchersGreen,
+      todayDateIso: '2026-09-27'
+    });
+    assert.equal(badgeGreen.type, 'green');
+    assert.equal(badgeGreen.icon, '🟢');
+    assert.equal(badgeGreen.text, 'Codes Valid Until: 03/10/2026 (6 days left)');
+
+    // 2. Amber badge: available vouchers expire in 2 days (1–3 days)
+    const vouchersAmber: ParsedVoucherData[] = [
+      { code: 'V_EXP_2DAYS', validFrom: '2026-09-22', expiry_date: '2026-09-29', status: 'active', isUsed: false }
+    ];
+    const badgeAmber = computeVoucherBatchExpiryBadge({
+      vouchersDatabase: vouchersAmber,
+      todayDateIso: '2026-09-27'
+    });
+    assert.equal(badgeAmber.type, 'amber');
+    assert.equal(badgeAmber.icon, '⚠️');
+    assert.equal(badgeAmber.text, 'Voucher Batch Expiring Soon: 29/09/2026');
+
+    // 3. Red badge: available vouchers expired in the past or today (daysDiff <= 0)
+    const vouchersExpired: ParsedVoucherData[] = [
+      { code: 'V_EXPIRED', validFrom: '2026-09-10', validTo: '2026-09-17', status: 'active', isUsed: false }
+    ];
+    const badgeExpired = computeVoucherBatchExpiryBadge({
+      vouchersDatabase: vouchersExpired,
+      todayDateIso: '2026-09-27'
+    });
+    assert.equal(badgeExpired.type, 'red');
+    assert.equal(badgeExpired.icon, '🔴');
+    assert.equal(badgeExpired.text, 'No Active Codes Available — Add New Batch');
+
+    // 4. Red badge: 0 active/available vouchers remain (empty database)
+    const badgeEmpty = computeVoucherBatchExpiryBadge({
+      vouchersDatabase: [],
+      todayDateIso: '2026-09-27'
+    });
+    assert.equal(badgeEmpty.type, 'red');
+    assert.equal(badgeEmpty.icon, '🔴');
+    assert.equal(badgeEmpty.text, 'No Active Codes Available — Add New Batch');
+
+    // 5. Red badge: all vouchers are already assigned/used
+    const vouchersAllUsed: ParsedVoucherData[] = [
+      { code: 'USED_1', validTo: '2026-10-10', status: 'used', isUsed: true },
+      { code: 'ASSIGNED_1', validTo: '2026-10-10', status: 'active', isUsed: false }
+    ];
+    const badgeAllUsed = computeVoucherBatchExpiryBadge({
+      vouchersDatabase: vouchersAllUsed,
+      assignedVoucherCodesSet: new Set(['ASSIGNED_1']),
+      todayDateIso: '2026-09-27'
+    });
+    assert.equal(badgeAllUsed.type, 'red');
+    assert.equal(badgeAllUsed.icon, '🔴');
+    assert.equal(badgeAllUsed.text, 'No Active Codes Available — Add New Batch');
+
+    // 6. Hospital/site filtering: respects selected hospital inventory
+    const vouchersHospital: ParsedVoucherData[] = [
+      { code: 'WHIPPS_CODE', hospital: 'Whipps Cross Hospital', validTo: '2026-10-10', status: 'active', isUsed: false },
+      { code: 'NEWHAM_CODE', hospital: 'Newham Hospital', validTo: '2026-09-29', status: 'active', isUsed: false }
+    ];
+    const badgeWhipps = computeVoucherBatchExpiryBadge({
+      vouchersDatabase: vouchersHospital,
+      selectedHospital: 'Whipps Cross Hospital',
+      todayDateIso: '2026-09-27'
+    });
+    assert.equal(badgeWhipps.type, 'green');
+    assert.equal(badgeWhipps.text, 'Codes Valid Until: 10/10/2026 (13 days left)');
+
+    const badgeNewham = computeVoucherBatchExpiryBadge({
+      vouchersDatabase: vouchersHospital,
+      selectedHospital: 'Newham Hospital',
+      todayDateIso: '2026-09-27'
+    });
+    assert.equal(badgeNewham.type, 'amber');
+    assert.equal(badgeNewham.text, 'Voucher Batch Expiring Soon: 29/09/2026');
   });
 
 });

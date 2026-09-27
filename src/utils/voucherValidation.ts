@@ -99,7 +99,17 @@ export function getVoucherValidFromISO(v: ParsedVoucherData | undefined | null):
  */
 export function getVoucherValidToISO(v: ParsedVoucherData | undefined | null): string {
   if (!v) return "";
-  const raw = v.validTo || (v as any).valid_to || (v as any).ValidTo || (v as any).endDate || (v as any).end_date || (v as any).expires || (v as any).expiryDate;
+  const raw = v.validTo || 
+              (v as any).valid_to || 
+              (v as any).ValidTo || 
+              (v as any).expiry_date || 
+              (v as any).expiryDate || 
+              (v as any).expires || 
+              (v as any).dateExpiry || 
+              (v as any)["Expiry Date"] || 
+              (v as any)["Valid To"] || 
+              (v as any).endDate || 
+              (v as any).end_date;
   if (raw) {
     const iso = normalizeDateToISO(String(raw));
     if (iso) return iso;
@@ -313,4 +323,157 @@ export function getFirstValidUnusedCodeForDate(
   // return null so the caller shows 0 — never assign a voucher from
   // a different week's batch.
   return null;
+}
+
+export interface VoucherBatchBadgeResult {
+  type: 'green' | 'amber' | 'red';
+  icon: '🟢' | '⚠️' | '🔴';
+  text: string;
+  className: string;
+  maxExpiryIso?: string;
+  formattedDate?: string;
+  daysDiff?: number;
+}
+
+/**
+ * Calculates the voucher batch validity and warning state for the top-bar badge.
+ * 1. Voucher Inventory Expiry Rule:
+ *    - Calculate expiry based on maximum 'valid_to' (or 'expiry_date') of active/available inventory for selected site/hospital.
+ *    - Format: "🟢 Codes Valid Until: DD/MM/YYYY (X days left)"
+ * 2. Expiry Warning Logic:
+ *    - > 3 days: Green badge ("🟢 Codes Valid Until: DD/MM/YYYY (X days left)")
+ *    - 1–3 days: Amber badge ("⚠️ Voucher Batch Expiring Soon: DD/MM/YYYY")
+ *    - 0 active/available or expired: Red badge ("🔴 No Active Codes Available — Add New Batch")
+ */
+export function computeVoucherBatchExpiryBadge(params: {
+  vouchersDatabase?: ParsedVoucherData[];
+  assignedVoucherCodesSet?: Set<string>;
+  selectedHospital?: string;
+  todayDateIso?: string;
+}): VoucherBatchBadgeResult {
+  const {
+    vouchersDatabase = [],
+    assignedVoucherCodesSet = new Set<string>(),
+    selectedHospital = "",
+    todayDateIso = "2026-09-27"
+  } = params;
+
+  const redResult: VoucherBatchBadgeResult = {
+    type: "red",
+    icon: "🔴",
+    text: "No Active Codes Available — Add New Batch",
+    className: "text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-950/40 border border-red-300 dark:border-red-800/60"
+  };
+
+  if (!vouchersDatabase || vouchersDatabase.length === 0) {
+    return redResult;
+  }
+
+  const availableVouchersForSite = vouchersDatabase.filter(v => {
+    if (v.isUsed === true) return false;
+    const status = String(v.status || "").toLowerCase().trim();
+    if (
+      status === "used" || 
+      status === "dispatched" || 
+      status === "assigned" || 
+      status === "sent" || 
+      status === "completed" || 
+      status === "cancelled" || 
+      status === "canceled" || 
+      status === "expired"
+    ) {
+      return false;
+    }
+
+    const codeUpper = cleanVoucherCodeValue(v.code).toUpperCase();
+    if (!codeUpper || codeUpper === "-" || codeUpper === "CANCELLED" || codeUpper === "PENDING" || codeUpper === "BLOCKED" || codeUpper === "N/A") {
+      return false;
+    }
+
+    if (assignedVoucherCodesSet.has(codeUpper)) {
+      return false;
+    }
+
+    if (selectedHospital && selectedHospital !== "ALL") {
+      const vHosp = String(
+        v.hospital || 
+        v.site || 
+        (v as any).hospitalSite || 
+        (v as any).hospital_site || 
+        (v as any).location || 
+        ""
+      ).trim().toLowerCase();
+
+      if (vHosp) {
+        const sel = selectedHospital.toLowerCase().trim();
+        const isMatch = vHosp === sel ||
+          (vHosp.includes("whipps") && sel.includes("whipps")) ||
+          (vHosp.includes("newham") && sel.includes("newham")) ||
+          (vHosp.includes("royal") && sel.includes("royal"));
+        if (!isMatch) return false;
+      }
+    }
+
+    return true;
+  });
+
+  if (availableVouchersForSite.length === 0) {
+    return redResult;
+  }
+
+  let maxExpiryIso = "";
+  for (const v of availableVouchersForSite) {
+    const expIso = getVoucherValidToISO(v);
+    if (expIso && /^\d{4}-\d{2}-\d{2}$/.test(expIso)) {
+      if (!maxExpiryIso || expIso > maxExpiryIso) {
+        maxExpiryIso = expIso;
+      }
+    }
+  }
+
+  if (!maxExpiryIso) {
+    return redResult;
+  }
+
+  const todayIso = normalizeDateToISO(todayDateIso) || "2026-09-27";
+  let daysDiff = 0;
+  if (todayIso && maxExpiryIso) {
+    const t1 = new Date(todayIso + "T00:00:00Z").getTime();
+    const t2 = new Date(maxExpiryIso + "T00:00:00Z").getTime();
+    daysDiff = Math.round((t2 - t1) / (1000 * 60 * 60 * 24));
+  }
+
+  // Check if batch is expired (daysDiff <= 0)
+  if (daysDiff <= 0) {
+    return redResult;
+  }
+
+  // Format date to DD/MM/YYYY
+  const parts = maxExpiryIso.split("-");
+  const formattedDate = parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : maxExpiryIso;
+
+  // 1–3 days: Amber badge ("⚠️ Voucher Batch Expiring Soon: DD/MM/YYYY")
+  if (daysDiff >= 1 && daysDiff <= 3) {
+    return {
+      type: "amber",
+      icon: "⚠️",
+      text: `Voucher Batch Expiring Soon: ${formattedDate}`,
+      className: "text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800/60",
+      maxExpiryIso,
+      formattedDate,
+      daysDiff
+    };
+  }
+
+  // > 3 days: Green badge ("🟢 Codes Valid Until: DD/MM/YYYY (X days left)")
+  const daysLabel = `${daysDiff} ${daysDiff === 1 ? "day" : "days"} left`;
+  return {
+    type: "green",
+    icon: "🟢",
+    text: `Codes Valid Until: ${formattedDate} (${daysLabel})`,
+    className: "text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800/60",
+    maxExpiryIso,
+    formattedDate,
+    daysDiff
+  };
 }

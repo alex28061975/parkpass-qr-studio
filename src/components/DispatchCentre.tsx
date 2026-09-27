@@ -66,7 +66,8 @@ import {
   isVoucherForPermitDateRange,
   getVoucherValidFromISO,
   getVoucherValidToISO,
-  normalizeDateToISO
+  normalizeDateToISO,
+  computeVoucherBatchExpiryBadge
 } from "../utils/voucherValidation";
 
 // ⭐ FIX: Re-export isVoucherForPermitDateRange so other files importing from DispatchCentre don't break
@@ -664,6 +665,7 @@ export function DispatchCentre({
     : 0;
   const isRangeStockLow = totalForThisRange === 0 || remainingForThisRange <= 5 || percentRemaining <= 5;
 
+
   const handleActiveDateCodeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const selectedCode = cleanVoucherCodeValue(e.target.value).toUpperCase();
     if (!selectedCode || selectedCode === "-" || selectedCode === "CANCELLED") {
@@ -830,6 +832,44 @@ export function DispatchCentre({
       ward.includes("mulberry")
     ) ? "Whipps Cross Hospital" : "Newham Hospital";
   };
+
+  // Selected site/hospital resolution
+  const selectedHospital = useMemo(() => {
+    if (hospitalFilter && hospitalFilter !== "ALL") {
+      return hospitalFilter;
+    }
+    if (formData?.hospitalSite) {
+      return formData.hospitalSite;
+    }
+    if (formData?.hospital) {
+      return formData.hospital;
+    }
+    if (activeRecord) {
+      return getHospital(activeRecord);
+    }
+    return "";
+  }, [hospitalFilter, formData?.hospitalSite, formData?.hospital, activeRecord]);
+
+  // Voucher Inventory Expiry & Warning Badge:
+  // 1. Calculate expiry based on maximum 'valid_to' (or 'expiry_date') of active/available inventory for selected site/hospital.
+  // 2. > 3 days: Green badge ("🟢 Codes Valid Until: DD/MM/YYYY (X days left)")
+  //    1–3 days: Amber badge ("⚠️ Voucher Batch Expiring Soon: DD/MM/YYYY")
+  //    0 active/available or expired: Red badge ("🔴 No Active Codes Available — Add New Batch")
+  const voucherBatchBadge = useMemo(() => {
+    const todayIso = (formData?.todayDate ? parseDateToISO(formData.todayDate) : null) || (processingDate ? parseDateToISO(processingDate) : null) || getTodayISO();
+    return computeVoucherBatchExpiryBadge({
+      vouchersDatabase,
+      assignedVoucherCodesSet,
+      selectedHospital,
+      todayDateIso: todayIso
+    });
+  }, [
+    vouchersDatabase,
+    assignedVoucherCodesSet,
+    selectedHospital,
+    formData?.todayDate,
+    processingDate
+  ]);
 
   const getIsCancelled = (record: CsvPermitRecord, idx?: number) => {
     if (!record) return false;
@@ -1444,7 +1484,7 @@ export function DispatchCentre({
     <section className="w-full bg-white dark:bg-[#030C1B] border border-slate-200 dark:border-[#0D223C] rounded-2xl p-4 md:p-6 shadow-2xl text-slate-700 dark:text-slate-200 transition-colors">
       {/* Top Header Section */}
       <div className="flex flex-col gap-3 pb-4 border-b border-slate-200 dark:border-[#0D223C]">
-        <div className="flex items-center justify-between gap-4 w-full flex-wrap lg:flex-nowrap">
+        <div className="flex items-center justify-between gap-3 w-full flex-nowrap overflow-x-auto pb-0.5">
           {/* Left: Logo & Title */}
           <div className="flex items-center gap-3 shrink-0">
             <div className="w-8 h-8 rounded-full bg-[#1877F2] flex items-center justify-center shadow-md shadow-blue-500/20 text-white shrink-0">
@@ -1455,8 +1495,8 @@ export function DispatchCentre({
             </h2>
           </div>
 
-          {/* Center: Browse Buttons, Counts & Sub-200ms Badge */}
-          <div className="flex items-center gap-3 shrink-0 flex-wrap sm:flex-nowrap">
+          {/* Center: Browse Buttons & Counts */}
+          <div className="flex items-center gap-2.5 shrink-0 flex-nowrap">
             <button
               type="button"
               onClick={onBrowseConcessions}
@@ -1480,15 +1520,10 @@ export function DispatchCentre({
             <span className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 font-normal whitespace-nowrap">
               {totalVouchersCount} vouchers
             </span>
-
-            <span className="whitespace-nowrap shrink-0 inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold text-emerald-400 bg-emerald-950/40 border border-emerald-800/40">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-              Sub-200ms
-            </span>
           </div>
 
-          {/* Right: Active Date Codes */}
-          <div className="flex items-center gap-2 whitespace-nowrap shrink-0 ml-auto lg:ml-0">
+          {/* Right: Active Date Codes & Validity Badge on a single line */}
+          <div className="flex flex-row items-center gap-2 whitespace-nowrap shrink-0 ml-auto lg:ml-0">
             <label 
               className={`text-xs sm:text-sm font-medium whitespace-nowrap shrink-0 ${
                 isRangeStockLow ? "text-[#b91c1c]" : "text-[#15803d]"
@@ -1526,6 +1561,12 @@ export function DispatchCentre({
                 );
               })}
             </select>
+            {voucherBatchBadge && (
+              <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold whitespace-nowrap shrink-0 shadow-sm ${voucherBatchBadge.className}`}>
+                <span className="text-[11px] leading-none select-none">{voucherBatchBadge.icon}</span>{' '}
+                <span>{voucherBatchBadge.text}</span>
+              </span>
+            )}
           </div>
         </div>
 
