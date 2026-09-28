@@ -362,16 +362,18 @@ export interface VoucherBatchBadgeResult {
 
 /**
  * Calculates the voucher batch validity and warning state for the top-bar badge.
- * 1. Target Field Adjustment:
- *    - Force target date variable to use latest/active batch's 'VALIDFROM' (or valid_from / startDate).
- * 2. Days Remaining Formula:
- *    - Strictly parses dates in local midnight time:
+ * 1. Color Threshold Rules:
+ *    - Green (> 3 days remaining):
+ *      "🟢 Codes Valid Until: DD/MM/YYYY (X days left)"
+ *    - Amber (1 to 3 days remaining):
+ *      "⚠️ Voucher Batch Expiring Soon: DD/MM/YYYY (X days left)"
+ *    - Red (0 days or batch expired):
+ *      "🔴 No Active Codes Available — Add New Batch"
+ * 2. Strict Date Calculation:
+ *    - Strictly parses dates in local midnight time against system date (or referenceDate):
  *      const today = new Date(); today.setHours(0, 0, 0, 0);
  *      const validFromDate = new Date(activeCode.validFrom); validFromDate.setHours(0, 0, 0, 0);
- *      const daysLeft = Math.round((validFromDate - today) / (1000 * 60 * 60 * 24));
- * 3. Badge Text & Format:
- *    - Expected output: "🟢 Codes Valid Until: DD/MM/YYYY (X days left)"
- *    - 0 active/available or expired: Red badge ("🔴 No Active Codes Available — Add New Batch")
+ *      const daysLeft = Math.round((validFromDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
  */
 export function computeVoucherBatchExpiryBadge(params: {
   vouchersDatabase?: ParsedVoucherData[];
@@ -525,11 +527,12 @@ export function computeVoucherBatchExpiryBadge(params: {
     batchExpiryDate.setHours(0, 0, 0, 0);
   }
 
-  // Check if batch is completely expired
+  // 1. Color Threshold Rules:
+  // - Red (0 days or batch expired): "🔴 No Active Codes Available — Add New Batch"
   if (batchExpiryDate && batchExpiryDate.getTime() < today.getTime()) {
     return redResult;
   }
-  if (daysLeft < 0 && (!batchExpiryDate || batchExpiryDate.getTime() < today.getTime())) {
+  if (daysLeft <= 0) {
     return redResult;
   }
 
@@ -537,8 +540,23 @@ export function computeVoucherBatchExpiryBadge(params: {
   const parts = targetValidFromIso.split("-");
   const formattedDate = parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : targetValidFromIso;
 
-  // 3. Expected Output & Typo Fix: "🟢 Codes Valid Until: DD/MM/YYYY (X days left)"
   const daysLabel = `${daysLeft} ${daysLeft === 1 ? "day" : "days"} left`;
+
+  // - Amber (1 to 3 days remaining): "⚠️ Voucher Batch Expiring Soon: DD/MM/YYYY (X days left)"
+  if (daysLeft <= 3) {
+    return {
+      type: "amber",
+      icon: "⚠️",
+      text: `Voucher Batch Expiring Soon: ${formattedDate} (${daysLabel})`,
+      className: "text-amber-800 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800/60",
+      targetValidFromIso,
+      maxExpiryIso: batchExpiryIso,
+      formattedDate,
+      daysDiff: daysLeft
+    };
+  }
+
+  // - Green (> 3 days remaining): "🟢 Codes Valid Until: DD/MM/YYYY (X days left)"
   return {
     type: "green",
     icon: "🟢",

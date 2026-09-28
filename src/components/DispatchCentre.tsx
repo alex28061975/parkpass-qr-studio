@@ -851,15 +851,19 @@ export function DispatchCentre({
   }, [hospitalFilter, formData?.hospitalSite, formData?.hospital, activeRecord]);
 
   // Voucher Inventory Expiry & Warning Badge:
-  // 1. Root Cause & Date Selection: Force target date variable to use latest/active batch's 'VALIDFROM' (30/09/2026).
-  // 2. Days Remaining Formula (local midnight):
-  //    Ensure current date is dynamically generated using new Date() anchored to system's current date (28/09/2026),
-  //    NOT from formData.todayDate or processingDate (which can evaluate to old concession dates like 07/09/2026).
+  // 1. Color Threshold Rules:
+  //    - Green (> 3 days remaining): "🟢 Codes Valid Until: DD/MM/YYYY (X days left)"
+  //    - Amber (1 to 3 days remaining): "⚠️ Voucher Batch Expiring Soon: DD/MM/YYYY (X days left)"
+  //    - Red (0 days or batch expired): "🔴 No Active Codes Available — Add New Batch"
+  // 2. Strict Date Calculation:
+  //    Ensure current date is dynamically generated using new Date() anchored to system's current date (28/09/2026).
   //    const today = new Date(); today.setHours(0, 0, 0, 0);
-  //    const validFromDate = new Date(activeCode.validFrom); validFromDate.setHours(0, 0, 0, 0);
-  //    const daysLeft = Math.round((validFromDate.getTime() - today.getTime()) / (1000 * 3600 * 24));
-  // 3. Expected Output: "🟢 Codes Valid Until: DD/MM/YYYY (X days left)"
-  //    0 active/available or expired: Red badge ("🔴 No Active Codes Available — Add New Batch")
+  //    const targetDate = new Date(activeCode.validFrom); targetDate.setHours(0, 0, 0, 0);
+  //    const daysLeft = Math.round((targetDate.getTime() - today.getTime()) / (1000 * 3600 * 24));
+  //    With 2 days left (30/09/2026 - 28/09/2026), evaluates to Amber:
+  //    "⚠️ Voucher Batch Expiring Soon: 30/09/2026 (2 days left)"
+  // 3. Layout Constraint:
+  //    Keep "Active Date Codes ({count}):", select dropdown, and badge on a single row (flex flex-row items-center whitespace-nowrap).
   const voucherBatchBadge = useMemo(() => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
