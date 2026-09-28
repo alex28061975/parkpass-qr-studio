@@ -851,9 +851,12 @@ export function DispatchCentre({
   }, [hospitalFilter, formData?.hospitalSite, formData?.hospital, activeRecord]);
 
   // Voucher Inventory Expiry & Warning Badge:
-  // 1. Calculate expiry based on maximum 'valid_to' (or 'expiry_date') of active/available inventory for selected site/hospital.
-  // 2. > 3 days: Green badge ("🟢 Codes Valid Until: DD/MM/YYYY (X days left)")
-  //    1–3 days: Amber badge ("⚠️ Voucher Batch Expiring Soon: DD/MM/YYYY")
+  // 1. Root Cause & Date Selection: Force target date variable to use latest/active batch's 'VALIDFROM' (30/09/2026).
+  // 2. Days Remaining Formula (local midnight):
+  //    const today = new Date(); today.setHours(0, 0, 0, 0);
+  //    const validFromDate = new Date(activeCode.validFrom); validFromDate.setHours(0, 0, 0, 0);
+  //    const daysLeft = Math.round((validFromDate - today) / (1000 * 60 * 60 * 24));
+  // 3. Expected Output: "🟢 Codes Valid Untill: DD/MM/YYYY (X days left)"
   //    0 active/available or expired: Red badge ("🔴 No Active Codes Available — Add New Batch")
   const voucherBatchBadge = useMemo(() => {
     const todayIso = (formData?.todayDate ? parseDateToISO(formData.todayDate) : null) || (processingDate ? parseDateToISO(processingDate) : null) || getTodayISO();
