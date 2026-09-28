@@ -825,7 +825,7 @@ describe('ParkPass Concessions Regression Test Suite', () => {
   // TEST 21 — Voucher inventory validity calculation using VALIDFROM at local midnight
   // 1. Target date computed using latest/active batch 'VALIDFROM' (or valid_from / startDate)
   // 2. Days remaining: Math.round((validFromDate - today) / (1000 * 60 * 60 * 24))
-  // 3. Format: "🟢 Codes Valid Untill: DD/MM/YYYY (X days left)"
+  // 3. Format: "🟢 Codes Valid Until: DD/MM/YYYY (X days left)"
   // =========================================================================
   it('TEST 21: Voucher inventory validity calculation using VALIDFROM at local midnight', () => {
     // 1. Primary scenario: today is 28/09/2026, validFrom is 30/09/2026, validTo is 25/10/2026
@@ -840,7 +840,17 @@ describe('ParkPass Concessions Regression Test Suite', () => {
     assert.equal(badgePrimary.type, 'green');
     assert.equal(badgePrimary.icon, '🟢');
     assert.equal(badgePrimary.daysDiff, 2);
-    assert.equal(badgePrimary.text, 'Codes Valid Untill: 30/09/2026 (2 days left)');
+    assert.equal(badgePrimary.text, 'Codes Valid Until: 30/09/2026 (2 days left)');
+
+    // Also verify referenceDate directly
+    const refToday = new Date(2026, 8, 28); // 28/09/2026
+    refToday.setHours(0, 0, 0, 0);
+    const badgeWithRef = computeVoucherBatchExpiryBadge({
+      vouchersDatabase: vouchersPrimary,
+      referenceDate: refToday
+    });
+    assert.equal(badgeWithRef.daysDiff, 2);
+    assert.equal(badgeWithRef.text, 'Codes Valid Until: 30/09/2026 (2 days left)');
 
     // 2. 1 day left scenario: today is 28/09/2026, validFrom is 29/09/2026
     const vouchersOneDay: ParsedVoucherData[] = [
@@ -853,7 +863,7 @@ describe('ParkPass Concessions Regression Test Suite', () => {
     assert.equal(badgeOneDay.type, 'green');
     assert.equal(badgeOneDay.icon, '🟢');
     assert.equal(badgeOneDay.daysDiff, 1);
-    assert.equal(badgeOneDay.text, 'Codes Valid Untill: 29/09/2026 (1 day left)');
+    assert.equal(badgeOneDay.text, 'Codes Valid Until: 29/09/2026 (1 day left)');
 
     // 3. Red badge: available vouchers expired in the past
     const vouchersExpired: ParsedVoucherData[] = [
@@ -901,7 +911,7 @@ describe('ParkPass Concessions Regression Test Suite', () => {
       todayDateIso: '2026-09-28'
     });
     assert.equal(badgeWhipps.type, 'green');
-    assert.equal(badgeWhipps.text, 'Codes Valid Untill: 05/10/2026 (7 days left)');
+    assert.equal(badgeWhipps.text, 'Codes Valid Until: 05/10/2026 (7 days left)');
 
     const badgeNewham = computeVoucherBatchExpiryBadge({
       vouchersDatabase: vouchersHospital,
@@ -909,7 +919,7 @@ describe('ParkPass Concessions Regression Test Suite', () => {
       todayDateIso: '2026-09-28'
     });
     assert.equal(badgeNewham.type, 'green');
-    assert.equal(badgeNewham.text, 'Codes Valid Untill: 30/09/2026 (2 days left)');
+    assert.equal(badgeNewham.text, 'Codes Valid Until: 30/09/2026 (2 days left)');
 
     // 7. Supports valid_from and startDate field naming
     const vouchersAliases: ParsedVoucherData[] = [
@@ -920,7 +930,7 @@ describe('ParkPass Concessions Regression Test Suite', () => {
       todayDateIso: '2026-09-28'
     });
     assert.equal(badgeAlias.type, 'green');
-    assert.equal(badgeAlias.text, 'Codes Valid Untill: 03/10/2026 (5 days left)');
+    assert.equal(badgeAlias.text, 'Codes Valid Until: 03/10/2026 (5 days left)');
   });
 
 });

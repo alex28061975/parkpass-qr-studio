@@ -370,7 +370,7 @@ export interface VoucherBatchBadgeResult {
  *      const validFromDate = new Date(activeCode.validFrom); validFromDate.setHours(0, 0, 0, 0);
  *      const daysLeft = Math.round((validFromDate - today) / (1000 * 60 * 60 * 24));
  * 3. Badge Text & Format:
- *    - Expected output: "🟢 Codes Valid Untill: DD/MM/YYYY (X days left)"
+ *    - Expected output: "🟢 Codes Valid Until: DD/MM/YYYY (X days left)"
  *    - 0 active/available or expired: Red badge ("🔴 No Active Codes Available — Add New Batch")
  */
 export function computeVoucherBatchExpiryBadge(params: {
@@ -378,12 +378,14 @@ export function computeVoucherBatchExpiryBadge(params: {
   assignedVoucherCodesSet?: Set<string>;
   selectedHospital?: string;
   todayDateIso?: string;
+  referenceDate?: Date;
 }): VoucherBatchBadgeResult {
   const {
     vouchersDatabase = [],
     assignedVoucherCodesSet = new Set<string>(),
     selectedHospital = "",
-    todayDateIso = "2026-09-27"
+    todayDateIso,
+    referenceDate
   } = params;
 
   const redResult: VoucherBatchBadgeResult = {
@@ -488,8 +490,8 @@ export function computeVoucherBatchExpiryBadge(params: {
   // const today = new Date(); today.setHours(0, 0, 0, 0);
   // const validFromDate = new Date(activeCode.validFrom); validFromDate.setHours(0, 0, 0, 0);
   // const daysLeft = Math.round((validFromDate - today) / (1000 * 60 * 60 * 24));
-  let today = new Date();
-  if (todayDateIso) {
+  let today = referenceDate ? new Date(referenceDate) : new Date();
+  if (!referenceDate && todayDateIso) {
     const normToday = normalizeDateToISO(todayDateIso);
     if (normToday && /^\d{4}-\d{2}-\d{2}$/.test(normToday)) {
       const [ty, tm, td] = normToday.split("-").map(Number);
@@ -535,12 +537,12 @@ export function computeVoucherBatchExpiryBadge(params: {
   const parts = targetValidFromIso.split("-");
   const formattedDate = parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : targetValidFromIso;
 
-  // 3. Expected Output: "🟢 Codes Valid Untill: DD/MM/YYYY (X days left)"
+  // 3. Expected Output & Typo Fix: "🟢 Codes Valid Until: DD/MM/YYYY (X days left)"
   const daysLabel = `${daysLeft} ${daysLeft === 1 ? "day" : "days"} left`;
   return {
     type: "green",
     icon: "🟢",
-    text: `Codes Valid Untill: ${formattedDate} (${daysLabel})`,
+    text: `Codes Valid Until: ${formattedDate} (${daysLabel})`,
     className: "text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800/60",
     targetValidFromIso,
     maxExpiryIso: batchExpiryIso,

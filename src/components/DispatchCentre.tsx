@@ -853,25 +853,26 @@ export function DispatchCentre({
   // Voucher Inventory Expiry & Warning Badge:
   // 1. Root Cause & Date Selection: Force target date variable to use latest/active batch's 'VALIDFROM' (30/09/2026).
   // 2. Days Remaining Formula (local midnight):
+  //    Ensure current date is dynamically generated using new Date() anchored to system's current date (28/09/2026),
+  //    NOT from formData.todayDate or processingDate (which can evaluate to old concession dates like 07/09/2026).
   //    const today = new Date(); today.setHours(0, 0, 0, 0);
   //    const validFromDate = new Date(activeCode.validFrom); validFromDate.setHours(0, 0, 0, 0);
-  //    const daysLeft = Math.round((validFromDate - today) / (1000 * 60 * 60 * 24));
-  // 3. Expected Output: "🟢 Codes Valid Untill: DD/MM/YYYY (X days left)"
+  //    const daysLeft = Math.round((validFromDate.getTime() - today.getTime()) / (1000 * 3600 * 24));
+  // 3. Expected Output: "🟢 Codes Valid Until: DD/MM/YYYY (X days left)"
   //    0 active/available or expired: Red badge ("🔴 No Active Codes Available — Add New Batch")
   const voucherBatchBadge = useMemo(() => {
-    const todayIso = (formData?.todayDate ? parseDateToISO(formData.todayDate) : null) || (processingDate ? parseDateToISO(processingDate) : null) || getTodayISO();
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
     return computeVoucherBatchExpiryBadge({
       vouchersDatabase,
       assignedVoucherCodesSet,
       selectedHospital,
-      todayDateIso: todayIso
+      referenceDate: today
     });
   }, [
     vouchersDatabase,
     assignedVoucherCodesSet,
-    selectedHospital,
-    formData?.todayDate,
-    processingDate
+    selectedHospital
   ]);
 
   const getIsCancelled = (record: CsvPermitRecord, idx?: number) => {
