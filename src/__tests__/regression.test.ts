@@ -18,7 +18,7 @@ import {
   CancellationReason
 } from '../utils/emailTemplateUtils';
 import { getRecordPrimaryKey, getRecordKeys } from '../utils/dispatchUtils';
-import { computeVoucherBatchExpiryBadge } from '../utils/voucherValidation';
+import { computeVoucherBatchExpiryBadge, validateVoucherCSV } from '../utils/voucherValidation';
 
 function makePermit(overrides: Partial<CsvPermitRecord> & { id: string; vrm: string }): CsvPermitRecord {
   return {
@@ -796,7 +796,8 @@ describe('ParkPass Concessions Regression Test Suite', () => {
     const futureEmail = getCancellationEmailContent({
       vrm: 'TEST1',
       driverName: 'User',
-      validFrom: '30/09/2026',
+      validFrom: '15/10/2026',
+      todayDate: '25/09/2026',
       reason: 'future'
     });
     assert.match(futureEmail.plainText, /is in the future/);
@@ -976,6 +977,88 @@ describe('ParkPass Concessions Regression Test Suite', () => {
     assert.equal(badgeAlias.icon, '🟢');
     assert.equal(badgeAlias.daysDiff, 5);
     assert.equal(badgeAlias.text, 'Codes Valid Until: 03/10/2026 (5 days left)');
+  });
+
+  // =========================================================================
+  // TEST 22 — Pre-import validation check for uploaded Voucher CSV files
+  // 1. Mandatory Date Validation Rules:
+  //    - Check that 'VALIDFROM' and 'VALIDTO' exist and are not empty for every row.
+  //    - Duration: Math.round((new Date(VALIDTO) - new Date(VALIDFROM)) / (1000 * 60 * 60 * 24)).
+  //    - Verify duration equals exactly 6 days (or 7 days inclusive, e.g. 05/06/2026 to 11/06/2026 = 6 days).
+  // 2. User Alert & Prevention:
+  //    - If any row has missing dates or an invalid date range (e.g. 8 days), abort the import.
+  //    - List row numbers and exact voucher codes failing the check.
+  // =========================================================================
+  it('TEST 22: Pre-import validation check for uploaded Voucher CSV files', () => {
+    const toBuffer = (str: string): ArrayBuffer => new TextEncoder().encode(str).buffer;
+
+    // 1. Valid CSV with exact 6-day duration (05/06/2026 to 11/06/2026)
+    const validCsv = `Voucher Code,VALIDFROM,VALIDTO
+CON1001JXM,05/06/2026,11/06/2026
+CON1002JXM,05/06/2026,11/06/2026`;
+    const resValid = validateVoucherCSV(toBuffer(validCsv), 'valid_vouchers.csv');
+    assert.equal(resValid.isValid, true);
+    assert.equal(resValid.errors.length, 0);
+    assert.equal(resValid.vouchers.length, 2);
+
+    // 2. Month crossover valid 6-day duration (28/05/2026 to 03/06/2026)
+    const validMonthCrossover = `Voucher Code,VALIDFROM,VALIDTO
+CON2001JXM,28/05/2026,03/06/2026`;
+    const resCrossover = validateVoucherCSV(toBuffer(validMonthCrossover), 'crossover.csv');
+    assert.equal(resCrossover.isValid, true);
+    assert.equal(resCrossover.errors.length, 0);
+    assert.equal(resCrossover.vouchers.length, 1);
+
+    // 3. Invalid date range (8 days: 05/Jun to 13/Jun) — abort import, list row & code
+    const invalidRangeCsv = `Voucher Code,VALIDFROM,VALIDTO
+CON1001JXM,05/06/2026,11/06/2026
+CON1002JXM,05/Jun/2026,13/Jun/2026`;
+    const resInvalidRange = validateVoucherCSV(toBuffer(invalidRangeCsv), 'invalid_range.csv');
+    assert.equal(resInvalidRange.isValid, false);
+    assert.equal(resInvalidRange.vouchers.length, 0); // Must abort import!
+    assert.equal(resInvalidRange.errors.length, 1);
+    assert.equal(resInvalidRange.errors[0].rowNumber, 3);
+    assert.equal(resInvalidRange.errors[0].code, 'CON1002JXM');
+    assert.equal(resInvalidRange.errors[0].durationInDays, 8);
+    assert.ok(resInvalidRange.errors[0].reason.includes('8 days'));
+
+    // 4. Missing VALIDTO date — abort import, report row & code
+    const missingToCsv = `Voucher Code,VALIDFROM,VALIDTO
+CON1001JXM,05/06/2026,11/06/2026
+CON_NO_TO,05/06/2026,`;
+    const resMissingTo = validateVoucherCSV(toBuffer(missingToCsv), 'missing_to.csv');
+    assert.equal(resMissingTo.isValid, false);
+    assert.equal(resMissingTo.vouchers.length, 0);
+    assert.equal(resMissingTo.errors.length, 1);
+    assert.equal(resMissingTo.errors[0].rowNumber, 3);
+    assert.equal(resMissingTo.errors[0].code, 'CON_NO_TO');
+    assert.ok(resMissingTo.errors[0].reason.includes("Missing 'VALIDTO'"));
+
+    // 5. Missing VALIDFROM date — abort import, report row & code
+    const missingFromCsv = `Voucher Code,VALIDFROM,VALIDTO
+CON_NO_FROM,,11/06/2026
+CON1001JXM,05/06/2026,11/06/2026`;
+    const resMissingFrom = validateVoucherCSV(toBuffer(missingFromCsv), 'missing_from.csv');
+    assert.equal(resMissingFrom.isValid, false);
+    assert.equal(resMissingFrom.vouchers.length, 0);
+    assert.equal(resMissingFrom.errors.length, 1);
+    assert.equal(resMissingFrom.errors[0].rowNumber, 2);
+    assert.equal(resMissingFrom.errors[0].code, 'CON_NO_FROM');
+    assert.ok(resMissingFrom.errors[0].reason.includes("Missing 'VALIDFROM'"));
+
+    // 6. Multiple failing rows reported accurately
+    const multipleErrorsCsv = `Voucher Code,VALIDFROM,VALIDTO
+CON_ERR_1,05/06/2026,14/06/2026
+CON_OK_1,05/06/2026,11/06/2026
+CON_ERR_2,,`;
+    const resMultiple = validateVoucherCSV(toBuffer(multipleErrorsCsv), 'multiple_errors.csv');
+    assert.equal(resMultiple.isValid, false);
+    assert.equal(resMultiple.vouchers.length, 0);
+    assert.equal(resMultiple.errors.length, 2);
+    assert.equal(resMultiple.errors[0].rowNumber, 2);
+    assert.equal(resMultiple.errors[0].code, 'CON_ERR_1');
+    assert.equal(resMultiple.errors[1].rowNumber, 4);
+    assert.equal(resMultiple.errors[1].code, 'CON_ERR_2');
   });
 
 });

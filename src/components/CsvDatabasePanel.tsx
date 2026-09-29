@@ -20,6 +20,8 @@ import {
 import { safeLocalStorage } from "../utils/safeLocalStorage";
 import { isSupabaseConfigured } from "../lib/supabase";
 import { useLoading } from "../contexts/LoadingContext";
+import { validateVoucherCSV, type VoucherValidationError } from "../utils/voucherValidation";
+import { VoucherImportBlockedModal } from "./VoucherImportBlockedModal";
 
 // Helper to format string to Title Case (capitalize each word)
 function toTitleCase(str: string): string {
@@ -132,6 +134,8 @@ export const CsvDatabasePanel = forwardRef<CsvDatabasePanelHandle, CsvDatabasePa
   const [vouchersDragActive, setVouchersDragActive] = useState(false);
   const [feedbackMsg, setFeedbackMsg] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [voucherValidationErrors, setVoucherValidationErrors] = useState<VoucherValidationError[] | null>(null);
+  const [blockedFileName, setBlockedFileName] = useState<string>("");
 
   // Auto-dismiss feedback status message after 4.5 seconds
   useEffect(() => {
@@ -339,9 +343,27 @@ export const CsvDatabasePanel = forwardRef<CsvDatabasePanelHandle, CsvDatabasePa
 
     reader.onload = (event) => {
       try {
-        updateProgress(90);
+        updateProgress(85);
         const arrayBuffer = event.target?.result as ArrayBuffer;
-        const vouchers = parseVoucherFile(arrayBuffer, file.name);
+
+        // Pre-import validation check for uploaded Voucher CSV files
+        const validation = validateVoucherCSV(arrayBuffer, file.name);
+        if (!validation.isValid) {
+          hideLoading();
+          setVoucherValidationErrors(validation.errors);
+          setBlockedFileName(file.name);
+          setFeedbackMsg({
+            type: "error",
+            text: `⚠️ Import Blocked: Found invalid voucher date ranges in ${validation.errors.length} row${validation.errors.length === 1 ? '' : 's'}!`
+          });
+          if (vouchersFileInputRef.current) {
+            vouchersFileInputRef.current.value = "";
+          }
+          return;
+        }
+
+        updateProgress(95);
+        const vouchers = validation.vouchers;
         
         if (vouchers.length === 0) {
           hideLoading();
@@ -532,6 +554,18 @@ export const CsvDatabasePanel = forwardRef<CsvDatabasePanelHandle, CsvDatabasePa
       <input type="file" ref={vouchersFileInputRef} onChange={handleVouchersFileUpload} accept=".csv,.txt" className="hidden" />
 
       {feedbackMsg && <div className={`sidebar-feedback ${feedbackMsg.type}`}><span>{feedbackMsg.type === "success" ? "✓" : "!"}</span><span>{feedbackMsg.text}</span><button type="button" onClick={() => setFeedbackMsg(null)}><X /></button></div>}
+
+      {voucherValidationErrors && voucherValidationErrors.length > 0 && (
+        <VoucherImportBlockedModal
+          isOpen={true}
+          onClose={() => {
+            setVoucherValidationErrors(null);
+            setBlockedFileName("");
+          }}
+          errors={voucherValidationErrors}
+          fileName={blockedFileName}
+        />
+      )}
     </aside>
   );
 

@@ -568,3 +568,9 @@ export function computeVoucherBatchExpiryBadge(params: {
     daysDiff: daysLeft
   };
 }
+
+export {
+  validateVoucherCSV,
+  type VoucherValidationError,
+  type VoucherImportValidationResult
+} from "./voucherCsvValidator";
