@@ -367,6 +367,44 @@ export const syncPermitsToSupabase = async (records: CsvPermitRecord[], replaceA
   }
 };
 
+export const updatePermitInSupabase = async (record: CsvPermitRecord): Promise<boolean> => {
+  const client = getSupabaseClient();
+  if (!client || !record) return false;
+
+  const permitId = record.id ?? record.formId;
+  if (permitId === undefined || permitId === null || permitId === '') {
+    console.warn('Cannot update permit in Supabase: record has no id/formId', record);
+    return false;
+  }
+
+  try {
+    const payload = {
+      id: String(permitId).trim(),
+      hospital: record.hospital || '',
+      ward: record.ward || '',
+      date_required: record.dateRequired || '',
+      date_expiry: resolveDateExpiry(record.dateRequired || '', record.dateExpiry || ''),
+      vrm: record.vrm || '',
+      driver_name: record.driverName || '',
+      phone: record.phone || null,
+      email: record.email || null,
+      voucher_code: record.voucherCode || null,
+      start_time: record.startTime || null,
+      completion_time: record.completionTime || null,
+    };
+
+    const { error } = await client.from('permits').upsert(payload, { onConflict: 'id' });
+    if (error) {
+      console.warn(`Supabase update permit error for id ${permitId}:`, error.message);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.warn(`Failed to update permit ${permitId} in Supabase:`, err);
+    return false;
+  }
+};
+
 // ============================================================
 // 2. VOUCHERS TABLE
 // ============================================================

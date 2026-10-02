@@ -62,8 +62,8 @@ import {
 } from "lucide-react";
 
 export interface PermitCardHandle {
-  send: (record?: CsvPermitRecord) => Promise<boolean | void>;
-  sendOne: (record?: CsvPermitRecord) => Promise<boolean | void>;
+  send: (record?: CsvPermitRecord, options?: { skipDispatch?: boolean }) => Promise<boolean | void>;
+  sendOne: (record?: CsvPermitRecord, options?: { skipDispatch?: boolean }) => Promise<boolean | void>;
   bulkEmail: (records?: CsvPermitRecord[]) => Promise<boolean | void>;
   unsend: (record?: CsvPermitRecord) => Promise<boolean | void>;
   print: () => void;
@@ -952,7 +952,7 @@ function PermitCardInner({
     return true;
   };
 
-  const handleSendClick = async (targetRecordArg?: CsvPermitRecord | any) => {
+  const handleSendClick = async (targetRecordArg?: CsvPermitRecord | any, options?: { skipDispatch?: boolean }) => {
     const isRealRecord = (r: any): r is CsvPermitRecord => {
       return Boolean(r && typeof r === 'object' && !('nativeEvent' in r) && !('isTrusted' in r) && !('preventDefault' in r) && (r.vrm || r.formId || r.id || r.driverName || r.email));
     };
@@ -1043,7 +1043,7 @@ function PermitCardInner({
       return;
     }
     
-    const result = await handleSendWithOutlook(targetRecord);
+    const result = await handleSendWithOutlook(targetRecord, options);
     if (result !== false) {
       const targetPayloadCode = rec?.voucherCode || rec?.prePaidCode || (!targetRecord ? currentSelectedCode : "");
       const targetRecordKeyStr = rec ? (getRecordPrimaryKey(rec) || vrm) : recordKeyStr;
@@ -1964,7 +1964,7 @@ function PermitCardInner({
   // - Red text for non-refundable
   // - Blue clickable email link
   // ============================================
-  const handleSendWithOutlook = async (targetRecordArg?: CsvPermitRecord | any) => {
+  const handleSendWithOutlook = async (targetRecordArg?: CsvPermitRecord | any, options?: { skipDispatch?: boolean }) => {
     // Sanitize targetRecord: ensure it's not a React SyntheticEvent or other non-record object
     const isRealRecord = (r: any): r is CsvPermitRecord => {
       return Boolean(r && typeof r === 'object' && !('nativeEvent' in r) && !('isTrusted' in r) && !('preventDefault' in r) && (r.vrm || r.formId || r.id || r.driverName || r.email));
@@ -2123,21 +2123,23 @@ function PermitCardInner({
     (window as unknown as { __styledEmailBody?: string }).__styledEmailBody = htmlText;
 
     // 5. Update dispatched status in database and local UI state strictly for THIS target record
-    let dispatchResult;
-    try {
-      dispatchResult = await markAsDispatched?.(targetVrm, targetEmail, targetRec);
-    } catch (err) {
-      console.error("Dispatch mutation error:", err);
-      rejectQrBlob?.(err);
-      showToast("❌ Dispatch failed: Error updating status.");
-      return false;
-    }
+    let dispatchResult = true;
+    if (!options?.skipDispatch) {
+      try {
+        dispatchResult = (await markAsDispatched?.(targetVrm, targetEmail, targetRec)) !== false;
+      } catch (err) {
+        console.error("Dispatch mutation error:", err);
+        rejectQrBlob?.(err);
+        showToast("❌ Dispatch failed: Error updating status.");
+        return false;
+      }
 
-    if (dispatchResult === false) {
-      console.warn("Dispatch mutation failed or was rolled back due to database write error.");
-      rejectQrBlob?.(new Error("Dispatch mutation failed"));
-      showToast("❌ Database write error: Failed to update status.");
-      return false;
+      if (dispatchResult === false) {
+        console.warn("Dispatch mutation failed or was rolled back due to database write error.");
+        rejectQrBlob?.(new Error("Dispatch mutation failed"));
+        showToast("❌ Database write error: Failed to update status.");
+        return false;
+      }
     }
 
     if (!targetIsCancelled) {
@@ -2256,12 +2258,12 @@ function PermitCardInner({
     return true;
   };
 
-  const sendOne = async (record?: CsvPermitRecord) => {
+  const sendOne = async (record?: CsvPermitRecord, options?: { skipDispatch?: boolean }) => {
     if (record) {
       onSelectRecord?.(record);
       await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
     }
-    return handleSendClick(record);
+    return handleSendClick(record, options);
   };
 
   const bulkEmail = async (records?: CsvPermitRecord[]) => {
@@ -2324,7 +2326,7 @@ function PermitCardInner({
   }, [matchingPermits, activeIndex, qrUrlSmall, isCurrentDispatched, onSelectRecord, handleSendWithOutlook]);
 
   useImperativeHandle(ref, () => ({
-    send: (record?: CsvPermitRecord) => handleSendClick(record),
+    send: (record?: CsvPermitRecord, options?: { skipDispatch?: boolean }) => handleSendClick(record, options),
     sendOne,
     bulkEmail,
     unsend: async (record?: CsvPermitRecord) => {

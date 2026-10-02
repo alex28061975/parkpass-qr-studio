@@ -36,6 +36,7 @@ import {
   checkSupabaseConnection,
   fetchPermitsFromSupabase, 
   syncPermitsToSupabase, 
+  updatePermitInSupabase,
   fetchVouchersFromSupabase, 
   syncVouchersToSupabase, 
   fetchDispatchedFromSupabase, 
@@ -959,14 +960,31 @@ export default function App() {
 
       setDatabase(prevDb => {
         let matched = false;
+        let needsUpdate = false;
+        let updatedRecordToSync: CsvPermitRecord | null = null;
         const nextDb = prevDb.map(item => {
           if (isRecordMatch(item, targetRecord)) {
             matched = true;
-            return {
+            const targetVoucher = repCode || item.voucherCode;
+            // Prevent redundant updates if this record was already promoted / updated
+            if (
+              item.voucherCode === targetVoucher &&
+              item.status === "SENT" &&
+              item.isDispatched === true &&
+              !item.replacementCode &&
+              !item.isResend &&
+              !item.emailType &&
+              !item.emailTemplate
+            ) {
+              return item;
+            }
+
+            needsUpdate = true;
+            const updated = {
               ...item,
-              voucherCode: repCode || item.voucherCode,
-              voucherCodesText: repCode || item.voucherCodesText,
-              prePaidCode: repCode || item.prePaidCode,
+              voucherCode: targetVoucher,
+              voucherCodesText: targetVoucher,
+              prePaidCode: targetVoucher,
               originalVoucherCode: item.voucherCode || item.originalVoucherCode,
               replacementCode: undefined,
               emailType: undefined,
@@ -975,27 +993,41 @@ export default function App() {
               status: "SENT",
               isDispatched: true
             };
+            updatedRecordToSync = updated;
+            return updated;
           }
           return item;
         });
-        if (matched) {
-          databaseRef.current = nextDb;
-          safeLocalStorage.setItem("concessions_permit_db", JSON.stringify(nextDb));
-          if (storageModeRef.current === "cloud" && isSupabaseConfigured()) {
-            syncPermitsToSupabase(nextDb, false).catch(e => console.error("Sync after replacement send failed:", e));
-          }
+
+        if (!needsUpdate || !matched) {
+          // Record was already updated; avoid redundant state rewrite, localStorage serialization, and DB sync
+          return prevDb;
+        }
+
+        databaseRef.current = nextDb;
+        safeLocalStorage.setItem("concessions_permit_db", JSON.stringify(nextDb));
+        if (storageModeRef.current === "cloud" && isSupabaseConfigured() && updatedRecordToSync) {
+          updatePermitInSupabase(updatedRecordToSync).catch(e => console.error("Targeted permit sync after replacement send failed:", e));
         }
         return nextDb;
       });
 
       if (repCode) {
         setCustomVouchers(prev => {
+          const cleanVrm = targetRecord.vrm ? targetRecord.vrm.toUpperCase().replace(/\s+/g, "") : "";
+          const dateISO = parseDateToISO(targetRecord.dateRequired || "") || getTodayISO();
+          if (
+            (!targetRecord.formId || prev[String(targetRecord.formId)] === repCode) &&
+            (!targetRecord.id || prev[String(targetRecord.id)] === repCode) &&
+            (!cleanVrm || prev[cleanVrm] === repCode)
+          ) {
+            return prev;
+          }
+
           const next = { ...prev };
           if (targetRecord.formId) next[String(targetRecord.formId)] = repCode;
           if (targetRecord.id) next[String(targetRecord.id)] = repCode;
-          if (targetRecord.vrm) {
-            const cleanVrm = targetRecord.vrm.toUpperCase().replace(/\s+/g, "");
-            const dateISO = parseDateToISO(targetRecord.dateRequired || "") || getTodayISO();
+          if (cleanVrm) {
             next[cleanVrm] = repCode;
             if (dateISO) next[`${cleanVrm}_${dateISO}`] = repCode;
           }
@@ -1006,6 +1038,16 @@ export default function App() {
 
       setFormData(prev => {
         if (isRecordMatch(targetRecord, prev)) {
+          if (
+            prev.voucherCodesText === (repCode || prev.voucherCodesText) &&
+            !prev.replacementCode &&
+            !prev.isResend &&
+            prev.emailType === "SEND_CONCESSION" &&
+            prev.emailTemplate === "new" &&
+            prev.status === "SENT"
+          ) {
+            return prev;
+          }
           return {
             ...prev,
             voucherCodesText: repCode || prev.voucherCodesText,
@@ -1116,44 +1158,22 @@ export default function App() {
 
       console.log("✅ [Supabase Dispatch Write Success] Record marked as dispatched in database");
 
-      // 2. Fetch fresh keys from Supabase or apply verified keys to state
-      const freshResult = await fetchDispatchedFromSupabase();
-      if (freshResult && freshResult.dispatchedKeys) {
-        const currentUnsent = new Set(unsentKeysRef.current || []);
-        const freshKeys = freshResult.dispatchedKeys.filter(k => !currentUnsent.has(k));
-        const freshDates = Object.fromEntries(Object.entries(freshResult.dispatchDates || {}).filter(([k]) => !currentUnsent.has(k)));
-        const freshBy = Object.fromEntries(Object.entries(freshResult.dispatchBy || {}).filter(([k]) => !currentUnsent.has(k)));
-        dispatchedKeysRef.current = freshKeys;
-        setDispatchedKeys(freshKeys);
-        dispatchDatesRef.current = freshDates;
-        dispatchByRef.current = freshBy;
-        setDispatchDates(freshDates);
-        setDispatchBy(freshBy);
-      } else {
-        setDispatchedKeys(prev => {
-          const next = Array.from(new Set([...prev, ...combinedKeys]));
-          dispatchedKeysRef.current = next;
-          return next;
-        });
-        setDispatchDates(prev => {
-          const updated = { ...prev };
-          combinedKeys.forEach(k => { updated[k] = todayISO; });
-          dispatchDatesRef.current = updated;
-          return updated;
-        });
-      }
-
-      setUnsentKeys(prev => {
-        const next = prev.filter(k => !combinedKeys.includes(k));
-        unsentKeysRef.current = next;
-        return next;
-      });
+      // 2. Persist local dispatch state/ref immediately (known success, avoids re-downloading entire dispatched_history)
+      safeLocalStorage.setItem("concessions_dispatched_keys", JSON.stringify(dispatchedKeysRef.current));
+      safeLocalStorage.setItem("concessions_dispatch_dates", JSON.stringify(dispatchDatesRef.current));
+      safeLocalStorage.setItem("concessions_dispatch_by", JSON.stringify(dispatchByRef.current));
 
       handleReplacementSuccessCleanup(targetRecord);
 
       return true;
     } catch (err: any) {
       console.error("❌ [Supabase Dispatch Exception]:", err);
+      // Rollback on exception
+      setDispatchedKeys(prev => {
+        const next = prev.filter(k => !combinedKeys.includes(k));
+        dispatchedKeysRef.current = next;
+        return next;
+      });
       alert(`❌ Dispatch Exception: ${err.message || 'Unknown database error'}`);
       return false;
     }
@@ -2318,8 +2338,7 @@ export default function App() {
     }
 
     if (storageModeRef.current === "cloud" && isSupabaseConfigured()) {
-      await syncPermitsToSupabase(sorted, false);
-      await refreshDatabase(undefined, true);
+      await updatePermitInSupabase(updatedRecord);
     }
 
     showToast("Permit record updated successfully.", "success");
@@ -2721,7 +2740,7 @@ export default function App() {
       databaseRef.current = nextDb;
       safeLocalStorage.setItem("concessions_permit_db", JSON.stringify(nextDb));
       if (storageModeRef.current === "cloud" && isSupabaseConfigured()) {
-        syncPermitsToSupabase(nextDb, false).catch(e => console.error("Sync after resend failed:", e));
+        updatePermitInSupabase(updatedRecord).catch(e => console.error("Targeted permit update after resend failed:", e));
       }
       return nextDb;
     });
@@ -2757,10 +2776,10 @@ export default function App() {
       status: "SENT"
     }));
 
-    // 8. Open email composer with the new code & tracking pixel
+    // 8. Open email composer with the new code & tracking pixel (skip redundant dispatch)
     handleSelectRecord(updatedRecord);
     if (permitCardRef.current?.sendOne) {
-      await permitCardRef.current.sendOne(updatedRecord);
+      await permitCardRef.current.sendOne(updatedRecord, { skipDispatch: true });
     }
 
     showToast(`✅ Replacement permit resent with new code ${newVoucherCode}. Status updated to SENT.`, "success");

@@ -198,4 +198,20 @@ describe('ParkPass Database Integrity & Security Audit Suite', () => {
     assert.equal(parseDateToISO('03/10/2026'), '2026-10-03');
   });
 
+  // =========================================================================
+  // AUDIT 8 — Targeted single-permit update without full database upsert
+  // =========================================================================
+  it('AUDIT 8: updatePermitInSupabase is exported and validates record ID presence', async () => {
+    const { updatePermitInSupabase } = await import('../lib/supabase');
+    assert.equal(typeof updatePermitInSupabase, 'function', 'updatePermitInSupabase must be an exported function');
+
+    // Attempting to update a record with no ID must fail safely and return false
+    const invalidRecord = {
+      hospital: 'Hospital A',
+      vrm: 'TEST123'
+    } as any;
+    const result = await updatePermitInSupabase(invalidRecord);
+    assert.equal(result, false, 'updatePermitInSupabase must reject records without id/formId');
+  });
+
 });
